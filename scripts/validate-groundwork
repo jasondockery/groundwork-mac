@@ -3252,6 +3252,13 @@ SH
   chmod +x "$update_all_bin/mas"
   cat >"$update_all_bin/sudo" <<'SH'
 #!/usr/bin/env bash
+# A timestamp check is not an authorization. Cached credentials succeed
+# quietly unless a case sets SUDO_CACHED=0. Logging it would hide the
+# keepalive's refresh inside command transcripts.
+if [[ "${1:-}" == "-n" && "${2:-}" == "true" && "$#" -eq 2 ]]; then
+  [[ "${SUDO_CACHED:-1}" == "1" ]]
+  exit $?
+fi
 case "${1:-}" in
   -v)
     [[ "$#" -eq 1 ]] || exit 64
@@ -3450,20 +3457,6 @@ if [[ "${1:-}" == stop ]]; then
   exit "${DOCKER_STOP_STATUS:-0}"
 fi
 exit 64
-SH
-  cat >"$update_all_bin/sudo" <<'SH'
-#!/usr/bin/env bash
-# Cached credentials succeed unless a case sets SUDO_CACHED=0. Refresh calls
-# stay quiet so the keepalive cannot add lines to a command log.
-if [[ "${1:-}" == "-n" && "${2:-}" == "true" ]]; then
-  [[ "${SUDO_CACHED:-1}" == "1" ]]
-  exit $?
-fi
-printf 'sudo %s\n' "$*" >>"${GROUNDWORK_TEST_LOG:-/dev/null}"
-if [[ "${1:-}" == "-v" ]]; then
-  exit "${SUDO_V_STATUS:-0}"
-fi
-exit 0
 SH
   chmod +x "$update_all_bin/chezmoi" "$update_all_bin/brew" "$update_all_bin/ps" "$update_all_bin/mise" \
     "$update_all_bin/sudo" \
