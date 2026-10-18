@@ -281,6 +281,25 @@ INSTALL''')
         def tmux(*args):
             return subprocess.run([shutil.which("tmux"), "-S", str(socket), *args], env=self.env,
                                   capture_output=True, text=True, timeout=10)
+        def binding(table, key):
+            listed = tmux("list-keys", "-T", table, key)
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            lines = [line for line in listed.stdout.splitlines() if line.strip()]
+            # tmux 3.7 accepts a key argument but does not filter on it, so the
+            # same lookup reads the table when that argument returns nothing.
+            if not lines:
+                listed = tmux("list-keys", "-T", table)
+                self.assertEqual(listed.returncode, 0, listed.stderr)
+                needle = f"-T {table} {key} "
+                root_needle = f"-n {key} "
+                lines = [
+                    line for line in listed.stdout.splitlines()
+                    if needle in " ".join(line.split())
+                    or (table == "root" and root_needle in " ".join(line.split()))
+                ]
+            self.assertTrue(lines, f"no {table} binding for {key}")
+            return "\n".join(lines)
+
         try:
             start = tmux("-f", str(config), "new-session", "-d", "-s", "habits")
             self.assertEqual(start.returncode, 0, start.stderr)
@@ -291,11 +310,9 @@ INSTALL''')
                                 "R": "rename-session", "K": "kill-session",
                                 "P": "switch-client -p", "O": "select-pane -T",
                                 "F": "groundwork-repos"}.items():
-                result = tmux("list-keys", "-T", "prefix", key)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(action, result.stdout)
+                self.assertIn(action, binding("prefix", key))
             for key in ("C-M-Left", "C-M-Right", "C-M-Up", "C-M-Down"):
-                self.assertIn("select-pane", tmux("list-keys", "-T", "root", key).stdout)
+                self.assertIn("select-pane", binding("root", key))
         finally:
             tmux("kill-server")
 
