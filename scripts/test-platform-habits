@@ -251,10 +251,13 @@ INSTALL''')
             target.symlink_to(original)
         else:
             target.write_text(content)
-        self.stub("sudo", 'case $1 in mktemp|mv) exec "$@";; *) exit 98;; esac')
+        lib = self.home / ".local/share/groundwork/lib"
+        lib.mkdir(parents=True)
+        shutil.copy(REPO / "home/dot_local/share/groundwork/lib/sudo-preflight.sh", lib / "sudo-preflight.sh")
+        self.stub("sudo", 'case $1 in -n|-v) exit 0;; mktemp|mv) exec "$@";; *) exit 98;; esac')
         self.stub("dscacheutil", "exit 0")
         self.stub("killall", "exit 0")
-        rendered = self.render("home/run_onchange_after_11-tailscale-dns.sh.tmpl").replace("/etc/", str(etc) + "/")
+        rendered = self.render("home/run_after_11-tailscale-dns.sh.tmpl").replace("/etc/", str(etc) + "/")
         for _ in range(2):
             result = self.run_script(rendered)
             self.assertEqual(result.returncode, 0, result.stderr)

@@ -2966,7 +2966,14 @@ case "${1:-}" in
           printf '%s' '{"token":"privileged-outdated","installed":"1.0.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":false,"pinned":false,"outdated":true,"deprecated":false,"disabled":false,"artifacts":[{"uninstall":[{"launchctl":["fixture.helper"]}]}]}'
           ;;
         *)
-          printf '{"token":"%s","installed":"1.0.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":false,"pinned":false,"outdated":true,"deprecated":false,"disabled":false,"artifacts":[]}' "$token"
+          pkg_artifact='[]'
+          for pkg_token in ${BREW_PKG_CASKS-}; do
+            if [[ "$pkg_token" == "$token" ]]; then
+              pkg_artifact='[{"pkg":["Fixture.pkg",{}]}]'
+            fi
+          done
+          printf '{"token":"%s","installed":"1.0.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":false,"pinned":false,"outdated":true,"deprecated":false,"disabled":false,"artifacts":%s}' \
+            "$token" "$pkg_artifact"
           ;;
       esac
     done
@@ -3356,6 +3363,8 @@ SH
   cp home/dot_local/bin/executable_groundwork-cleanup "$update_all_bin/groundwork-cleanup"
   cp home/dot_local/share/groundwork/lib/brew-output.sh \
     "$update_all_home/.local/share/groundwork/lib/brew-output.sh"
+  cp home/dot_local/share/groundwork/lib/sudo-preflight.sh \
+    "$update_all_home/.local/share/groundwork/lib/sudo-preflight.sh"
   cp home/dot_local/share/groundwork/lib/reset-signals.c \
     "$update_all_home/.local/share/groundwork/lib/reset-signals.c"
   cp home/dot_local/share/groundwork/vendor-updater-casks.txt \
@@ -3442,7 +3451,22 @@ if [[ "${1:-}" == stop ]]; then
 fi
 exit 64
 SH
+  cat >"$update_all_bin/sudo" <<'SH'
+#!/usr/bin/env bash
+# Cached credentials succeed unless a case sets SUDO_CACHED=0. Refresh calls
+# stay quiet so the keepalive cannot add lines to a command log.
+if [[ "${1:-}" == "-n" && "${2:-}" == "true" ]]; then
+  [[ "${SUDO_CACHED:-1}" == "1" ]]
+  exit $?
+fi
+printf 'sudo %s\n' "$*" >>"${GROUNDWORK_TEST_LOG:-/dev/null}"
+if [[ "${1:-}" == "-v" ]]; then
+  exit "${SUDO_V_STATUS:-0}"
+fi
+exit 0
+SH
   chmod +x "$update_all_bin/chezmoi" "$update_all_bin/brew" "$update_all_bin/ps" "$update_all_bin/mise" \
+    "$update_all_bin/sudo" \
     "$update_all_bin/npm" "$update_all_bin/groundwork-cleanup" \
     "$update_all_bin/groundwork-docker-tidy" \
     "$update_all_bin/groundwork-repos" "$update_all_bin/groundwork-brew-update" \
@@ -5328,6 +5352,163 @@ EOF
   [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq "$bundle_count_before" ]] \
     || fail "a malformed cask-skip token reached Homebrew bundle"
   mv "$update_all_fixture/Brewfile.before-manual-skip" \
+    "$update_all_home/.config/homebrew/Brewfile"
+
+  # No terminal and no cached password: pkg installers are set aside and the
+  # bundle of everything else still runs. A real bundle failure stays nonzero.
+  # The managed Brewfile is not rewritten. The every-apply retry owns the
+  # set-aside list, so chezmoi can record this hook as done without forgetting
+  # those casks.
+  run_without_tty() {
+    python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+  }
+  cp "$update_all_home/.config/homebrew/Brewfile" \
+    "$update_all_fixture/Brewfile.before-sudo-defer"
+  cat >"$update_all_home/.config/homebrew/Brewfile" <<'EOF'
+brew "git"
+cask "ghostty"
+cask "tailscale-app"
+EOF
+  rm -f "$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt"
+  : >"$update_all_log"
+  sudo_defer_exit=0
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    SUDO_CACHED=0 BREW_PKG_CASKS=tailscale-app \
+    BREW_BUNDLE_CAPTURE_FILE="$update_all_fixture/Brewfile.sudo-deferred" \
+    run_without_tty "$update_all_fixture/darwin-bundle-hook" \
+    >"$update_all_fixture/darwin-bundle-sudo-deferred" 2>&1 || sudo_defer_exit=$?
+  [[ "$sudo_defer_exit" -eq 0 ]] \
+    || fail "a password-gated cask with no terminal stopped the Homebrew bundle (exit $sudo_defer_exit)"
+  grep -qF 'set aside: tailscale-app' "$update_all_fixture/darwin-bundle-sudo-deferred" \
+    || fail "a set-aside installer did not name the app"
+  grep -qxF 'cask "ghostty"' "$update_all_fixture/Brewfile.sudo-deferred" \
+    || fail "the no-terminal bundle dropped an ordinary cask"
+  assert_not_contains '^cask "tailscale-app"$' "$update_all_fixture/Brewfile.sudo-deferred" \
+    "a pkg installer reached Homebrew when no terminal could approve it"
+  grep -qxF 'cask "tailscale-app"' "$update_all_home/.config/homebrew/Brewfile" \
+    || fail "setting an installer aside rewrote the managed Brewfile"
+  grep -qxF 'tailscale-app' "$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt" \
+    || fail "the set-aside app was not recorded for the next apply"
+  : >"$update_all_log"
+  if HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    SUDO_CACHED=0 BREW_CASK_INFO_STATUS=1 \
+    run_without_tty "$update_all_fixture/darwin-bundle-hook" \
+    >"$update_all_fixture/darwin-bundle-sudo-unclassified" 2>&1; then
+    fail "unclassified password-gated installs continued"
+  fi
+  [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq 0 ]] \
+    || fail "unclassified password-gated installs reached Homebrew bundle"
+  grep -qF 'cannot tell which apps need a password' \
+    "$update_all_fixture/darwin-bundle-sudo-unclassified" \
+    || fail "an unclassified password-gated install did not say why it stopped"
+  : >"$update_all_log"
+  sudo_fail_exit=0
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    SUDO_CACHED=0 BREW_PKG_CASKS=tailscale-app BREW_BUNDLE_STATUS=1 \
+    run_without_tty "$update_all_fixture/darwin-bundle-hook" \
+    >"$update_all_fixture/darwin-bundle-sudo-real-failure" 2>&1 || sudo_fail_exit=$?
+  [[ "$sudo_fail_exit" -eq 1 ]] \
+    || fail "a real bundle failure after set-aside surfaced as exit $sudo_fail_exit"
+  : >"$update_all_log"
+  pty_input="$update_all_fixture/sudo-pty-empty"
+  : >"$pty_input"
+  run_fixture_pty "$update_all_fixture/darwin-bundle-sudo-pty" "$pty_input" env \
+    HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    SUDO_CACHED=0 BREW_PKG_CASKS=tailscale-app \
+    BREW_BUNDLE_CAPTURE_FILE="$update_all_fixture/Brewfile.sudo-pty" \
+    "$update_all_fixture/darwin-bundle-hook" \
+    || fail "an interactive password prompt failed the Homebrew bundle"
+  grep -qxF 'sudo -v' "$update_all_log" \
+    || fail "an interactive apply did not ask for administrator permission once"
+  grep -qxF 'cask "tailscale-app"' "$update_all_fixture/Brewfile.sudo-pty" \
+    || fail "an interactive apply set aside an installer it could have approved"
+
+  printf 'tailscale-app\n' >"$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt"
+  chmod 600 "$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt"
+  retry_script="$PWD/home/run_after_12-sudo-deferred-casks.sh"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" SUDO_CACHED=0 \
+    run_without_tty "$retry_script" \
+    >"$update_all_fixture/sudo-retry-no-tty" 2>&1 \
+    || fail "a set-aside retry with no terminal failed the apply"
+  grep -qxF 'tailscale-app' "$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt" \
+    || fail "a no-terminal retry forgot the set-aside app"
+  [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq 0 ]] \
+    || fail "a no-terminal retry installed without permission"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    SUDO_CACHED=1 \
+    BREW_BUNDLE_CAPTURE_FILE="$update_all_fixture/Brewfile.sudo-retry" \
+    "$retry_script" >"$update_all_fixture/sudo-retry-installed" 2>&1 \
+    || fail "a terminal retry did not install the set-aside app"
+  grep -qxF 'cask "tailscale-app"' "$update_all_fixture/Brewfile.sudo-retry" \
+    || fail "the retry bundle did not contain only the set-aside app"
+  [[ ! -e "$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt" ]] \
+    || fail "a finished retry left the set-aside list in place"
+  printf 'bad;token\n' >"$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt"
+  : >"$update_all_log"
+  if HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" \
+    "$retry_script" >"$update_all_fixture/sudo-retry-malformed" 2>&1; then
+    fail "a malformed set-aside list was installed"
+  fi
+  [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq 0 ]] \
+    || fail "a malformed set-aside list reached Homebrew"
+  rm -f "$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt"
+
+  render linux false amd64 home/run_before_00-install-homebrew.sh.tmpl \
+    "$update_all_fixture/linux-homebrew-before"
+  chmod +x "$update_all_fixture/linux-homebrew-before"
+  apt_bin="$update_all_fixture/apt-bin"
+  mkdir -p "$apt_bin"
+  cat >"$apt_bin/sudo" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-n" && "${2:-}" == "true" ]]; then
+  [[ "${SUDO_CACHED:-1}" == "1" ]]
+  exit $?
+fi
+printf 'sudo %s\n' "$*" >>"${GROUNDWORK_TEST_LOG:-/dev/null}"
+if [[ "${1:-}" == "-v" ]]; then
+  exit "${SUDO_V_STATUS:-0}"
+fi
+exit 0
+SH
+  cat >"$apt_bin/apt-get" <<'SH'
+#!/usr/bin/env bash
+printf 'apt-get %s\n' "$*" >>"${GROUNDWORK_TEST_LOG:-/dev/null}"
+exit 0
+SH
+  cat >"$apt_bin/curl" <<'SH'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"${GROUNDWORK_TEST_LOG:-/dev/null}"
+exit 0
+SH
+  chmod +x "$apt_bin/sudo" "$apt_bin/apt-get" "$apt_bin/curl"
+  : >"$update_all_log"
+  apt_exit=0
+  PATH="$apt_bin:/usr/bin:/bin" GROUNDWORK_TEST_LOG="$update_all_log" SUDO_CACHED=0 \
+    run_without_tty "$update_all_fixture/linux-homebrew-before" \
+    >"$update_all_fixture/linux-apt-no-tty" 2>&1 || apt_exit=$?
+  [[ "$apt_exit" -eq 1 ]] \
+    || fail "Linux Homebrew prerequisites with no terminal exited $apt_exit"
+  [[ "$(grep -Ec 'apt-get|curl ' "$update_all_log" || true)" -eq 0 ]] \
+    || fail "Linux Homebrew prerequisites continued without administrator permission"
+  grep -qF 'no terminal is available' "$update_all_fixture/linux-apt-no-tty" \
+    || fail "Linux Homebrew prerequisites did not say that no terminal was available"
+  : >"$update_all_log"
+  PATH="$apt_bin:/usr/bin:/bin" GROUNDWORK_TEST_LOG="$update_all_log" SUDO_CACHED=1 \
+    "$update_all_fixture/linux-homebrew-before" \
+    >"$update_all_fixture/linux-apt-cached" 2>&1 \
+    || fail "cached administrator permission did not install Linux Homebrew prerequisites"
+  grep -qF 'apt-get update' "$update_all_log" \
+    || fail "cached administrator permission skipped apt-get"
+  mv "$update_all_fixture/Brewfile.before-sudo-defer" \
     "$update_all_home/.config/homebrew/Brewfile"
 
   # The production Docker Desktop transcript stopped after Homebrew entered its
