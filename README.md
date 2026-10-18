@@ -1,0 +1,336 @@
+# Groundwork
+
+[![CI](https://github.com/jasondockery/groundwork-mac/actions/workflows/ci.yml/badge.svg)](https://github.com/jasondockery/groundwork-mac/actions/workflows/ci.yml)
+
+An AI-native development foundation for Mac, Linux/WSL, and headless agent workspaces.
+
+Built and maintained by [Jason Dockery](https://www.linkedin.com/in/jasondockery/) ([GitHub](https://github.com/jasondockery)).
+
+Groundwork combines a reproducible development setup with a learning path for the fundamentals that stay useful when AI tools change: the shell, Git, project instructions, verification, and how to direct and supervise AI agents while the human remains the senior partner.
+
+It installs the tools a developer may want, but the tools are not the point. Editors, multiplexers, launchers, and browsers are choices. The durable skill is learning how to make work observable: know where files live, read the diff, run the checks, understand what changed, and keep agent-assisted development accountable.
+
+macOS is the primary desktop target. Linux, WSL, and headless containers share the same terminal layer so the workflow remains usable in local shells, CI, servers, and disposable agent environments. Native Windows is not a separate target; use WSL2 for the Unix development environment.
+
+This repo is `groundwork-mac`: the Mac installer and shared chezmoi engine used by the Linux and Windows/WSL entrypoints. Shared operational guidance lives in [groundwork-core](https://github.com/jasondockery/groundwork-core); the learning curriculum stays in the original [groundwork](https://github.com/jasondockery/groundwork) for now. Keep that existing checkout and its remote unchanged. See the [migration guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/migrating-from-groundwork.md) before replacing an existing install. Omarchy users must use [groundwork-omarchy-mac-arm64](https://github.com/jasondockery/groundwork-omarchy-mac-arm64), which preserves upstream desktop configuration.
+
+Do not run `chezmoi apply` from this repo on Omarchy. Omarchy overrides live in [groundwork-omarchy-mac-arm64](https://github.com/jasondockery/groundwork-omarchy-mac-arm64) and only replace files under `~/.config`. Clone with `git clone --recurse-submodules`.
+
+For native Omarchy on an Apple Silicon Mac, use the upstream [Omarchy Mac Installer](https://github.com/omacom/omarchy-mac-installer) first. Once the desktop has booted and the base system is updated successfully, apply [`groundwork-omarchy-mac-arm64`](https://github.com/jasondockery/groundwork-omarchy-mac-arm64) for personal settings. Its README records the current edge-channel install steps. This repo's bootstrap is for macOS/Linux development environments, not Omarchy OS installation.
+
+## Start Here
+
+This repository replaces `jasondockery/groundwork` for Mac setup and supplies the engine used by the Linux and Windows/WSL entrypoints. Clone with its submodules over HTTPS, inspect the script, then run it from that checkout. HTTPS access to a public copy needs no GitHub account; private copies still require access. The script is safe to re-run after fixing any failure. Existing installations should follow the [migration guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/migrating-from-groundwork.md) before applying a new source.
+
+```bash
+git clone --recurse-submodules https://github.com/jasondockery/groundwork-mac.git ~/code/groundwork-mac
+less ~/code/groundwork-mac/bootstrap-mac.sh
+bash ~/code/groundwork-mac/bootstrap-mac.sh
+```
+
+An older public checkout of `jasondockery/groundwork` does not receive these updates. The published snapshot remains at that repository for anonymous readers.
+
+That script installs every Brewfile package, lays down all configs, and runs the setup scripts.
+
+> **Before you run it:** this is an opinionated environment, not a passive app installer — it **changes the Mac it runs on** (shell, Git, editor, tmux, VS Code, Homebrew packages, selected macOS defaults). It backs up what it replaces first, and `groundwork-restore` puts the managed files and defaults back. Read [Important — opinionated Mac setup](#important--opinionated-mac-setup) for exactly what changes and what the restore does and does not cover.
+
+New here and not ready to install? Read the docs at <https://jasondockery.github.io/groundwork/>, or keep reading below for what Groundwork is and who it's for.
+
+Not on a Mac? See [Supported Platforms](#supported-platforms) — Linux, WSL2, and headless Docker share the same terminal layer.
+
+## Who It's For
+
+Groundwork is for anyone who wants to build seriously, wherever you are starting from: brand new to development or deep into a career, new to the terminal or fluent in it, new to AI-native work or already practicing it. It sets up a machine, image, or container quickly with everything needed to work — tools, shell, shortcuts, and agent instructions in place — and the docs meet each reader at their own starting point.
+
+Wherever you start, the destination is the same: a deeply skilled, technical agentic engineer — someone who understands the system, works the terminal confidently, and directs AI agents without depending on them. That is a long climb, not a weekend project. Every page is written in layers — terms defined once and a first successful path for those who need it, a skimmable workflow-and-config fast path for those who don't — so any reader can take what they need and move. It is deliberately not a children's learn-to-code introduction.
+
+## How People Learn Here
+
+Groundwork is a progressive path. You do not have to do everything, and you can go as deep as you want:
+
+1. **Overview.** Understand AI-native development, the arc from vibe coding toward agentic engineering, and why fundamentals matter before setup begins.
+2. **Quick wins.** Provision a machine and do short practice steps that produce something real fast, because momentum matters.
+3. **Substantial practice.** Spend focused time on week-long tracks: a browser first-person shooter, a Unity first-person shooter, a web project, an app, and a generative-media image/video pipeline.
+
+The tracks are branches on one shared spine: shell, Git, project instructions, validation, and agent-direction skills underneath whichever domain makes someone excited enough to practice.
+
+Groundwork is an on-ramp, not the whole road. It will not turn someone into an agentic engineer by itself; it gives the big picture, the working environment, and the first serious reps so learners know what they are aiming toward.
+
+New here? Read the public docs at <https://jasondockery.github.io/groundwork/> or run `groundwork-docs` after setup to open the site from the checkout chezmoi is actually using.
+
+## Supported Platforms
+
+| Platform | Status | What applies |
+| --- | --- | --- |
+| macOS desktop | Primary | Full terminal layer, Homebrew formulae, casks, App Store apps, selected macOS defaults, browser/app helpers |
+| Linux / WSL2 | Terminal layer | zsh, Git, tmux, Neovim, shell tools, mise/uv, helper scripts; GUI apps and macOS defaults are skipped |
+| Headless / Docker | Terminal layer | Non-interactive shell environment for agents, CI, and disposable dev containers; no GUI apps |
+| Native Windows | Use WSL2 | Groundwork is Unix-shell-oriented. Install WSL2/Ubuntu, keep projects in the WSL filesystem, and use the Linux terminal layer there |
+
+Groundwork uses one chezmoi source tree. `.chezmoi.os` skips macOS desktop apps on Linux/WSL, and the `headless` flag is reserved for explicit server, CI, and container profiles. The public docs version of this split lives in `docs/platforms.html`.
+
+Headless Docker quick start:
+
+```bash
+docker build -t groundwork .
+docker run -it --rm groundwork
+```
+
+Keep the `groundwork` tag for the image you actually run. A build that only verifies a Dockerfile change (yours or an agent's) goes through the managed wrapper instead — `groundwork-docker-build-scratch <purpose> . --rm-after` — which owns the ephemeral-build contract, prints the image ID, and removes it after a successful build. When the Groundwork proof must run the image, use `scripts/verify-docker-image`: it mechanically owns build, smoke run, signal handling, exact-image-ID cleanup, and proof that its expected tag was not retained or repointed. Never hand-type the labels, and never `docker tag` a scratch image into a real name — labels live on the image, so promote by rebuilding. `update-all` removes only aged labeled scratch leftovers after the 72-hour grace (see `docs/platforms.html`).
+
+## AI-native by default
+
+Groundwork treats AI as part of the development environment, not as a sidecar. The terminal, tmux, Neovim, Git, Raycast, Anybox, and the docs are arranged around a repeatable human-in-the-loop workflow:
+
+1. Start from a real project folder with clear `AGENTS.md` instructions.
+2. Ask an agent to inspect, plan, edit, test, or explain.
+3. Review the diff yourself before keeping changes.
+4. Run the repo's validation commands.
+5. Capture durable lessons in docs, skills, or the knowledge wiki.
+
+Terminal-first is the interface; AI-native is the workflow. Agents operate through files, shell commands, Git diffs, project instructions, and verification steps, so the keyboard-first tooling is here to make supervising that work fast and teachable.
+
+The long-term direction lives in one canonical file: [`AI_THESIS.md`](AI_THESIS.md). Agent adapters, docs, and skills should reference that file instead of restating the thesis in parallel.
+
+## Important — opinionated Mac setup
+
+This repo is not a passive app installer. It is an opinionated development environment and it changes the Mac it runs on: shell config, Git config, terminal/editor/tmux settings, VS Code settings, Homebrew packages, selected macOS defaults, Finder behavior, keyboard repeat behavior, browser/developer preferences, and app-specific setup where macOS allows it.
+
+On first apply, the setup creates a focused backup at `~/.local/state/groundwork/backups/latest` before changing managed files and macOS defaults. Restore with:
+
+```bash
+groundwork-restore
+```
+
+That restore is intentionally scoped: it restores the managed config files and macOS defaults this repo snapshots. It does **not** uninstall apps, undo Homebrew upgrades, reverse manual permissions, or replace Time Machine.
+
+During `chezmoi init`, existing Macs are also offered an optional clean start for common conflict zones. Say **yes** only when you want old terminal/editor/tmux state moved aside before this setup applies. The moved files go to `~/.local/state/groundwork/reset/latest`; they are not deleted.
+
+## Installing from a fork or over SSH
+
+Advanced users can override the clone URL, for example when using SSH:
+
+```bash
+GROUNDWORK_REPO_URL=git@github.com:jasondockery/groundwork-mac.git bash ~/code/groundwork-mac/bootstrap-mac.sh
+```
+
+## Updating Later
+
+`chezmoi update` runs `git pull` from this repo and applies the result. If the repo changes an install hook, such as the Brewfile bundle, that hook can add newly declared tools; it still does not chase newer Homebrew or mise releases for tools already installed. Public HTTPS pulls need no GitHub login. A private fork still requires an account that can read it.
+
+Run `update-all` as the one normal machine-maintenance command. Under one machine-wide lock, it synchronizes Groundwork, inventories every Homebrew-installed formula and cask, updates every eligible unpinned item through exact classified lanes, updates each Mac App Store item reported outdated by its exact ID, refreshes mise-managed tools, and then runs supported package-manager maintenance and the label-scoped Docker scratch tidy. App Store inventory uses the reviewed `mas` 7.x JSON-object stream (`list --json` and `outdated --json --inaccurate`) so names containing parentheses never become parsing syntax; the inventory query does not start or cancel downloads, and receipts claim only what this safe query reported. Before each App Store mutation, an invocation with interactive stdin and stderr visibly establishes macOS authorization with `sudo -v` in the foreground terminal process group; a separate bounded watchdog supervises that authorization, and the exact update then runs noninteractively inside its own process group with a conservative 30-minute hard backstop. One stalled app is timed out with only its owned process tree, named in every heartbeat and receipt, and does not suppress the next exact ID. Redirected, CI, or cron-style runs never prompt: each outdated App Store app becomes action-required, safe independent lanes continue, and the prior success receipt remains until a complete retry. Checksummed self-updating casks use a targeted `--greedy-auto-updates` lane only when Homebrew's matching outdated query selects them; checksummed `version :latest` casks use the same exact-token discipline. Bare global `--greedy` remains prohibited. Current privileged casks stay quiet. Pinned, deprecated, disabled, unresolved no-checksum, privileged-replacement, manual/vendor, and MDM-ambiguous applications remain unchanged and are named with their reason; only casks named in Groundwork's reviewed vendor-updater policy count as accepted no-checksum vendor coverage. A cask upgrade matches Homebrew's own default and may quit and reopen a running application that declares a safe quit action; `update-all --no-app-quit` explicitly keeps every running application open instead, deferring each observed running cask individually while unrelated updates continue and passing Homebrew's `--no-quit` guard for that invocation. A selected manual ChatGPT app is never adopted automatically: safe lanes continue and the final receipt records an ownership review item. After the updater transaction and lock have ended, an interactive run may ask `Let Homebrew manage ChatGPT.app? [y/N]`; only an explicit yes invokes the separately locked adoption helper, which strictly verifies the code signature before reading the signing team and repeats that verification after consent. After verified current-app ownership, a second explicit prompt may offer to move the verified Classic bundle to Trash while preserving shared data. A noninteractive run prints the safe helper commands and never prompts or changes ownership. A deprecated `codex-app` receipt remains a third identity and is never conflated with either ChatGPT app. The maintenance and optional-action receipts share one invocation ID, while the action receipt names and hashes the immutable maintenance receipt it follows. Review, pin, vendor-coverage, and running-deferral outcomes do not masquerade as updater failures. An inventory, classification, update, or post-update verification failure still exits nonzero, retains the prior success timestamp, and keeps the shell reminder active. Every failed Homebrew mutation names its exact sub-lane and tokens even when Homebrew prints no literal `Error:` line. A Homebrew inventory failure still permits independent Mac App Store and mise lanes; an actual Homebrew mutation failure stops before mise and maintenance. On a desktop Mac, the final post-update health check handles Karabiner as before. `chezmoi update`, `init`, and `apply` install newly declared packages but do not request routine upgrades of already-installed ones. Repository dependency installations such as `node_modules`, whole pnpm store generations, unlabeled Docker state, daemon-wide Docker cache, Xcode data, and application data remain outside this command. Upgraded tools take effect at your next shell prompt; set `GROUNDWORK_UPDATE_REMINDER=0` in `~/.zshrc.local` to silence the stale/pending reminder.
+
+## Customizing Without Forking
+
+Groundwork is a shared base with a personal layer. Put small personal preferences in local override files that Groundwork intentionally loads last:
+
+```bash
+~/.zshrc.local
+~/.gitconfig.local
+~/.config/tmux/tmux.local.conf
+```
+
+Machine settings live in `~/.config/chezmoi/chezmoi.toml`. Use `groundwork-configure` to review or change them through a preview-and-confirm transaction; accepting applies the selected desired state immediately, while `update-all` owns later upgrades and maintenance. Plain `chezmoi init` regenerates the bootstrap baseline from saved answers. For the full model, open `docs/customizing.html`.
+
+> **Pre-release macOS:** if you're on a beta/just-released macOS, Homebrew may not have bottles for a few formulae and will build them from source (slow) or skip them. `brew bundle` continues past failures, so skim the output and `brew install <formula>` anything that didn't land.
+
+If you use GitHub for your own projects, authenticate the Mac as the person using it:
+
+```bash
+gh auth status               # confirm it's the Mac user's GitHub account
+gh auth switch               # choose another already-authenticated account
+gh auth login --git-protocol https
+gh auth setup-git --hostname github.com
+```
+
+SSH is optional if you already manage GitHub keys or account aliases in `~/.ssh/config`. If a `groundwork-mac` checkout has the wrong origin, inspect and correct that checkout deliberately. Keep the original `groundwork` checkout and its remote unchanged during migration:
+
+```bash
+git -C "${GROUNDWORK_DIR:-$HOME/code/groundwork-mac}" remote set-url origin https://github.com/jasondockery/groundwork-mac.git
+```
+
+> The gh credential helper is baked into `home/dot_gitconfig.tmpl`, so it survives every apply. Running `gh auth setup-git` alone isn't enough on its own — `~/.gitconfig` is chezmoi-managed, so without the template change the next `chezmoi apply` would overwrite it.
+
+## Bootstrap questions (asked once)
+
+These establish the machine baseline and are stored in `~/.config/chezmoi/chezmoi.toml`. Plain `chezmoi init` preserves and regenerates from them; use `groundwork-configure` when you want to change a setting.
+
+| Prompt | Notes |
+| --- | --- |
+| Is this a work machine? | `no` by default. `yes` gates personal apps and Docker Desktop off this Mac |
+| Is this a server/CI Mac with no desktop apps? | Mac only. `no` by default. Most Macs should press Enter; `yes` skips Raycast, browsers, Obsidian, App Store apps, and macOS defaults. Linux/WSL skip macOS desktop apps by OS |
+| What is your GitHub username? | Your own — sets your git identity, separate from the `jasondockery` repo address used for cloning |
+| What name should Git use for commits? | Your human name in commit metadata |
+| What personal email should Git use for commits? | Your personal commit email |
+| What work email should Git use? | blank if none |
+| Where should projects live? | default `~/code` |
+| Reset old terminal/editor/tmux state before applying? | `no` by default. Use `yes` on an already-used Mac if old Neovim, tmux, zsh completion, or plugin state may compete with this setup. Moved aside to `~/.local/state/groundwork/reset/latest` |
+| Which password manager should Groundwork configure for SSH + git signing? | `1password` / `bitwarden` / `none` |
+| What SSH public key should Git use for signing? | the **public** key; blank to skip commit signing |
+| What should the Obsidian vault be named? | folder in iCloud Drive/Obsidian; default `my_obsidian_vault`, blank to skip |
+| Install optional Unity game development tools? | `no` by default. Use `yes` to install Unity Hub and C# VS Code extensions for the Unity FPS track |
+| Install Xcode for native Apple/iOS development? | `no` by default. Use `yes` to attempt the App Store Xcode install for signing, simulators, SwiftUI/iOS/macOS builds, or Unity Apple-platform builds |
+
+Groundwork defaults to a personal role and stable application channels. Environment role, stable-versus-preview release posture, and the optional Xcode beta channel are mutable preferences, so they do not lengthen bootstrap. Change them later with `groundwork-configure`; the Xcode beta choice appears only when Xcode is enabled, and disabling Xcode clears that dependent preference in the same receipt. `groundwork-profile set preview` is the focused shortcut for release posture. Check the stored states with `groundwork-doctor --browser` or `groundwork-profile show`.
+
+## Finish-up checklist (the manual residue macOS requires)
+
+These are the one-time steps macOS or the app vendor should own: account sign-in, App Store purchases, permission prompts, secrets, per-device hotkeys, display IDs, and cloud sync. Groundwork manages stable file/plist-backed defaults; the README keeps the operational checklist, and the linked docs carry the longer context.
+
+- [ ] **Karabiner** — Groundwork opens Karabiner after install/update if it is not running, but macOS still requires you to enable its background services, approve **Accessibility**, and allow the driver/system extension. **Input Monitoring is normally unnecessary on Karabiner-Elements 16.0.0 and later**; grant it only for 15.9.0 or earlier, or when Karabiner itself asks. Enables Caps Lock = Esc/Ctrl. See `docs/keyboard.html`.
+- [ ] **Vorssaint.** Installed on Apple Silicon Macs running macOS 14 or newer. Open it once and turn on only the features you want. macOS asks for the permissions those features need, and Groundwork does not set them. Intel Macs skip this cask. Omarchy keeps its own top bar. See `docs/apps.html`.
+- [ ] **Apple Developer / Xcode** — optional and large. If you enabled the Xcode setup option, Groundwork attempts the App Store install; if it does not go through, get Xcode from the Mac App Store manually. Then open Xcode once, accept first-launch setup/license prompts, sign in at Xcode → Settings → Accounts, and let Xcode manage certificates/profiles. Never put certificates, provisioning profiles, or `.mobileconfig` profiles in dotfiles. See `docs/macos.html`.
+- [ ] **Password manager** — sign in, enable the SSH agent, and confirm signed commits work. See `docs/apps.html` and `docs/git.html`.
+- [ ] **Bitwarden as default autofill** — make Bitwarden the source of truth for macOS, browsers, and mobile autofill. See `docs/apps.html`.
+- [ ] **Obsidian** — open the vault, keep it downloaded, restart once for plugins, and configure Smart Connections, Whisper, and Ollama only if you use AI over notes. See `docs/apps.html` and `docs/knowledge.html`.
+- [ ] **Ollama** (local AI) — optional local service for embeddings and note helpers; launch it once so it serves `localhost:11434`, then run `ollama pull nomic-embed-text`. See `docs/apps.html`.
+- [ ] **Raycast** — make **⌘Space** its only global hotkey; clear extension and window-management global hotkeys in Settings → Shortcuts, run `raycast-extensions --open`, and use a small set of native Quicklinks for exact frequent destinations. Set them to open with the Chrome channel selected by your Groundwork profile, tag the daily set, and enable the global Prefer Existing Tabs setting. Add `ab` for Anybox Search Links and `as` for Save Current Tab, then use Raycast Cloud Sync or export/import for reproduction. See `docs/apps.html` and `docs/macos.html`.
+- [ ] **Raycast AI** (optional) — leave it off unless you want Claude/GPT/Grok from Raycast. Launcher search, Quicklinks, and Anybox search work without it. See `docs/apps.html`.
+- [ ] **BetterDisplay** — optional display preset and external-monitor control layer; open it once, keep the menu-bar icon on, favorite the resolutions you use, and test brightness/DDC controls. See `docs/macos.html`.
+- [ ] **Anybox** (Mac App Store) — paid durable link library; buy/Get it once per Apple Account, run it as a menu-bar app, organize links with folders and tags, and paste its API key into the Raycast extension. Quick Links are an optional system-wide text-detection feature, not the normal setup path. See `docs/apps.html`.
+- [ ] **Browser** — Groundwork installs Chrome stable on current/work profiles and Chrome Beta plus stable on preview profiles. It never changes your macOS default-browser association. Keep its bookmarks bar as a small visual hot cache; Anybox owns the durable library. See `docs/apps.html`.
+- [ ] **Chrome sync** — sign in only if you want Google to sync bookmarks, history, passwords, settings, and tabs; an account is not required to use the browser. See `docs/apps.html`.
+- [ ] **Browser extensions** — run `browser-extensions` to list the managed add-ons, or `browser-extensions --browser chrome --tier core --open` to open the core Chrome set. See `docs/apps.html`.
+- [ ] **Codex** — the current CLI is Homebrew-managed; run `codex app` when you want its supported desktop entry point. Groundwork no longer declares the deprecated `codex-app` cask, and it never silently removes an existing deprecated receipt. See `docs/codex.html`.
+- [ ] **Manual ChatGPT ownership** — `update-all` reports a ChatGPT app that exists outside Homebrew and continues every safe lane without taking it over. After the update lock is released, an interactive run first executes `groundwork-app-adopt --check chatgpt`, then offers Homebrew adoption with a default-no prompt only if current bundle, executable, signing-team, ownership, process, and MDM state are eligible. A redirected run only prints `groundwork-app-adopt chatgpt`. Device-managed Macs remain administrator-owned.
+- [ ] **ChatGPT app cleanup** — fresh Groundwork setup installs only the current unified `ChatGPT.app`. `ChatGPT Classic.app` remains supported for compatibility and existing Enterprise workflows, but it is a legacy duplicate for most people. After current-app ownership is verified, an interactive `update-all` may separately offer a default-no, signing-team-checked move to Trash or exact cask removal. The explicit command remains `groundwork-app-remove chatgpt-classic`. A deprecated `codex-app` receipt stays separate and uses `groundwork-app-remove codex-app`; it is never removed automatically.
+- [ ] **Grok Build** (optional to use) — the CLI is installed by the Brewfile, but using it needs a SuperGrok / X Premium+ subscription; run `grok` in a project to sign in. See `docs/grok.html`.
+- [ ] **T3 Code and Herdr** — all supported profiles include both. T3 Code uses the upstream **Nightly** channel (`t3-code@nightly` on desktop Macs); choose and authenticate an agent provider inside T3 Code, then run `herdr` to start a Herdr workspace. Homebrew owns desktop updates. Reapply the source to reconcile the official CLI installer to Nightly; `t3 update` follows the CLI channel. Choose **Both** in the multiplexer interview if you want to practice the tmux curriculum alongside Herdr. Shared setup and Tailscale guidance lives in [`groundwork-core/docs/ai-tools-and-remote-access.md`](https://github.com/jasondockery/groundwork-core/blob/main/docs/ai-tools-and-remote-access.md).
+- [ ] **Tailscale** — the Brewfile installs it where Homebrew is present. Headless or ARM64 Linux hosts without Homebrew need the official native package first; follow the [platform remote-access steps](docs/remote-access.md). Sign in to your tailnet, approve the device if required, and use its MagicDNS name for private access. The [shared Tailscale guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/tailscale.md) covers policy. Desktop Macs use the Tailscale app and Remote Login for incoming SSH.
+- [ ] **Learning tracks** — the browser/Three.js FPS track starts at `docs/game-dev.html` and needs no Unity install. If you enabled `game_dev`, open Unity Hub, install the latest Unity 6 LTS editor, add the WebGL module, then follow `docs/game-dev-unity.html`. The web, app, and image/video tracks live at `docs/web-dev.html`, `docs/app-dev.html`, and `docs/gen-media.html`.
+- [ ] **Work Mac only** — start the Docker daemon: `colima start`.
+
+## Work vs personal
+
+For a desktop Mac, open **T3 Code (Nightly)** and confirm its version/channel before signing in to a provider. On Apple Silicon, apply also reconciles the standalone `t3` CLI to Nightly, including an earlier Stable install in `~/.local/bin`. Homebrew owns the desktop app; the official CLI installer and `t3 update` own the standalone command. Intel Macs use the desktop app. An existing Stable desktop app stays installed; select the Nightly app in your launcher.
+
+One repo, both machines. The `work` flag (answered at init) gates the work Mac:
+
+- **Off work:** Claude Code + the Claude app, Codex (CLI + app), ChatGPT, Grok Build, Cursor, OpenCode, Zed, Obsidian, Docker Desktop, and AppCleaner. (Chrome, Karabiner, Raycast, BetterDisplay, and core terminal tools install on both machines.)
+- **On work:** Docker becomes Colima + the Docker CLI (license-free). Confirm your employer permits the AI tools before enabling them there.
+
+## Daily use
+
+```bash
+groundwork-help                     # show Groundwork commands, aliases, keys, and helper scripts
+groundwork-help update              # filter the command catalog
+groundwork-docs                     # open the docs from the active Groundwork source checkout
+largest ~                           # find large files/folders, then show cleanup guidance
+groundwork-doctor                   # read-only health report, including Karabiner process memory and legacy Docker proof tags
+groundwork-karabiner-restart        # supported restart request; succeeds only after the root Core Service PID changes
+groundwork-docker-tidy              # dry-run tidy of ephemeral-labeled Docker scratch images, by enumeration (--yes to act)
+groundwork-docker-cache-tidy        # DAEMON-WIDE Docker cleanup preview (all projects; owner-run only, --yes to act)
+groundwork-docker-build-scratch review . --rm-after   # proof-only build that removes itself on success
+groundwork-repos                    # table of every discovered repo: branch, dirty/clean, ahead/behind
+groundwork-repos pick               # fuzzy-pick a repo -> its lazygit tmux window (prefix+F in tmux)
+groundwork-repos changed            # lazygit window per dirty repo (prefix+G in tmux)
+scripts/validate-groundwork         # validate/lint the repo before commit/release
+pnpm toolchain:sync                 # derive repo adapters from .node-version + packageManager
+pnpm check:toolchain                # prove exact runtimes, Corepack ownership, and adapter parity
+pnpm check:outdated                 # show lockfile, compatible, mature, registry, toolchain, and policy evidence
+browser-extensions --open       # open vetted browser add-ons for Chrome
+raycast-extensions --open       # open recommended Raycast Store entries
+chezmoi diff                 # preview pending changes before applying
+chezmoi apply                # apply source -> home
+chezmoi update               # git pull + apply managed config
+update-all                   # configuration + upgrades + safe automatic maintenance
+chezmoi edit ~/.zshrc        # edit a managed file at its source
+chezmoi cd                   # shell into the source repo to commit/push
+
+new-project myapp            # scaffold AGENTS.md + .agents/ + vendor symlinks in a repo
+new-wiki ~/code/notes        # scaffold an LLM knowledge wiki repo
+```
+
+The root package metadata is dependency-free contributor tooling, not a new installation requirement. Bootstrap, chezmoi application, `update-all`, and installed Groundwork commands do not require `pnpm install`; the canonical validator invokes the Node toolchain check directly so it can diagnose a broken project-local pnpm path.
+
+`update-all` is the one normal maintenance command. Advanced package-manager
+report, repair, force, and pending-acknowledgement forms remain discoverable
+with `groundwork-help maintenance`.
+Pending maintenance is normally retried by `update-all`; use
+`groundwork-cleanup --yes` to retry without repeating upgrades. `--force` is
+only a pnpm-cadence override. Retry only the label-scoped Docker lane with
+`groundwork-docker-tidy --yes`; daemon-wide Docker cleanup stays owner-run.
+
+> If `chezmoi apply` says **"run chezmoi init first,"** the config template (`.chezmoi.toml.tmpl`) changed. Run `chezmoi init` (it only regenerates the config and won't re-ask questions you've already answered), then `chezmoi apply`. This is expected after pulling changes that touch the prompts or defaults.
+
+Capturing what you install over time:
+
+```bash
+brew bundle dump --file=~/.config/homebrew/Brewfile --describe   # snapshot brew
+code --list-extensions > ~/vscode-extensions.txt                 # snapshot VS Code, then: chezmoi add ~/vscode-extensions.txt
+mkdir -p ~/.config/mise/conf.d
+mise use --minimum-release-age 5d --path ~/.config/mise/conf.d/90-personal-tools.toml npm:<pkg>@latest  # personal cross-project Node CLI
+```
+
+## What's where
+
+Groundwork is a normal visible project checkout, defaulting to `~/code/groundwork-mac`. An older checkout may still be at `~/code/groundwork`. The `.chezmoiroot` file tells chezmoi that only `home/` maps into your home folder. Everything outside `home/` is repo documentation, scaffolding, or project tooling.
+
+```text
+.chezmoiroot                           # points chezmoi at home/
+AI_THESIS.md -> home/.chezmoitemplates/ai-thesis.md
+                                       # canonical AI-native north star
+bootstrap-mac.sh                       # new-Mac bootstrap script
+AGENTS.md                              # operational agent instructions for this Groundwork repo
+.claude/skills -> ../skills            # project-skill discovery, canonical files stay in skills/
+.agents/skills -> ../skills            # Codex project-skill discovery, same canonical tree
+.codex/skills -> ../skills             # same canonical skills tree for tools using the older vendor path
+skel/llm-wiki/                         # the `new-wiki` knowledge-base scaffold
+docs/                                  # documentation source, published to the public site
+scripts/validate-groundwork                # local validation + ShellCheck linting mirrored by CI
+home/
+  .chezmoitemplates/ai-thesis.md       # one source for the AI-native thesis rendered into adapters
+  .chezmoi.toml.tmpl                   # the init prompts + per-machine data
+  dot_zshrc.tmpl                       # zsh config and aliases
+  dot_gitconfig.tmpl                   # git config (incl. the gh credential helper)
+  dot_zsh_plugins.txt                  # antidote plugin list
+  dot_claude/CLAUDE.md.tmpl            # Claude Code adapter: shared thesis + Claude-only notes
+  dot_codex/AGENTS.md.tmpl             # Codex adapter: shared thesis + Codex-only notes
+  dot_config/
+    ghostty/config                     # terminal
+    tmux/tmux.conf.tmpl                # tmux
+    starship.toml                      # prompt
+    mise/config.toml                   # runtime / tool versions
+    private_karabiner/modify_karabiner.json # keyboard rule merged into Karabiner's app-owned JSON (700 dir, matching the app)
+    homebrew/Brewfile.tmpl             # everything Homebrew installs
+  dot_local/bin/executable_new-project # per-repo AGENTS.md + .agents/ scaffolder
+  dot_local/bin/executable_groundwork-help # installed command catalog helper
+  dot_local/bin/executable_groundwork-docs # opens docs from the active chezmoi source checkout
+  dot_local/bin/executable_update-all  # stable launcher: sync Groundwork, exec fresh runner
+  dot_local/bin/executable_groundwork-update-run.tmpl # post-sync update stages (brew, mise, AI tools)
+  dot_local/bin/executable_groundwork-cleanup # package-manager report, cadence, cleanup receipts, pending state
+  dot_local/bin/executable_groundwork-platform # reports darwin / linux / wsl2 / wsl1 / wsl-unknown / unsupported
+  dot_local/bin/executable_groundwork-distro # reports the distro ID; --family reports debian / fedora / arch / opensuse / unknown
+  dot_local/bin/executable_largest    # guided largest-file/folder scanner over dust
+  dot_local/bin/executable_groundwork-doctor # read-only machine health report
+  dot_local/bin/executable_groundwork-karabiner-restart # supported restart plus root Core Service PID verification
+  dot_local/bin/executable_groundwork-docker-tidy # label-scoped Docker tidy by enumeration, dry run by default
+  dot_local/bin/executable_groundwork-docker-cache-tidy # daemon-wide Docker cleanup, owner-run only
+  dot_local/bin/executable_groundwork-docker-build-scratch # disposable-build wrapper: labels + scratch tag
+  dot_local/share/groundwork/lib/docker-scan.sh # shared read-only scanner behind tidy and doctor
+  dot_local/share/groundwork/lib/karabiner.sh # shared version, support, process, memory, and restart facts
+  dot_local/bin/executable_groundwork-repos # discover repos under configured roots; picker, status, dirty-repo windows
+  dot_local/bin/executable_raycast-extensions.tmpl
+                                      # Raycast Store extension checklist helper
+  dot_local/share/groundwork/commands.tsv  # source for groundwork-help
+  dot_local/share/groundwork/raycast-extensions.tsv
+                                      # source for raycast-extensions
+  vscode-extensions.txt.tmpl           # VS Code / Cursor extension list
+  Library/.../Code/User/               # VS Code settings + snippets
+  run_*.sh.tmpl                        # install/setup scripts, run in numeric order
+```
+
+In short: managed configs live under `home/dot_config/`; the `home/run_` scripts do installs and machine setup; global AI standards are in `AGENTS.md`; and `new-project` (installed to `~/.local/bin`) scaffolds per-repo AI guides.
+
+## Releases & versioning
+
+Groundwork uses semantic versioning — `vMAJOR.MINOR.PATCH` (e.g. `v1.0.0`),
+the same scheme as its sibling project. Minor bumps add or revise content;
+major bumps restructure the path. The git tag is the single source of
+truth: the Pages build stamps the latest tag into every docs footer with a
+link to [release notes](https://github.com/jasondockery/groundwork/releases)
+(auto-generated from conventional commits). Versions are never hand-edited
+into HTML; a local checkout's footers honestly read `dev`, so only the
+published site ever claims a version. To view docs locally with your
+exact checkout stamped in (tag + short commit SHA + dirty marker), run
+`scripts/serve-docs.sh`.

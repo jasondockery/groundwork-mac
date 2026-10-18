@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+{{ if and (eq .chezmoi.os "darwin") (not .headless) -}}
+# Finder: show extensions + hidden files, path/status bars, search current folder,
+# full POSIX path in the title bar, and list view as the default.
+defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+defaults write com.apple.finder AppleShowAllFiles -bool true
+defaults write com.apple.finder ShowPathbar -bool true
+defaults write com.apple.finder ShowStatusBar -bool true
+defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
+defaults write com.apple.finder _FXShowPosixPathInTitle -bool true
+defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
+defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true
+chflags nohidden "$HOME/Library" 2>/dev/null || true
+
+# Safari/WebKit: expose developer tools for quick web debugging.
+defaults write com.apple.Safari IncludeDevelopMenu -bool true 2>/dev/null || true
+defaults write com.apple.Safari WebKitDeveloperExtrasEnabledPreferenceKey -bool true 2>/dev/null || true
+defaults write NSGlobalDomain WebKitDeveloperExtras -bool true 2>/dev/null || true
+
+# Keyboard: disable the press-and-hold accent menu so holding a letter REPEATS it
+# instead of opening the diacritic picker — the behavior vim/nvim motions assume.
+# Read at app launch, so these fully apply after a logout/login.
+defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
+{{/* KeyRepeat is the interval BETWEEN repeats, InitialKeyRepeat the delay BEFORE
+repeating starts; lower is faster for both.
+
+The absent-key fallback is STANDARD, not the recommended fast, and that asymmetry
+is the point. Groundwork shipped 2/15 unconditionally before this question
+existed, so every already-installed machine has no key_repeat in its chezmoi
+data. Treating "field absent" as "fast" would silently speed up every existing
+user's keyboard on their next apply — a change they never asked for, presented
+as a choice they never saw. Absent means "predates the question", so it means
+"keep what you already had". Fast is the default for people who are ASKED: new
+installs, and anyone re-running the interview or `groundwork-configure`.
+
+A malformed stored value takes the same path for the same reason — when the
+answer cannot be read, changing the user's typing speed is the wrong guess. */ -}}
+{{- $keyRepeat := "standard" -}}
+{{- if hasKey . "key_repeat" -}}
+{{- $stored := toString .key_repeat -}}
+{{- if or (eq $stored "fast") (eq $stored "standard") (eq $stored "aggressive") -}}
+{{- $keyRepeat = $stored -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $keyRepeat "standard" }}
+# Key repeat: standard.
+defaults write NSGlobalDomain KeyRepeat -int 2
+defaults write NSGlobalDomain InitialKeyRepeat -int 15
+{{- else if eq $keyRepeat "aggressive" }}
+# Key repeat: aggressive — same fast repeat as the default, starts sooner.
+defaults write NSGlobalDomain KeyRepeat -int 1
+defaults write NSGlobalDomain InitialKeyRepeat -int 10
+{{- else }}
+# Key repeat: fast (the recommended default).
+defaults write NSGlobalDomain KeyRepeat -int 1
+defaults write NSGlobalDomain InitialKeyRepeat -int 15
+{{- end }}
+
+# Dock: hide recently-used apps.
+defaults write com.apple.dock show-recents -bool false
+
+# Screenshots: save to ~/Pictures/Screenshots instead of the Desktop. Screenshot
+# churn is the single biggest source of Desktop clutter, and the Desktop is
+# often synced through iCloud Drive, so every throwaway capture becomes upload
+# traffic. Pictures is where macOS already expects image files to live.
+#
+# This is a supported preference, not a hack: the Screenshot app exposes the
+# same "Save to" choice in its Options menu, so the GUI and this write agree.
+# Groundwork does NOT change whether desktop items are visible; that is a
+# subjective UI preference and stays at the macOS default. Use System Settings →
+# Desktop & Dock → Desktop & Stage Manager → "Show Items" if you want it.
+#
+# The directory is created first because the setting points at a path macOS
+# does not create for you; screencapture fails silently if it is missing.
+mkdir -p "$HOME/Pictures/Screenshots"
+defaults write com.apple.screencapture location -string "$HOME/Pictures/Screenshots"
+
+killall Finder 2>/dev/null || true
+killall Dock 2>/dev/null || true
+# SystemUIServer owns the screencapture preference; without this the new
+# location applies only after the next login.
+killall SystemUIServer 2>/dev/null || true
+
+# Stop Chrome's built-in password manager from competing with your third-party
+# manager. Verify at chrome://policy. Safari and iOS are toggled manually.
+{{ if ne .password_manager "none" -}}
+defaults write com.google.Chrome PasswordManagerEnabled -bool false
+{{- end }}
+
+# Personal preference — uncomment if you want it:
+# defaults write com.apple.dock autohide -bool true
+
+# Groundwork installs Chrome but never changes the macOS default-browser
+# association. Run `defaultbrowser` yourself if you want to inspect or change it;
+# macOS requires a confirmation that automation must not bypass.
+{{- end }}

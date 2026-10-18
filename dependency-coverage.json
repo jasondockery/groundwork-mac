@@ -1,0 +1,220 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jasondockery/renovate-config/main/specs/dependency-coverage.schema.json",
+  "schemaVersion": 2,
+  "repository": "jasondockery/groundwork-mac",
+  "scanSuppressions": [
+    {
+      "pathPattern": "^scripts/validate-groundwork$",
+      "pattern": "digest",
+      "linePattern": "sha256:(?:a{64}|b{64}|c{64}|e{64}|f{64})\\b",
+      "expectedMatches": 38,
+      "reason": "Synthetic sha256 values in validator fixtures exercise Docker cleanup identity; they are not upstream dependency pins."
+    },
+    {
+      "pathPattern": "^scripts/ci_receipt\\.py$",
+      "pattern": "version-assignment",
+      "linePattern": "^SCHEMA_VERSION = 1$",
+      "expectedMatches": 1,
+      "reason": "SCHEMA_VERSION versions Groundwork's internal CI receipt format, not an external dependency."
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "node-runtime",
+      "classification": "built-in",
+      "manager": "nodenv",
+      "paths": [".node-version"],
+      "canonical": ".node-version",
+      "agePolicy": "renovate-minimum-release-age",
+      "compensatingControl": "toolchain sync, required CI, and owner review keep adapters atomic.",
+      "extractionMatchers": [{ "manager": "nodenv", "packageFilePattern": "^\\.node-version$", "depNamePattern": "^node$" }],
+      "note": "Renovate updates the Node authority; toolchain:sync derives adapters."
+    },
+    {
+      "id": "pnpm-runtime",
+      "classification": "built-in",
+      "manager": "npm",
+      "paths": ["package.json"],
+      "canonical": "package.json#packageManager",
+      "agePolicy": "renovate-minimum-release-age",
+      "compensatingControl": "Corepack owns selection and check:toolchain rejects competing owners or partial mirrors.",
+      "extractionMatchers": [{ "manager": "npm", "packageFilePattern": "^package.json$", "depNamePattern": "^(?:node|pnpm)$" }],
+      "note": "packageManager is the sole pnpm authority."
+    },
+    {
+      "id": "toolchain-adapters",
+      "classification": "derived",
+      "manager": "toolchain-sync",
+      "paths": [".nvmrc", "mise.toml", "package.json", "tools/toolchain-contract.mjs"],
+      "canonical": ".node-version and package.json#packageManager",
+      "agePolicy": "not-applicable",
+      "compensatingControl": "toolchain:sync derives adapters and check:toolchain proves the transformation is a no-op.",
+      "scanMatchers": [{ "pathPattern": "^mise\\.toml$", "pattern": "version-assignment" }],
+      "note": "mise owns Node only; it never declares pnpm."
+    },
+    {
+      "id": "container-images",
+      "classification": "built-in",
+      "manager": "dockerfile",
+      "paths": ["Dockerfile"],
+      "canonical": "Dockerfile",
+      "agePolicy": "unsupported-by-renovate",
+      "compensatingControl": "Tag-and-digest pins, disposable Docker proof, and required CI govern routine image maintenance; Ubuntu base-image majors additionally require Dependency Dashboard approval and deliberate owner migration review.",
+      "extractionMatchers": [
+        { "manager": "dockerfile", "packageFilePattern": "^Dockerfile$", "depNamePattern": ".+" }
+      ],
+      "scanMatchers": [
+        { "pathPattern": "^Dockerfile$", "pattern": "container-reference" },
+        { "pathPattern": "^Dockerfile$", "pattern": "digest" }
+      ],
+      "note": "Renovate owns routine Dockerfile frontend and Ubuntu tag/digest maintenance. An Ubuntu major is a platform migration held by Groundwork's local approval rule, and digest updates do not receive a universal release-age guarantee."
+    },
+    {
+      "id": "github-actions-runners-and-containers",
+      "classification": "built-in",
+      "manager": "github-actions",
+      "paths": [".github/workflows"],
+      "canonical": ".github/workflows",
+      "agePolicy": "unsupported-by-renovate",
+      "compensatingControl": "Immutable SHAs and digests, Zizmor, exact-SHA CI, consumer validation, and owner review govern these updates.",
+      "extractionMatchers": [
+        { "manager": "github-actions", "packageFilePattern": "^\\.github/workflows/", "depNamePattern": ".+" }
+      ],
+      "scanMatchers": [
+        { "pathPattern": "^\\.github/workflows/", "pattern": "workflow-reference" },
+        { "pathPattern": "^\\.github/workflows/", "pattern": "container-reference" },
+        { "pathPattern": "^\\.github/workflows/", "pattern": "digest" }
+      ],
+      "note": "Renovate extracts action SHAs, version comments, runner labels, and workflow containers; pin and digest update types are outside the five-day guarantee. GHCR does not expose releaseTimestamp for Gitleaks tags, so renovate.json disables the age check only for that exact tag-and-digest-pinned dependency."
+    },
+    {
+      "id": "shared-preset-reference",
+      "classification": "built-in",
+      "manager": "renovate-config",
+      "paths": ["renovate.json"],
+      "canonical": "renovate.json#extends",
+      "agePolicy": "not-applicable",
+      "compensatingControl": "Immutable published preset releases, exact consumer CI, and human review govern version bumps.",
+      "extractionMatchers": [
+        { "manager": "renovate-config", "packageFilePattern": "^renovate.json$", "depNamePattern": "^jasondockery/renovate-config$" }
+      ],
+      "note": "The reference pins the immutable 1.0.0 release; Renovate can propose later preset versions as reviewable consumer changes."
+    },
+    {
+      "id": "shell-quality-tools",
+      "classification": "intentional-manual",
+      "manager": "scripts/update-shell-tool-pins",
+      "paths": ["tools/shell-tools.env", "scripts/update-shell-tool-pins", "scripts/ensure-shell-tools"],
+      "canonical": "tools/shell-tools.env",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "The updater refreshes four platform checksums atomically and the validator rejects a version/checksum mismatch.",
+      "scanMatchers": [
+        { "pathPattern": "^(?:tools/shell-tools\\.env|scripts/(?:update-shell-tool-pins|ensure-shell-tools))$", "pattern": "version-assignment" },
+        { "pathPattern": "^scripts/(?:update-shell-tool-pins|ensure-shell-tools)$", "pattern": "release-download" }
+      ],
+      "note": "ShellCheck and shfmt require one bounded repository command rather than an unsafe version-only edit."
+    },
+    {
+      "id": "homebrew-packages",
+      "classification": "intentional-manual",
+      "manager": "update-all",
+      "paths": ["home/dot_config/homebrew/Brewfile.tmpl", "home/dot_local/bin/executable_groundwork-update-run.tmpl"],
+      "canonical": "home/dot_config/homebrew/Brewfile.tmpl",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "Homebrew channel provenance, Groundwork's update transaction, and managed cask checksum policy govern installed releases.",
+      "note": "Homebrew owns installed formula and cask versions; Renovate does not edit the Brewfile."
+    },
+    {
+      "id": "mise-runtime-channels",
+      "classification": "intentional-manual",
+      "manager": "update-all-mise",
+      "paths": ["home/dot_config/mise/config.toml", "home/dot_local/bin/executable_groundwork-update-run.tmpl"],
+      "canonical": "home/dot_config/mise/config.toml",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy before changing a machine runtime.",
+      "scanMatchers": [
+        { "pathPattern": "^home/dot_config/mise/config\\.toml$", "pattern": "version-assignment" }
+      ],
+      "note": "Renovate can extract this well-known mise path, so renovate.json explicitly excludes it and leaves update-all as the sole mutation owner."
+    },
+    {
+      "id": "corepack-runtime",
+      "classification": "intentional-manual",
+      "manager": "repository-review",
+      "paths": ["home/dot_local/share/groundwork/node-toolchain.env", "home/run_after_15-pnpm-corepack.sh", "scripts/enable-repository-pnpm"],
+      "canonical": "home/dot_local/share/groundwork/node-toolchain.env",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "The installer and validator enforce the Node/Corepack compatibility boundary before applying the fallback pin.",
+      "scanMatchers": [
+        { "pathPattern": "^(?:home/dot_local/share/groundwork/node-toolchain\\.env|home/run_after_15-pnpm-corepack\\.sh)$", "pattern": "version-assignment" }
+      ],
+      "note": "Corepack compatibility is reviewed deliberately rather than updated as an isolated version token."
+    },
+    {
+      "id": "aider-python-compatibility",
+      "classification": "intentional-manual",
+      "manager": "compatibility-review",
+      "paths": ["home/run_after_20-tools.sh.tmpl", "home/dot_config/mise/config.toml"],
+      "canonical": "home/run_after_20-tools.sh.tmpl#aider_python",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "The validator requires the intentional Python 3.12 compatibility pin to remain explicit and compatible.",
+      "scanMatchers": [
+        { "pathPattern": "^home/run_after_20-tools\\.sh\\.tmpl$", "pattern": "version-assignment", "linePattern": "aider_python=" }
+      ],
+      "note": "Aider's compatibility runtime is a deliberate exception to the general Python channel."
+    },
+    {
+      "id": "karabiner-compatibility-floor",
+      "classification": "intentional-manual",
+      "manager": "vendor-support-review",
+      "paths": ["home/dot_local/share/groundwork/lib/karabiner.sh", "scripts/test-karabiner-diagnostics"],
+      "canonical": "home/dot_local/share/groundwork/lib/karabiner.sh#GW_KARABINER_MINIMUM_VERSION",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "Vendor support evidence and the doctor regression suite keep the compatibility floor and its fixtures aligned.",
+      "scanMatchers": [
+        {
+          "pathPattern": "^(?:home/dot_local/share/groundwork/lib/karabiner\\.sh|scripts/test-karabiner-diagnostics)$",
+          "pattern": "version-assignment",
+          "linePattern": "(?:GW_KARABINER_MINIMUM_VERSION|TEST_KARABINER_VERSION=)"
+        }
+      ],
+      "note": "The minimum supported Karabiner version is reviewed from vendor evidence rather than updated as a generic dependency pin."
+    },
+    {
+      "id": "tmux-plugin-release",
+      "classification": "intentional-manual",
+      "manager": "configuration-review",
+      "paths": ["home/dot_config/tmux/tmux.conf.tmpl"],
+      "canonical": "home/dot_config/tmux/tmux.conf.tmpl",
+      "agePolicy": "unsupported-by-renovate",
+      "compensatingControl": "Terminal-interaction review and live tmux verification are required for a plugin release change.",
+      "scanMatchers": [
+        { "pathPattern": "^home/dot_config/tmux/tmux\\.conf\\.tmpl$", "pattern": "plugin-reference" }
+      ],
+      "note": "The Catppuccin tmux release changes only with the surrounding user-interaction contract."
+    },
+    {
+      "id": "workflow-policy-fixtures",
+      "classification": "derived",
+      "manager": "validator-fixture",
+      "paths": ["tests/fixtures/workflow-timeouts"],
+      "canonical": "scripts/check-workflow-receipt-policy",
+      "agePolicy": "not-applicable",
+      "compensatingControl": "These deliberately valid and invalid workflow snippets exercise policy rejection; they are never executed as repository workflows.",
+      "scanMatchers": [
+        { "pathPattern": "^tests/fixtures/workflow-timeouts/", "pattern": "workflow-reference" }
+      ],
+      "note": "Workflow syntax fixtures may contain intentionally unpinned references that are test input rather than live dependencies."
+    },
+    {
+      "id": "headless-release-assets",
+      "classification": "intentional-manual",
+      "manager": "install-time-release-discovery",
+      "paths": ["Dockerfile", "scripts", "home/run_after_19-herdr.sh.tmpl"],
+      "canonical": "Dockerfile and headless installer scripts",
+      "agePolicy": "unsupported-by-renovate",
+      "compensatingControl": "Installers use bounded official release discovery, published checksum verification where available, and disposable image proof.",
+      "note": "Headless release assets are not static Renovate edit targets. Missing Herdr uses the bounded official stable installer, which requires the release manifest's SHA-256 digest. Existing package-managed installs stay with their package manager; direct installs use herdr update."
+    }
+  ]
+}

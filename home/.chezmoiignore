@@ -1,0 +1,15 @@
+{{- $terminalMultiplexer := includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim -}}
+.DS_Store
+{{ if or (ne .chezmoi.os "darwin") .headless }}
+Library/**
+.config/karabiner/**
+vscode-extensions.txt
+{{ end }}
+{{- $work := and (hasKey . "work") .work }}
+{{ if or (ne .chezmoi.os "darwin") (not $work) }}
+.colima/**
+{{ end }}
+{{ if and (ne $terminalMultiplexer "tmux") (ne $terminalMultiplexer "both") }}
+.config/tmux/**
+.config/sesh/**
+{{ end }}

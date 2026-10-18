@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The goal is boring in the best way: every coding assistant sees the same project expectations, and tool-specific files stay tiny. That keeps instructions…">
+<title>AI agents &amp; project instructions · Groundwork</title>
+<meta property="og:site_name" content="Groundwork">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jasondockery.github.io/groundwork/agents.html">
+<meta property="og:title" content="AI agents &amp; project instructions · Groundwork">
+<meta property="og:description" content="The goal is boring in the best way: every coding assistant sees the same project expectations, and tool-specific files stay tiny. That keeps instructions…">
+<meta property="og:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI agents &amp; project instructions · Groundwork">
+<meta name="twitter:description" content="The goal is boring in the best way: every coding assistant sees the same project expectations, and tool-specific files stay tiny. That keeps instructions…">
+<meta name="twitter:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<link rel="canonical" href="https://jasondockery.github.io/groundwork/agents.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("fg-theme");
+    if (!theme && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="topbar">
+  <span class="name">Groundwork</span>
+  <button class="icon-btn" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Open navigation">☰ menu</button>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="layout">
+  <aside id="site-sidebar" class="sidebar">
+    <div class="brand-row">
+      <a class="brand" href="index.html">
+      <span class="mark">AI-native</span>
+      <span class="name">Groundwork</span>
+      </a>
+      <a class="repo-link" href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener" aria-label="View Groundwork on GitHub">GitHub</a>
+      <button class="icon-btn nav-close" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Close navigation">close menu</button>
+    </div>
+    <nav class="site-nav" aria-label="Documentation">
+    <section class="nav-group">
+      <h2 class="nav-heading">Start here</h2>
+      <a href="index.html">Overview</a>
+      <a href="why.html">Why Groundwork</a>
+      <a href="path.html">The path</a>
+      <a href="agentic-engineering.html">Vibe &rarr; agentic</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="practice.html">Practice plan</a>
+      <a href="groundwork-twelve.html">Groundwork Twelve</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Set up</h2>
+      <a href="setup.html">Setup &amp; chezmoi</a>
+      <a href="platforms.html">Platforms</a>
+      <a href="customizing.html">Customizing</a>
+      <a href="development.html">Development</a>
+      <a href="installed.html">What&apos;s installed</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Foundations</h2>
+      <a href="command-line.html">Command line &amp; Unix</a>
+      <a href="shell.html">Shell &amp; CLI</a>
+      <a href="herdr.html">Herdr</a>
+      <a href="tmux.html">tmux</a>
+      <a href="tmux-repository-windows.html">tmux repo windows</a>
+      <a href="neovim.html">Neovim</a>
+      <a href="git.html">Git</a>
+      <a href="lazygit.html">lazygit</a>
+      <a href="data.html">Data &amp; storage</a>
+      <a href="editors-ai.html">Editors &amp; AI</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Daily workflow</h2>
+      <a href="workflow.html">Everyday workflow</a>
+      <a href="repo-navigation.html">Repo navigation</a>
+      <a href="new-project.html">Starting a project</a>
+      <a href="knowledge.html">Knowledge base</a>
+      <a href="dependencies.html">Dependencies</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Directing agents</h2>
+      <a href="agents.html" class="active">AI agents &amp; rules</a>
+      <a href="worktrees.html">Worktrees &amp; parallel agents</a>
+      <a href="specs.html">Specs &amp; targets</a>
+      <a href="skills-playbooks.html">Skills &amp; playbooks</a>
+      <a href="ai-budget.html">Know your AI budget</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">AI tools</h2>
+      <a href="claude.html">Claude &amp; Claude Code</a>
+      <a href="codex.html">Codex UI &amp; CLI</a>
+      <a href="gpt.html">GPT &amp; ChatGPT</a>
+      <a href="glm.html">GLM &amp; open models</a>
+      <a href="grok.html">Grok &amp; Grok Build</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Interest tracks</h2>
+      <a href="game-dev.html">FPS &middot; Browser</a>
+      <a href="game-dev-unity.html">FPS &middot; Unity</a>
+      <a href="game-dev-learn.html">FPS &middot; Learn dev</a>
+      <a href="web-dev.html">Web &amp; sites</a>
+      <a href="app-dev.html">Apps</a>
+      <a href="gen-media.html">Image &amp; video</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Mac desktop</h2>
+      <a href="macos.html">macOS desktop</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a href="apps.html">Apps &amp; browsers</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Reference</h2>
+      <a href="cheatsheet.html">Cheat sheet</a>
+      <a href="commands.html">Command catalog</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="resources.html">Resource library</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+    </section>
+    </nav>
+    <button class="icon-btn theme-toggle" data-theme-toggle><span data-theme-label>◑ Latte</span></button>
+  <p class="sidebar-meta">Built by <a href="https://www.linkedin.com/in/jasondockery/" target="_blank" rel="noopener">Jason Dockery</a></p>
+  </aside>
+
+  <main id="main" class="main">
+    <div class="content">
+      <p class="eyebrow">AI-native development</p>
+      <h1>Use one agent contract, then teach tools to point at it.</h1>
+      <p class="lead">The goal is boring in the best way: every coding assistant sees the same project expectations, and tool-specific files stay tiny. That keeps instructions easy to audit, easy to teach, and hard to accidentally contradict.</p>
+
+      <div class="trigger"><b>When you'll want this</b> You keep re-explaining the same project context, standards, and verification steps every session.</div>
+
+<div class="callout note">
+  <span class="label">Current pattern</span>
+  <p><code>AI_THESIS.md</code> is the canonical north star. <code>AGENTS.md</code> is the operational repo contract. Tool-specific files should be thin adapters or rendered wrappers, not parallel policy documents.</p>
+</div>
+<div class="callout tip">
+  <span class="label">Why this matters</span>
+  <p>This is where agentic engineering becomes repeatable. A vibe-coding session depends on what you remember to say. An agentic workflow gives every agent the same project contract, verification habits, and boundaries before the work starts.</p>
+</div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>The file layout</h2>
+      <table class="keytable">
+        <tr><td><code>AI_THESIS.md</code></td><td>The canonical AI-native north star. It points to <code>home/.chezmoitemplates/ai-thesis.md</code>, so the same source can render into global agent adapters.</td></tr>
+        <tr><td><code>AGENTS.md</code></td><td>The operational project contract: how to work, how to verify, what not to break, and what a good finish looks like.</td></tr>
+        <tr><td><code>home/dot_claude/CLAUDE.md.tmpl</code></td><td>Renders the shared thesis plus a short Claude-only adapter into <code>~/.claude/CLAUDE.md</code>.</td></tr>
+        <tr><td><code>home/dot_codex/AGENTS.md.tmpl</code></td><td>Renders the shared thesis plus a short Codex-only adapter into <code>~/.codex/AGENTS.md</code>.</td></tr>
+        <tr><td><code>home/dot_codex/modify_private_config.toml</code></td><td>Preserves Codex's private, app-managed settings while enabling the user shell profile, so repository tool versions resolve normally in agent commands.</td></tr>
+        <tr><td><code>skills/</code></td><td>The canonical repo-local procedures. Each skill is a folder with a <code>SKILL.md</code> entrypoint, used for work that is repeated and easy to get subtly wrong.</td></tr>
+        <tr><td><code>.claude/skills</code></td><td>A symlink to <code>skills/</code> so Claude Code can discover project skills through its normal project-skill path.</td></tr>
+        <tr><td><code>.agents/skills</code></td><td>A symlink to <code>skills/</code> so Codex can discover project skills through its normal project-skill path.</td></tr>
+        <tr><td><code>.codex/skills</code></td><td>A symlink to <code>skills/</code> for tools using the older vendor skill directory. Keep the source in <code>skills/</code>, not copied per tool.</td></tr>
+        <tr><td><code>AI_RULES.md</code></td><td>Not needed here. Add it only in larger repos where durable policy grows too large for <code>AGENTS.md</code>.</td></tr>
+      </table>
+
+      <p>Groundwork also puts mise shims on the login-shell path through <code>~/.zprofile</code>. Codex and IDE commands can therefore select the current repository's declared Node, Python, or other tool version without hardcoding an installation path. The full interactive mise hook remains in <code>~/.zshrc</code>; <code>mise exec</code> is a fallback, not the permanent command style.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>What belongs where</h2>
+      <p>Use the narrowest durable home for each kind of guidance:</p>
+      <table class="keytable">
+        <tr><td><code>AI_THESIS.md</code></td><td>Product direction: what Groundwork is, why it is AI-native, and the operating principles that prevent drift.</td></tr>
+        <tr><td><code>AGENTS.md</code></td><td>Repo operations: working style, safety, Git, verification, docs style, and source-of-truth rules.</td></tr>
+        <tr><td><code>skills/</code></td><td>Repeatable procedures such as docs alignment, validation, chezmoi changes, and macOS defaults.</td></tr>
+        <tr><td>Tool adapters</td><td>Only tool-specific discovery or display notes. Shared policy, prompts, and procedures belong elsewhere.</td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>What belongs in AGENTS.md</h2>
+      <p>Write the things you would tell a capable new teammate before they make their first change:</p>
+      <ul>
+        <li>How the project is organized.</li>
+        <li>How to install, build, test, lint, and preview changes.</li>
+        <li>Code style, doc style, naming conventions, and commit conventions.</li>
+        <li>Safety rules: secrets, destructive commands, migrations, production data, and generated files.</li>
+        <li>What verification means before the agent says it is done.</li>
+      </ul>
+      <p>Keep it short enough that an agent can read it every time. If a section turns into a long procedure, move that procedure into a skill or a normal doc and link to it. If it is about Groundwork's long-term AI-native direction, put it in <code>AI_THESIS.md</code> instead.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>When a skill is worth creating</h2>
+      <p>A skill is useful when the workflow is repeated, procedural, and easy to get subtly wrong — and it is not a second rulebook: anything the agent must always obey belongs in <code>AGENTS.md</code>. The full treatment, with worked examples from this repo, lives on <a href="skills-playbooks.html">Skills &amp; playbooks</a>.</p>
+
+      <h2 id="direct-one-agent-well-then-direct-many"><span class="hash" aria-hidden="true">#</span>Direct one agent well, then direct many</h2>
+      <p>Once you can hand a single agent a clean task and review the result, the next move is to stop being the only worker. In an orchestrated setup you become the <strong>orchestrator</strong>: one agent plans and delegates, and other agents (subagents, workers) each own a piece. This is not a new skill so much as three you already practice — decomposition, verification, and context economy — pointed at other agents. Learn to run one agent first; a beginner should not be commanding a fleet before they can direct a pair.</p>
+      <p>The reason it works is <strong>context isolation</strong>: each subagent gets its own context window, so you can hand off a big search or a noisy read and get back only the conclusion, keeping your main thread clean. The patterns are tool-independent — the vocabulary below outlives any product's buttons.</p>
+      <table class="keytable">
+        <tr><td><strong>Fan-out</strong></td><td>Split independent subtasks across parallel agents, then gather. Worth it for breadth and speed when the subtasks do not depend on each other.</td></tr>
+        <tr><td><strong>Pipeline</strong></td><td>Each item flows through ordered stages, such as draft then verify. Worth it for staged work repeated over many items.</td></tr>
+        <tr><td><strong>Supervisor</strong></td><td>One agent plans and delegates; workers execute in isolation. The most predictable pattern and a common production default — the workflow controls the agents, not the reverse.</td></tr>
+        <tr><td><strong>Debate / verify</strong></td><td>Separate agents critique or verify each other's work before you trust it. Your "verify before done" habit, with more independent hands.</td></tr>
+        <tr><td><strong>Swarm</strong></td><td>Many peer agents self-coordinate. The frontier: most capable, least predictable, hardest to supervise. Reach for it last.</td></tr>
+      </table>
+      <p>A few rules separate an orchestration that works from one that quietly lies to you:</p>
+      <ul>
+        <li><strong>Tell every subagent it is a subagent.</strong> Left unsaid, it behaves as a standalone assistant and talks to the user instead of returning results to the orchestrator.</li>
+        <li><strong>Build and test workers in isolation first,</strong> then wire the orchestrator to them. Constraint and predictability are features, not limitations.</li>
+        <li><strong>Keep it observable.</strong> If you cannot watch what each agent did, you cannot review or debug it — and reviewing it is still your job.</li>
+        <li><strong>Test off-target.</strong> Ask for something no worker owns. A sound system returns "nothing found"; a broken one invents a confident answer.</li>
+        <li><strong>Isolate writes.</strong> When agents edit files in parallel, give each its own branch or worktree so they do not clobber each other.</li>
+      </ul>
+      <p>The <em>mechanism</em> moves fast and differs per tool, so learn your tool's current surface the same way you learn its usage gauge. Today that means subagents and <code>/agents</code> in Claude Code, background agents in Cursor, and delegation through their own agent or session configuration in Codex and opencode. The commands will change; the patterns above will not.</p>
+      <div class="callout warn">
+        <span class="label">When not to reach for many agents</span>
+        <p>A single agent is the right default for any task that follows a linear path, fits in one context window, and crosses no hard security boundary. Multi-agent systems burn materially more tokens — Anthropic reports a single agent at roughly <strong>4x</strong> the token use of a chat and a multi-agent system around <strong>15x</strong> — so only pay that cost when the task genuinely decomposes into independent, high-value work. And more agents means more diffs to review: orchestration moves work off your keyboard and onto your judgment, it never removes the human. If step B needs step A's output, or the task is small, keep it one agent.</p>
+      </div>
+      <div class="callout tip">
+        <span class="label">Practice</span>
+        <p>Take one real task. Do it with a single agent and review the diff. Then redo it as a <strong>delegate-and-verify pair</strong>: one agent makes the change, a second, told it is a reviewer, tries to break it. Compare the result <em>and</em> your review effort. You are learning the judgment of when the second agent earned its cost — not the buttons.</p>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Thesis, goals, specs, playbooks: the context agents share</h2>
+      <p>Orchestration only turns "many agents" into "a team" if every agent runs on the same written context. Four layers carry that context, and Groundwork already has a home for each. They overlap on purpose, and sharpening one raises the value of the others.</p>
+      <table class="keytable">
+        <tr><td><strong>Thesis</strong></td><td><code>AI_THESIS.md</code></td><td>Why the work exists and the direction no agent may drift from.</td></tr>
+        <tr><td><strong>Goals</strong></td><td>The objective you set per task</td><td>What "done" means for this specific piece of work.</td></tr>
+        <tr><td><strong>Specs</strong></td><td>A checkable target — a failing test, a mock, acceptance criteria (see <a href="specs.html">Specs &amp; targets</a>)</td><td>The precise contract each agent verifies its own output against.</td></tr>
+        <tr><td><strong>Playbooks</strong></td><td><code>skills/</code> (see <a href="skills-playbooks.html">Skills &amp; playbooks</a>)</td><td>The repeatable <em>how</em>, so every agent runs a procedure the same way.</td></tr>
+      </table>
+      <p>Why this matters more as you add agents, not less: vagueness that costs you one wrong diff with one agent costs you five diverging diffs with five. A sharper spec makes delegation safe, a good playbook makes a worker reliable, and the thesis keeps a swarm from optimizing the wrong thing. The spec habit — and a full worked example from request to shipped — lives on <a href="specs.html">Specs &amp; targets</a>.</p>
+      <p>The thesis layer deserves one concrete illustration, because it is the easiest to dismiss as paperwork. Groundwork&apos;s own thesis (<code>AI_THESIS.md</code>) states, among other things, that every tool page must answer how an agent uses the tool or how it helps a human direct and verify one — and that interface tools are choices, not purity tests. Those two sentences have quietly shaped hundreds of edits by many agents across this site: pages that drifted toward tooling-for-its-own-sake got caught, and nothing ships that talks down to a reader for their editor choice. That is what a thesis is for — not describing the product, but giving every future contributor, human or agent, the same test for "does this belong."</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Know your AI budget</h2>
+      <p>Every serious AI tool runs inside limits — a context window, plan or rate limits, sometimes a spend budget — and long work fails in confusing ways when you hit them blind. The habit and where each tool's gauge lives now have their own page: <a href="ai-budget.html">Know your AI budget</a>. The short version: check your tool's gauge before long work, start big work with room, and reset context deliberately when it's polluted.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Sessions: pick up, hand off, clean up</h2>
+      <p>Three days into the browser FPS track, the terminal window running your agent session closes by accident, or the laptop sleeps overnight, or you simply hit a rate limit before finishing for the day. The next session you open has no memory of the last one: no chat history, no sense of what you decided or why. If the work survives that gap anyway, it is because the state was never really in the conversation. It was in the repo: the plan you wrote down, the commits with real messages, the notes in <code>AGENTS.md</code> about what is verified and what is next. A <strong>session</strong> is the live back-and-forth with the model; it is compute, not memory. The repo is the memory.</p>
+      <p>That gives you a test for whether you packaged the work well: could a brand-new session, with no access to the old chat transcript, read your repo and know what is true? If the honest answer is "only if it reads the transcript too," the work was not handed off, it was just left sitting in a chat window. Write the decision, the progress, and the next step down somewhere a fresh session, or a different tool entirely, can find it.</p>
+      <table class="keytable">
+        <tr><td><strong>Claude Code</strong></td><td><code>claude --continue</code> reopens the most recent session for the current directory. <code>claude --resume</code> opens a session picker across all of them, so name your active sessions before you have several to tell apart. Transcripts are stored as JSONL under <code>~/.claude/projects/</code>. <code>/compact &lt;instructions&gt;</code> summarizes deliberately, telling the model what to keep; automatic compaction also happens on its own once the window fills. The <code>cleanupPeriodDays</code> setting (in <code>settings.json</code>) auto-deletes transcripts older than N days.</td></tr>
+        <tr><td><strong>Codex CLI</strong></td><td><code>codex resume</code> reopens a previous session. Sessions are saved as JSONL under <code>~/.codex/sessions/</code>, and <code>/export</code> saves a readable transcript. There is no automatic cleanup yet, so the sessions directory grows until you prune it yourself.</td></tr>
+        <tr><td>Other tools</td><td>Cursor, Grok, and the rest ship the same shape under different keystrokes: some resume command, a session store on disk, some way to export or summarize. Learn your tool's version the same way you learn its usage gauge: the mechanism moves fast, the pattern does not.</td></tr>
+      </table>
+      <p>When a session fills up mid-task, the default move is not to compact and keep limping along: start a fresh session and re-onboard it from repo state, the same way you would want a teammate to. Compact deliberately, with focus instructions, only when the in-session continuity itself is what you need to keep, such as a long debugging thread where the reasoning matters as much as the code. Starting big work with room, as above, heads off most of this before it starts.</p>
+      <div class="callout tip">
+        <span class="label">Deleting old sessions loses nothing that mattered</span>
+        <p>If the work was packaged the way the handoff test above asks for, an old transcript is disposable. It never touches your code, your commits, or your docs; it is a log of how you got there, not the record of what is true. Clearing it, letting <code>cleanupPeriodDays</code> sweep it, or pruning <code>~/.codex/sessions/</code> by hand costs you nothing but the execution log.</p>
+      </div>
+      <div class="drill">
+        <div class="num">4</div>
+        <div class="body">
+          <h3>Reconstruct without the transcript</h3>
+          <p>Run <code>claude --resume</code> (or <code>codex resume</code>) in a project you have worked in before, find an old session, and reopen it. Then ask yourself: could you have rebuilt the same context from the repo alone, without reading that transcript? If not, that is the gap. Go fix your project's instruction files so the next session does not need the old chat to know what is correct.</p>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Daily agent practice</h2>
+      <p>Practice with agents the same way you practice Vim or tmux: small loops, repeated often, with a human checking the result.</p>
+      <div class="drill">
+        <div class="num">5</div>
+        <div class="body">
+          <h3>Read first</h3>
+          <p>Ask the agent to inspect a config or doc and summarize how it works. Then open the file yourself and see what it missed.</p>
+        </div>
+      </div>
+      <div class="drill">
+        <div class="num">10</div>
+        <div class="body">
+          <h3>Make one small change</h3>
+          <p>Ask for a narrow edit, review the diff, run the check, and ask the agent to explain the risk in one paragraph.</p>
+        </div>
+      </div>
+      <div class="drill">
+        <div class="num">15</div>
+        <div class="body">
+          <h3>Extract a durable rule</h3>
+          <p>If the same correction happens twice, decide whether it belongs in <code>AGENTS.md</code>, a doc, a test, or nowhere. Most preferences do not deserve a permanent rule.</p>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>External references</h2>
+      <ul>
+        <li><a href="https://agents.md/" target="_blank" rel="noopener">AGENTS.md</a> — the open cross-tool format for coding-agent instructions.</li>
+        <li><a href="https://code.claude.com/docs/en/skills" target="_blank" rel="noopener">Claude Code skills</a> — project skills, <code>SKILL.md</code>, and skill discovery paths.</li>
+        <li><a href="https://code.claude.com/docs/en/common-workflows" target="_blank" rel="noopener">Claude Code common workflows</a> — how Claude Code references files and uses project memory.</li>
+        <li><a href="https://code.claude.com/docs/en/monitoring-usage" target="_blank" rel="noopener">Claude Code usage monitoring</a> — the first-party gauge pattern: context, plan limits, and org telemetry.</li>
+        <li><a href="https://developers.openai.com/codex" target="_blank" rel="noopener">OpenAI Codex docs</a> — OpenAI's coding-agent docs and workflows.</li>
+        <li><a href="https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them" target="_blank" rel="noopener">When to use multi-agent systems (and when not to)</a> — Anthropic on the patterns, the costs, and the single-agent default.</li>
+        <li><a href="https://www.anthropic.com/engineering/multi-agent-research-system" target="_blank" rel="noopener">How we built our multi-agent research system</a> — Anthropic's token-cost figures (agents ~4x a chat, multi-agent ~15x) and when the cost is justified.</li>
+        <li><a href="https://blog.allegro.tech/2026/06/spec-driven-development-best-practices.html" target="_blank" rel="noopener">Spec-driven development best practices</a> — a working engineering team on the spec-first approach that grounds agents in a checkable contract before they build.</li>
+      </ul>
+
+      <div class="pagenav">
+        <a href="dependencies.html"><span class="dir">← Prev</span>Dependencies</a>
+        <a href="worktrees.html"><span class="dir">Next →</span>Worktrees &amp; parallel agents</a>
+      </div>
+      <footer class="site">Built to be rebuilt. <a href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener">Open source</a>, no tracking, works offline. · <a class="gw-version" href="https://github.com/jasondockery/groundwork/releases" target="_blank" rel="noopener">dev</a></footer>
+    </div>
+  </main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

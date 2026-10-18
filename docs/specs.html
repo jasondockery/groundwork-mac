@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A spec turns a request into a contract an agent can verify its own work against. This page defines that habit and walks one real request from idea to…">
+<title>Specs &amp; targets · Groundwork</title>
+<meta property="og:site_name" content="Groundwork">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jasondockery.github.io/groundwork/specs.html">
+<meta property="og:title" content="Specs &amp; targets · Groundwork">
+<meta property="og:description" content="A spec turns a request into a contract an agent can verify its own work against. This page defines that habit and walks one real request from idea to…">
+<meta property="og:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Specs &amp; targets · Groundwork">
+<meta name="twitter:description" content="A spec turns a request into a contract an agent can verify its own work against. This page defines that habit and walks one real request from idea to…">
+<meta name="twitter:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<link rel="canonical" href="https://jasondockery.github.io/groundwork/specs.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("fg-theme");
+    if (!theme && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="topbar">
+  <span class="name">Groundwork</span>
+  <button class="icon-btn" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Open navigation">☰ menu</button>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="layout">
+  <aside id="site-sidebar" class="sidebar">
+    <div class="brand-row">
+      <a class="brand" href="index.html">
+      <span class="mark">AI-native</span>
+      <span class="name">Groundwork</span>
+      </a>
+      <a class="repo-link" href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener" aria-label="View Groundwork on GitHub">GitHub</a>
+      <button class="icon-btn nav-close" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Close navigation">close menu</button>
+    </div>
+    <nav class="site-nav" aria-label="Documentation">
+    <section class="nav-group">
+      <h2 class="nav-heading">Start here</h2>
+      <a href="index.html">Overview</a>
+      <a href="why.html">Why Groundwork</a>
+      <a href="path.html">The path</a>
+      <a href="agentic-engineering.html">Vibe &rarr; agentic</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="practice.html">Practice plan</a>
+      <a href="groundwork-twelve.html">Groundwork Twelve</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Set up</h2>
+      <a href="setup.html">Setup &amp; chezmoi</a>
+      <a href="platforms.html">Platforms</a>
+      <a href="customizing.html">Customizing</a>
+      <a href="development.html">Development</a>
+      <a href="installed.html">What&apos;s installed</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Foundations</h2>
+      <a href="command-line.html">Command line &amp; Unix</a>
+      <a href="shell.html">Shell &amp; CLI</a>
+      <a href="herdr.html">Herdr</a>
+      <a href="tmux.html">tmux</a>
+      <a href="tmux-repository-windows.html">tmux repo windows</a>
+      <a href="neovim.html">Neovim</a>
+      <a href="git.html">Git</a>
+      <a href="lazygit.html">lazygit</a>
+      <a href="data.html">Data &amp; storage</a>
+      <a href="editors-ai.html">Editors &amp; AI</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Daily workflow</h2>
+      <a href="workflow.html">Everyday workflow</a>
+      <a href="repo-navigation.html">Repo navigation</a>
+      <a href="new-project.html">Starting a project</a>
+      <a href="knowledge.html">Knowledge base</a>
+      <a href="dependencies.html">Dependencies</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Directing agents</h2>
+      <a href="agents.html">AI agents &amp; rules</a>
+      <a href="worktrees.html">Worktrees &amp; parallel agents</a>
+      <a href="specs.html" class="active">Specs &amp; targets</a>
+      <a href="skills-playbooks.html">Skills &amp; playbooks</a>
+      <a href="ai-budget.html">Know your AI budget</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">AI tools</h2>
+      <a href="claude.html">Claude &amp; Claude Code</a>
+      <a href="codex.html">Codex UI &amp; CLI</a>
+      <a href="gpt.html">GPT &amp; ChatGPT</a>
+      <a href="glm.html">GLM &amp; open models</a>
+      <a href="grok.html">Grok &amp; Grok Build</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Interest tracks</h2>
+      <a href="game-dev.html">FPS &middot; Browser</a>
+      <a href="game-dev-unity.html">FPS &middot; Unity</a>
+      <a href="game-dev-learn.html">FPS &middot; Learn dev</a>
+      <a href="web-dev.html">Web &amp; sites</a>
+      <a href="app-dev.html">Apps</a>
+      <a href="gen-media.html">Image &amp; video</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Mac desktop</h2>
+      <a href="macos.html">macOS desktop</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a href="apps.html">Apps &amp; browsers</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Reference</h2>
+      <a href="cheatsheet.html">Cheat sheet</a>
+      <a href="commands.html">Command catalog</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="resources.html">Resource library</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+    </section>
+    </nav>
+    <button class="icon-btn theme-toggle" data-theme-toggle><span data-theme-label>◑ Latte</span></button>
+  <p class="sidebar-meta">Built by <a href="https://www.linkedin.com/in/jasondockery/" target="_blank" rel="noopener">Jason Dockery</a></p>
+  </aside>
+
+  <main id="main" class="main">
+    <div class="content">
+<p class="eyebrow">Directing agents</p>
+<h1>Ground the work in something checkable before anyone builds.</h1>
+<p class="lead">A spec turns a request into a contract an agent can verify its own work against. This page defines that habit and walks one real request from idea to shipped, verified change — spec, plan, failing test, code, and proof.</p>
+
+<div class="trigger"><b>When you'll want this</b> An agent confidently built the wrong thing, or you're about to delegate something big enough that a wrong guess is expensive.</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>From request to contract</h2>
+<p>A <strong>spec</strong> (specification) is the written answer to one question: how will we know this work is done and correct? It doesn&apos;t need a template or a tool — it needs to be checkable. The lightest useful spec is a sentence with acceptance criteria; the strongest is an artifact the agent can run its own output against. Everything in between counts.</p>
+
+<h2 id="give-agents-a-concrete-target"><span class="hash" aria-hidden="true">#</span>Give agents a concrete target</h2>
+<p>The single highest-leverage change in how you direct an agent: replace descriptions of what you want with an <strong>artifact the agent can check itself against</strong>.</p>
+<ul>
+  <li><strong>A failing test</strong> — the gold standard for behavior. Write (or have the agent write) a test that fails for exactly the bug or missing feature, then ask for the code that makes it pass. That&apos;s the difference between "I think it&apos;s fixed" and "the test passes."</li>
+  <li><strong>A screenshot or mock</strong> — for UI work, an image of the desired result beats paragraphs. The agent can compare its output against it and self-correct across iterations.</li>
+  <li><strong>A desired diff shape</strong> — "touch only these two files and add a flag here" bounds the blast radius before work starts.</li>
+  <li><strong>A sample of the output</strong> — for generators, transformations, and reports, show one correct example.</li>
+</ul>
+<p>The principle underneath: an agent with a checkable target can verify its own work and iterate; an agent with only prose must guess what you meant and wait for you to notice. On real teams this habit hardens into machinery — a repo rule that every bug fix starts with a red test before any fix is written. You&apos;re learning the habit; a well-governed repo enforces it.</p>
+
+<h2><span class="hash" aria-hidden="true">#</span>Worked example: request to shipped</h2>
+<p>Not every request starts as code. This one starts in a planning meeting, from someone who has never written a line of code and never will — and it turns into the same kind of checkable spec, plan, failing test, and green run as any engineering-born request. The arc is identical whether the idea came from a stakeholder, a support ticket, or your own backlog.</p>
+
+<h3>The request</h3>
+<div class="prompt-card"><span class="who">stakeholder, in a planning meeting</span>Legal says we need users to accept the terms and conditions, and we need proof they did. Can we get that in soon?</div>
+
+<h3>Someone turns the idea into a spec</h3>
+<p>The request can come from anywhere: a stakeholder in a meeting, a line in a support ticket, an offhand comment from an executive. Somebody still has to turn it into a spec before an agent or a human touches code. In a company with a product team, that&apos;s usually a product owner or a tech lead; working solo, that&apos;s you, wearing the same hat for five minutes. Either way the artifact is the same — acceptance criteria, a data model, edge cases — and the rest of this walkthrough shows how to build it.</p>
+
+<h3>The clarifying questions</h3>
+<p>This is the highest-leverage step in the whole arc: a few sharp questions before any spec gets written, because a vague request answered with a guess costs far more than a vague request answered with a question.</p>
+<ul>
+  <li><strong>Does this apply to existing users, or only new signups?</strong> — "Everyone. We can&apos;t have existing users sitting on an old agreement."</li>
+  <li><strong>What happens when the terms change — does a user have to accept again?</strong> — "Yes, every version needs its own acceptance. That&apos;s the whole point."</li>
+  <li><strong>Can a user decline, and if so, what happens?</strong> — "They just can&apos;t continue using the product until they accept. We don&apos;t need a fancy decline flow yet."</li>
+  <li><strong>Is the acceptance record ever edited or deleted?</strong> — "No — if we ever touch it, it stops being proof. It has to stay exactly as recorded."</li>
+</ul>
+<p>Those four answers are the spec, mostly still in the stakeholder&apos;s own words. Writing them down is what turns "we need proof" into something an agent can build against.</p>
+
+<h3>The spec</h3>
+<p><strong>Outcome:</strong> every user is blocked from using the product until they have accepted the current version of the terms, and each acceptance is permanently recorded.</p>
+<p><strong>Non-goals:</strong> writing or approving the legal text itself; building a richer flow for users who decline beyond blocking access.</p>
+
+<h4>Acceptance criteria</h4>
+<ul>
+  <li>A user who has not accepted the current terms version is blocked from using the product.</li>
+  <li>Accepting records the user, the exact terms version, and a timestamp in UTC (Coordinated Universal Time, the single time zone servers should agree on).</li>
+  <li>The timestamp is set by the server at the moment of acceptance, never supplied by the client.</li>
+  <li>Publishing a new terms version requires every user, including ones who already accepted an older version, to accept again.</li>
+  <li>A user who declines remains blocked from the product; no other action is taken.</li>
+  <li>Acceptance records are never updated or deleted — every acceptance writes a new record.</li>
+  <li>A user&apos;s acceptance history is the full, ordered list of every record they&apos;ve ever produced.</li>
+</ul>
+
+<h4>Data model</h4>
+<p>Each acceptance is one record with these properties:</p>
+<table class="keytable">
+  <tr><td><code>user_id</code> &nbsp;&middot;&nbsp; string &nbsp;&middot;&nbsp; required</td><td>Identifies the accepting user.</td></tr>
+  <tr><td><code>terms_version</code> &nbsp;&middot;&nbsp; string &nbsp;&middot;&nbsp; required</td><td>Must match a published terms version; never blank.</td></tr>
+  <tr><td><code>accepted_at</code> &nbsp;&middot;&nbsp; datetime &nbsp;&middot;&nbsp; required</td><td>UTC, set server-side at the moment of acceptance &mdash; never accepted from the client.</td></tr>
+  <tr><td>the record itself</td><td>Append-only: no update or delete operation exists for it, by design.</td></tr>
+</table>
+
+<h4>Edge cases</h4>
+<ul>
+  <li>A user accepts twice in a row (double-click, retry) — both writes succeed; two records with the same version is not an error.</li>
+  <li>The terms version bumps while a user is mid-session — their next protected action is blocked until they accept the new version.</li>
+  <li>A client-supplied timestamp arrives with the request — it&apos;s ignored; the server clock is the only source of <code>accepted_at</code>.</li>
+</ul>
+
+<h3>The plan</h3>
+<ol>
+  <li>Write failing tests for the criteria that carry the most legal weight first: a rejected blank version, a server-stamped UTC timestamp, and append-only behavior.</li>
+  <li>Implement a <code>TermsLedger</code> with a <code>record_acceptance()</code> method that writes one immutable record per call.</li>
+  <li>Wire the blocking check into the entry point every user passes through, comparing their latest accepted version to the published one.</li>
+  <li>Run the tests until green, then commit.</li>
+</ol>
+
+<h3>The failing test</h3>
+<p>Before <code>TermsLedger</code> exists, this test names three of the criteria above — a rejected blank version, a UTC server timestamp, and one new record per acceptance:</p>
+<div class="terminal">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">tests/test_terms_ledger.py</span></div>
+  <pre><code>from datetime import timezone
+
+import pytest
+from terms_ledger import TermsLedger
+
+
+def test_rejects_blank_terms_version():
+    ledger = TermsLedger()
+    with pytest.raises(ValueError):
+        ledger.record_acceptance("user-1", "")
+
+
+def test_stamps_utc_server_time():
+    ledger = TermsLedger()
+    record = ledger.record_acceptance("user-1", "2026-06-01")
+    assert record.accepted_at.tzinfo == timezone.utc
+
+
+def test_appending_twice_yields_two_records():
+    ledger = TermsLedger()
+    ledger.record_acceptance("user-1", "2026-06-01")
+    ledger.record_acceptance("user-1", "2026-07-01")
+    assert len(ledger.records_for("user-1")) == 2</code></pre>
+</div>
+<div class="terminal">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">red</span></div>
+  <pre><code><span class="prompt">$ </span>pytest tests/test_terms_ledger.py -q
+<span class="comment"># ModuleNotFoundError: No module named 'terms_ledger' — nothing to import yet</span></code></pre>
+</div>
+
+<h3>Build until it&apos;s green</h3>
+<p>The agent writes <code>TermsLedger</code> and reruns the tests after every change until they pass for the reason the spec names rather than by accident:</p>
+<div class="terminal">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">green</span></div>
+  <pre><code><span class="prompt">$ </span>pytest tests/test_terms_ledger.py -q
+<span class="comment"># 3 passed in 0.01s</span></code></pre>
+</div>
+
+<h3>Delivered</h3>
+<div class="terminal">
+  <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">commit</span></div>
+  <pre><code><span class="prompt">$ </span>git add terms_ledger.py tests/test_terms_ledger.py
+<span class="prompt">$ </span>git commit -m "feat: add TermsLedger for versioned terms acceptance"</code></pre>
+</div>
+<p>The stakeholder who asked for "proof they accepted" never sees a line of code, but every claim in that ask is traceable: seven criteria above, tests that exercise the highest-risk three, one green run, and a commit message naming the behavior the tests prove.</p>
+
+<div class="drill">
+  <div class="num">1</div>
+  <div class="body">
+    <h3>Try it now: run the same arc on a real request</h3>
+    <p>Pick one request sitting in your own inbox or backlog, phrased the way a non-engineer phrased it — a support ticket, a stakeholder ask, a line in a meeting note. Before any code, write the clarifying questions you&apos;d actually ask, then the spec: acceptance criteria, a data model if the request touches stored data, and the edge cases that would embarrass you if nobody thought of them.</p>
+  </div>
+</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>Why this scales</h2>
+<p>One agent working from a vague goal produces one plausible-but-wrong diff, and you catch it. Fan that same vagueness out to five agents and you get five diffs drifting in five directions — the failure mode the industry named <strong>drift</strong> and built <em>spec-driven development</em> to kill: confident code that quietly solves the wrong problem because nobody grounded it in a real spec. A sharper spec makes delegation safe, and the same contract that makes a single agent reliable is what lets you trust a team of them — see <a href="agents.html">AI agents &amp; rules</a> for the orchestration side.</p>
+<p>The durable workflow, tool-independent: write the spec first, derive a plan, break it into atomic tasks, then let one agent or ten build with that spec as their shared memory. Every major tool shipped a flavor of this in 2025–2026 (GitHub Spec Kit, AWS Kiro, and others), but do not adopt a vendor&apos;s ceremony — adopt the habit.</p>
+
+<h2><span class="hash" aria-hidden="true">#</span>References</h2>
+<ul>
+  <li><a href="https://addyosmani.com/blog/good-spec/" target="_blank" rel="noopener">How to write a good spec</a> — for anyone writing their first specs: a practical, example-driven walkthrough of what makes a spec an agent can actually build from.</li>
+  <li><a href="https://blog.allegro.tech/2026/06/spec-driven-development-best-practices.html" target="_blank" rel="noopener">Spec-driven development best practices</a> — a working engineering team on the spec-first approach that grounds agents in a checkable contract before they build.</li>
+  <li><a href="agents.html">AI agents &amp; rules</a> — the shared context layer specs belong to.</li>
+</ul>
+
+<div class="pagenav">
+  <a href="worktrees.html"><span class="dir">← Prev</span>Worktrees &amp; parallel agents</a>
+  <a href="skills-playbooks.html"><span class="dir">Next →</span>Skills &amp; playbooks</a>
+</div>
+
+      <footer class="site">Built to be rebuilt. <a href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener">Open source</a>, no tracking, works offline. · <a class="gw-version" href="https://github.com/jasondockery/groundwork/releases" target="_blank" rel="noopener">dev</a></footer>
+    </div>
+  </main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

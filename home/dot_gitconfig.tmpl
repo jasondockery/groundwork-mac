@@ -1,0 +1,103 @@
+[user]
+    name = {{ .name }}
+    email = {{ if and .work (ne .email_work "") }}{{ .email_work }}{{ else }}{{ .email_personal }}{{ end }}
+{{- if and (eq .chezmoi.os "darwin") (ne .password_manager "none") (ne .signingkey "") }}
+    signingkey = {{ .signingkey }}
+{{- end }}
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = true
+
+[push]
+    autoSetupRemote = true
+
+[fetch]
+    # Prune remote-tracking refs whose branch was deleted upstream, so a
+    # squash-merged-then-deleted branch shows as [gone] locally. NOT pruneTags:
+    # Git warns tag pruning can delete local tags absent from the remote.
+    prune = true
+
+[branch]
+    # Recent branches first everywhere (git branch, git branches). Agent work
+    # spawns many branches; recency ordering surfaces the active ones.
+    sort = -committerdate
+
+[tag]
+    sort = -version:refname
+
+[column]
+    ui = auto
+
+[rerere]
+    # Reuse recorded conflict resolutions — a real win for rebase-heavy AI work
+    # where the same conflict recurs across replays.
+    enabled = true
+{{- if lookPath "gh" }}
+
+# gh as git's HTTPS credential helper. Baked in because ~/.gitconfig is chezmoi-managed:
+# `gh auth setup-git` writes this same block, but the next `chezmoi apply` wipes it —
+# silently breaking authenticated GitHub pulls. Path resolved at apply time; emitted
+# only when gh is installed.
+[credential "https://github.com"]
+    helper =
+    helper = !{{ lookPath "gh" }} auth git-credential
+[credential "https://gist.github.com"]
+    helper =
+    helper = !{{ lookPath "gh" }} auth git-credential
+{{- end }}
+
+[core]
+    editor = nvim
+    pager = delta
+    # Never introduce CRLF into repos from a Groundwork machine (mac/Linux/WSL).
+    autocrlf = input
+
+[interactive]
+    diffFilter = delta --color-only
+
+[delta]
+    navigate = true
+    line-numbers = true
+
+[merge]
+    conflictstyle = zdiff3
+
+[diff]
+    colorMoved = default
+
+# Branch inspection, offline and non-mutating. `git branch --all` is a flat ref
+# inventory with no dates, tracking, or merged/gone state — these answer "what
+# is safe, what is active, what was deleted upstream". Run `git fetch -p` (auto
+# on any fetch here) to refresh [gone] status. Deletion stays a deliberate,
+# separate action — see the groundwork-branches roadmap item.
+[alias]
+    # Recent-first list with upstream track + gone marker + relative date + subject.
+    branches = "for-each-ref --sort=-committerdate refs/heads --format='%(color:yellow)%(refname:short)%(color:reset) %(color:red)%(upstream:track)%(color:reset) %(color:cyan)%(committerdate:relative)%(color:reset)  %(contents:subject)'"
+    # Branches whose upstream was deleted (squash-merged then removed on origin).
+    gone = "!git for-each-ref --format '%(refname:short) %(upstream:track)' refs/heads | awk '$2==\"[gone]\"{print $1}'"
+    # Compact recency table: relative date, tab, branch name.
+    recent = "for-each-ref --count=20 --sort=-committerdate refs/heads --format='%(color:cyan)%(committerdate:relative)%(color:reset)%09%(refname:short)'"
+
+[include]
+    path = ~/.gitconfig.local
+{{- if and (eq .chezmoi.os "darwin") (ne .password_manager "none") (ne .signingkey "") }}
+
+[commit]
+    gpgsign = true
+
+[gpg]
+    format = ssh
+{{- if eq .password_manager "1password" }}
+
+[gpg "ssh"]
+    program = "/Applications/1Password.app/Contents/MacOS/op-ssh-sign"
+{{- end }}
+{{- end }}
+
+# Per-directory identity override (optional): drop this block into ~/.gitconfig.local
+# after creating a ~/.gitconfig-work with a [user] email.
+# [includeIf "gitdir:{{ .code_dir }}/work/"]
+#     path = ~/.gitconfig-work

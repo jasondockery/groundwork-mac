@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# CI bootstrap for Node releases that no longer bundle Corepack.
+set -euo pipefail
+case $# in
+  0) ;;
+  1)
+    case $1 in
+      --help | -h)
+        echo "Usage: scripts/enable-repository-pnpm"
+        exit 0
+        ;;
+      *)
+        echo "Unexpected argument: $1" >&2
+        exit 64
+        ;;
+    esac
+    ;;
+  *)
+    echo "This command accepts no arguments." >&2
+    exit 64
+    ;;
+esac
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+cd "$root"
+required=$(tr -d '[:space:]' <.node-version)
+[[ $(node --version) == "v$required" ]] || {
+  echo "Select the Node version in .node-version before enabling pnpm." >&2
+  exit 1
+}
+# Reuse the machine's fallback authority; CI and an applied environment should
+# not independently choose versions of the pnpm shim owner.
+# shellcheck source=/dev/null
+source home/dot_local/share/groundwork/node-toolchain.env
+scripts/run-validation-deadline --seconds 180 --grace-seconds 5 -- \
+  npm install --global "corepack@$GROUNDWORK_COREPACK_VERSION" --no-audit --no-fund
+corepack enable pnpm
+scripts/run-validation-deadline --seconds 120 --grace-seconds 5 -- corepack install
+# pnpm 12's Corepack wrapper downloads its signature-verified native binary on
+# first use. Prepare that dependency before the offline toolchain probes run.
+scripts/run-validation-deadline --seconds 120 --grace-seconds 5 -- pnpm --version
+node tools/check-toolchain.mjs

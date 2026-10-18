@@ -1,0 +1,12 @@
+name: n
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install repository Node
+        uses: actions/setup-node@0000000000000000000000000000000000000000
+        with:
+          node-version-file: .node-version
+      - name: Run
+        # Merely mentioning scripts/enable-repository-pnpm does not provision it.
+        run: scripts/run-fixture-job --suite full

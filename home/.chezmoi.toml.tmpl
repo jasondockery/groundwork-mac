@@ -1,0 +1,206 @@
+{{- if eq .chezmoi.os "windows" -}}
+{{- fail "Groundwork's terminal environment requires macOS, Linux, or WSL2. On Windows, install WSL2 with Ubuntu and run Groundwork inside WSL; native PowerShell/CMD is not part of the Groundwork v1 support contract. See https://jasondockery.github.io/groundwork/platforms.html" -}}
+{{- end -}}
+{{- /* Default WSL2 kernels carry "microsoft-standard" (newer ones also a
+"WSL2" suffix); WSL1 kernels say "Microsoft" without either. Ambiguous WSL
+(custom kernels) is gated at runtime by groundwork-platform. */ -}}
+{{- if and (eq .chezmoi.os "linux") (hasKey .chezmoi "kernel") -}}
+{{- $osrelease := lower (toString (get .chezmoi.kernel "osrelease")) -}}
+{{- if and (contains "microsoft" $osrelease) (not (contains "microsoft-standard" $osrelease)) (not (contains "wsl2" $osrelease)) -}}
+{{- fail "Groundwork supports WSL2, not WSL1: WSL1 filesystem and syscall behavior differ from real Linux. From PowerShell, check with `wsl --list --verbose` and convert with `wsl --set-version <DistributionName> 2`, then rerun setup." -}}
+{{- end -}}
+{{- end -}}
+{{- /* Every yes/no question carries its own affordance: chezmoi's bool
+prompt accepts y/yes/t/true/1 and n/no/f/false/0, shows only a dim
+"bool, default <x>" hint, and takes the default on a bare Enter — so the
+question itself must say what to type and name the default. */ -}}
+{{- $work := promptBoolOnce . "work" "Is this a work machine (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $headless := false -}}
+{{- if eq .chezmoi.os "darwin" -}}
+{{- $headless = promptBoolOnce . "headless" "Is this a server or CI Mac with no desktop apps, which most Macs are not (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- else -}}
+{{- /* Native Linux is a supported desktop, not just a server: default to
+headless only when nothing indicates a graphical session. A desktop Ubuntu
+should not be defaulted into the server profile just for not being a Mac.
+Two literal prompts, not one computed default, so the named default in the
+question text always matches the real one. */ -}}
+{{- $graphical := or (env "DISPLAY") (env "WAYLAND_DISPLAY") -}}
+{{- if $graphical -}}
+{{- $headless = promptBoolOnce . "headless" "Is this a headless server or container with no desktop apps (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- else -}}
+{{- $headless = promptBoolOnce . "headless" "Is this a headless server or container with no desktop apps (y/t = yes, n/f = no; Enter keeps the default: yes)" true -}}
+{{- end -}}
+{{- end -}}
+{{- $name := promptStringOnce . "name" "What name should Git use for commits" -}}
+{{- $emailPersonal := promptStringOnce . "email_personal" "What personal email should Git use for commits" -}}
+{{- $emailWork := promptStringOnce . "email_work" "What work email should Git use (leave blank if none)" "" -}}
+{{- $codeDir := promptStringOnce . "code_dir" "Where should projects live" "~/code" -}}
+{{- $resetExisting := promptBoolOnce . "reset_existing_configs" "Reset old terminal, editor, and tmux state before applying (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $pwManagers := list "bitwarden" "1password" "none" -}}
+{{- $pwManager := promptChoiceOnce . "password_manager" "Which password manager should Groundwork configure for SSH and Git signing" $pwManagers "bitwarden" -}}
+{{- $signingKey := promptStringOnce . "signingkey" "What SSH public key should Git use for signing (leave blank to skip)" "" -}}
+{{- $obsidianVault := promptStringOnce . "obsidian_vault_name" "What should the Obsidian vault be named (leave blank to skip)" "my_obsidian_vault" -}}
+{{- /* Browser migration compatibility. `install_chrome` used to gate an
+unchecked opt-in. Chrome is now selected from release_posture on every desktop
+Mac, so the field is intentionally ignored by behavior. Carry an existing
+value through unchanged until a deliberate schema migration removes it; never
+make an older config fail or silently rewrite unrelated answers. */ -}}
+{{- $legacyInstallChrome := false -}}
+{{- if hasKey . "install_chrome" -}}
+{{- $legacyInstallChrome = .install_chrome -}}
+{{- end -}}
+{{- /* Bootstrap establishes a usable machine; mutable application-channel
+preferences belong to groundwork-configure. A fresh install therefore seeds a
+stable profile from the bootstrap-critical work-machine answer without asking a
+second stable-versus-preview question. Existing stored presets remain valid and
+survive regeneration. See specs/environment-profiles-and-release-posture.md. */ -}}
+{{- $validPresets := list "personal-current" "personal-preview" "work-managed" "disposable-experimental" -}}
+{{- $defaultPreset := "personal-current" -}}
+{{- if $work -}}
+{{- $defaultPreset = "work-managed" -}}
+{{- end -}}
+{{- $profilePreset := $defaultPreset -}}
+{{- if and (hasKey . "profile_preset") (has (toString .profile_preset) $validPresets) -}}
+{{- $profilePreset = toString .profile_preset -}}
+{{- end -}}
+{{- /* Role and posture are stored separately so a user can later change one
+without the other, and so a preset is only ever a starting value. */ -}}
+{{- $environmentRole := "personal" -}}
+{{- $releasePosture := "current" -}}
+{{- if eq $profilePreset "personal-preview" -}}
+{{- $releasePosture = "preview" -}}
+{{- else if eq $profilePreset "work-managed" -}}
+{{- $environmentRole = "managed" -}}
+{{- else if eq $profilePreset "disposable-experimental" -}}
+{{- $environmentRole = "disposable" -}}
+{{- $releasePosture = "preview" -}}
+{{- end -}}
+{{- /* A STORED role or posture wins over the preset-derived seed above. The
+preset only chooses starting values; what is persisted is the concrete choice,
+and specs/environment-profiles-and-release-posture.md requires role and posture
+to be independently editable so they can diverge from the preset (a managed
+machine may take preview posture without becoming personal). Deriving them on
+every render made that impossible and silently reverted a hand-edited posture on
+the next apply. groundwork-configure drops both keys when the user changes the
+preset, which is exactly what re-seeds them from the new starting value. */ -}}
+{{- if and (hasKey . "environment_role") (has (toString .environment_role) (list "personal" "managed" "disposable")) -}}
+{{- $environmentRole = toString .environment_role -}}
+{{- end -}}
+{{- if and (hasKey . "release_posture") (has (toString .release_posture) (list "current" "preview")) -}}
+{{- $releasePosture = toString .release_posture -}}
+{{- end -}}
+{{- /* Terminal multiplexer selection. A fresh installation is invited to pick
+Herdr (the recommended AI-native path), tmux, both, or neither. Existing
+Groundwork installations predate this field but already manage tmux, so the
+presence of profile_preset is the migration marker: seed those machines to
+tmux without prompting or silently changing their established workflow. */ -}}
+{{- $storedTerminalMultiplexer := includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "__groundwork_missing__") | trim -}}
+{{- $terminalMultiplexer := "herdr" -}}
+{{- if ne $storedTerminalMultiplexer "__groundwork_missing__" -}}
+{{- $terminalMultiplexer = $storedTerminalMultiplexer -}}
+{{- else if hasKey . "profile_preset" -}}
+{{- $terminalMultiplexer = "tmux" -}}
+{{- else -}}
+{{- $muxByNum := dict "1" "herdr" "2" "tmux" "3" "both" "4" "none" -}}
+{{- $muxChoice := promptChoiceOnce . "terminal_multiplexer" "Terminal multiplexer — type 1-4:\n  1. Herdr (recommended) — AI-native workspaces, panes, and agent recovery; Apache-2.0\n  2. tmux — traditional, mature terminal multiplexer\n  3. Both — Herdr primary, tmux retained as a fallback; includes Herdr under Apache-2.0\n  4. None — preserve user-managed multiplexer tooling\nHerdr license: https://github.com/herdrdev/herdr#license\nGroundwork never nests them automatically (Enter keeps the default: 1)" (list "1" "2" "3" "4") "1" -}}
+{{- if hasKey $muxByNum $muxChoice -}}
+{{- $terminalMultiplexer = index $muxByNum $muxChoice -}}
+{{- else -}}
+{{- fail (printf "Groundwork: unexpected terminal multiplexer prompt value %q" $muxChoice) -}}
+{{- end -}}
+{{- end -}}
+{{- /* Key repeat. Two independent knobs, both integers written to NSGlobalDomain:
+KeyRepeat is the interval BETWEEN repeats and InitialKeyRepeat is the delay
+BEFORE repeating starts; for both, a lower number is faster. They are described
+here only in relative terms. The unit is not documented by Apple, the hidden
+values do not map linearly onto the System Settings sliders, and this machine's
+own IOKit values do not match the widely repeated "15ms per unit" folklore — so
+naming millisecond equivalents would be inventing precision.
+
+Fast is the default because holding a key is a primary motion in a terminal
+(j/k in vim, arrow keys, backspace), not an edge case. Numbered menu for the
+same reason as the profile preset above: promptChoice is a type-to-match field.
+
+Asked on any DESKTOP, macOS or Linux, and on neither when headless. Key repeat
+belongs to the machine holding the physical keyboard, not the machine being
+typed into: in a container or over SSH the repeat comes from the operator's own
+desktop, so there is nothing on the far end to set. WSL2 is the same case with
+Windows owning the keyboard. Storing an answer that no surface can honor would
+invite a claim Groundwork cannot keep. */ -}}
+{{- $keyRepeatByNum := dict "1" "fast" "2" "standard" "3" "aggressive" -}}
+{{- $numByKeyRepeat := dict "fast" "1" "standard" "2" "aggressive" "3" -}}
+{{- $keyRepeatDefaultNum := "1" -}}
+{{- if and (hasKey . "key_repeat") (hasKey $numByKeyRepeat (toString .key_repeat)) -}}
+{{- $keyRepeatDefaultNum = index $numByKeyRepeat (toString .key_repeat) -}}
+{{- end -}}
+{{- /* Same stored-answer seed as the profile preset above: the question is
+skipped on headless hosts and on WSL2, but the value is written everywhere, so
+without this a stored answer reverts to "fast" on every regeneration. */ -}}
+{{- $keyRepeat := "fast" -}}
+{{- if and (hasKey . "key_repeat") (hasKey $numByKeyRepeat (toString .key_repeat)) -}}
+{{- $keyRepeat = toString .key_repeat -}}
+{{- end -}}
+{{- /* WSL2 reaches here as a non-headless Linux desktop when WSLg sets a
+display, but the keyboard is Windows'. Detect it once, and do not ask. */ -}}
+{{- $wsl := false -}}
+{{- if and (eq .chezmoi.os "linux") (hasKey .chezmoi "kernel") -}}
+{{- if contains "microsoft" (lower (toString (get .chezmoi.kernel "osrelease"))) -}}
+{{- $wsl = true -}}
+{{- end -}}
+{{- end -}}
+{{- /* The closing line differs by platform because the honest caveat differs.
+macOS always applies this; Linux applies it on GNOME (persistently) or an X11
+session (until logout), and on other compositors Groundwork records the answer
+and tells you where to set it rather than pretending it applied. Promising
+"applied" to a sway or KDE-Wayland user would be the claim we cannot keep. */ -}}
+{{- $keyRepeatNote := "Changing Keyboard settings in System Settings later overwrites this" -}}
+{{- if ne .chezmoi.os "darwin" -}}
+{{- $keyRepeatNote = "Applied on GNOME, or for the current session on X11; on other desktops Groundwork prints where to set it" -}}
+{{- end -}}
+{{- if and (not $headless) (not $wsl) -}}
+{{- $keyRepeatChoice := promptChoiceOnce . "key_repeat" (printf "Key repeat when you hold a key down — type 1-3:\n  1. Fast (recommended) — starts repeating soon, repeats quickly\n  2. Standard — same start delay, slower repeat\n  3. Aggressive — same fast repeat, starts sooner; can repeat when you only meant to rest on a key\n%s (Enter keeps the default: %s)" $keyRepeatNote $keyRepeatDefaultNum) (list "1" "2" "3") $keyRepeatDefaultNum -}}
+{{- /* Same dual return domain as profile_preset: a digit on a fresh or --prompt
+run, the stored value string on an ordinary existing-config run. */ -}}
+{{- if hasKey $keyRepeatByNum $keyRepeatChoice -}}
+{{- $keyRepeat = index $keyRepeatByNum $keyRepeatChoice -}}
+{{- else if hasKey $numByKeyRepeat $keyRepeatChoice -}}
+{{- $keyRepeat = $keyRepeatChoice -}}
+{{- end -}}
+{{- end -}}
+{{- $gameDev := promptBoolOnce . "game_dev" "Install optional Unity game development tools, a large download (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $xcode := promptBoolOnce . "xcode" "Install Xcode for native Apple and iOS development, large at ~15GB+ (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $beta := false -}}
+{{- /* Xcode beta posture is mutable and belongs to groundwork-configure, not
+bootstrap. Preserve an existing answer; a fresh install stays stable. */ -}}
+{{- if hasKey . "beta" -}}
+{{- $beta = .beta -}}
+{{- end -}}
+
+sourceDir = {{ .chezmoi.workingTree | quote }}
+
+[data]
+    work = {{ $work }}
+    headless = {{ $headless }}
+    name = {{ $name | quote }}
+    email_personal = {{ $emailPersonal | quote }}
+    email_work = {{ $emailWork | quote }}
+    code_dir = {{ $codeDir | quote }}
+    reset_existing_configs = {{ $resetExisting }}
+    password_manager = {{ $pwManager | quote }}
+    signingkey = {{ $signingKey | quote }}
+    obsidian_vault_name = {{ $obsidianVault | quote }}
+    install_chrome = {{ $legacyInstallChrome }}
+    key_repeat = {{ $keyRepeat | quote }}
+    profile_preset = {{ $profilePreset | quote }}
+    environment_role = {{ $environmentRole | quote }}
+    release_posture = {{ $releasePosture | quote }}
+    terminal_multiplexer = {{ $terminalMultiplexer | quote }}
+    game_dev = {{ $gameDev }}
+    xcode = {{ $xcode }}
+    beta = {{ $beta }}
+
+[edit]
+    command = "nvim"
+
+[diff]
+    pager = "delta"

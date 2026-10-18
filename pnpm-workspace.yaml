@@ -1,0 +1,4 @@
+# Repository maintenance uses Node built-ins and must not install dependencies.
+verifyDepsBeforeRun: false
+enableModulesDir: false
+lockfile: false

@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Exercise rendered install boundaries without changing host configuration."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+class HabitsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="groundwork-habits-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.env = dict(os.environ, HOME=str(self.home), PATH=f"{self.bin}:/usr/bin:/bin")
+        self.env.pop("T3CODE_INSTALL_BIN_DIR", None)
+        self.env.pop("TMUX", None)
+        self.config = self.root / "empty.toml"
+        self.config.touch()
+
+    def stub(self, name, body):
+        path = self.bin / name
+        path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
+        path.chmod(0o755)
+
+    def render(self, source, os_name="darwin", headless=False, work=False):
+        data = dict(name="CI", email_personal="ci@example.com", email_work="",
+                    code_dir="~/code", reset_existing_configs=False, password_manager="none",
+                    signingkey="", obsidian_vault_name="ci", game_dev=False,
+                    profile_preset="personal-current", environment_role="personal",
+                    release_posture="current", work=work, headless=headless, xcode=False,
+                    beta=False, terminal_multiplexer="both",
+                    chezmoi=dict(os=os_name, arch="arm64", osRelease={"ID": "ubuntu"}))
+        return subprocess.run(["chezmoi", "--config", str(self.config), "--source", str(REPO),
+                               "--destination", str(self.home), "--override-data", json.dumps(data),
+                               "execute-template"], input=(REPO / source).read_text(),
+                              capture_output=True, text=True, check=True, timeout=10).stdout
+
+    def run_script(self, text):
+        path = self.root / "hook.sh"
+        path.write_text(text)
+        return subprocess.run(["/bin/bash", str(path)], env=self.env,
+                              capture_output=True, text=True, timeout=10)
+
+    def t3_stubs(self, os_name="Linux"):
+        self.stub("uname", f'case "$1" in -s) echo {os_name};; -m) echo arm64;; esac')
+        self.stub("curl", '''while [[ $1 != -o ]]; do shift; done
+cat > "$2" <<'INSTALL'
+set -eu
+test "$T3CODE_CHANNEL" = nightly
+test -z "${T3CODE_VERSION:-}"
+test "${INSTALL_FAIL:-0}" = 0
+bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$bin_dir"
+printf '#!/bin/sh\necho "t3 0.0.0-nightly.20261018.1"\n' > "$bin_dir/t3"
+chmod +x "$bin_dir/t3"
+INSTALL''')
+        # The fixture verifies the deadline contract while the outer test owns
+        # its own real ten-second bound. No vendor installer is downloaded.
+        self.stub("timeout", '[[ $1 == --kill-after=5s ]]; shift; [[ $1 == 300 || $1 == 15 ]]; shift; exec "$@"')
+        self.stub("gtimeout", 'exec "$(dirname "$0")/timeout" "$@"')
+
+    def render_t3(self, platform="darwin", headless=False, work=False, brew=None):
+        rendered = self.render("home/run_after_21-t3-code.sh.tmpl", platform, headless, work)
+        fixture_brew = brew or self.root / "absent-homebrew/bin/brew"
+        for supported in ("/opt/homebrew/bin/brew", "/home/linuxbrew/.linuxbrew/bin/brew", "/usr/local/bin/brew"):
+            rendered = rendered.replace(supported, str(fixture_brew))
+        return rendered
+
+    def test_nightly_for_work_and_personal_cli_profiles(self):
+        for platform, runtime in (("linux", "Linux"), ("darwin", "Darwin")):
+            for work in (False, True):
+                with self.subTest(platform=platform, work=work):
+                    self.t3_stubs(runtime)
+                    self.env["T3CODE_VERSION"] = "ambient-stable-pin"
+                    result = self.run_script(self.render_t3(platform, True, work))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue((self.home / ".local/bin/t3").is_file())
+
+    def test_installer_failure_propagates(self):
+        self.t3_stubs()
+        self.env["INSTALL_FAIL"] = "1"
+        result = self.run_script(self.render_t3("linux"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.home / ".local/bin/t3").exists())
+
+    def test_existing_stable_cli_migrates_to_nightly_on_desktop_macs(self):
+        target = self.home / ".local/bin/t3"
+        target.parent.mkdir(parents=True)
+        for work in (False, True):
+            with self.subTest(work=work):
+                target.write_text('#!/bin/sh\necho "t3 0.1.0"\n')
+                target.chmod(0o755)
+                self.t3_stubs("Darwin")
+                result = self.run_script(self.render_t3(work=work))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                version = subprocess.check_output([str(target), "--version"], text=True, timeout=5)
+                self.assertIn("-nightly.", version)
+
+    def test_t3_resolves_homebrew_timeout_outside_incoming_path(self):
+        self.t3_stubs("Darwin")
+        (self.bin / "gtimeout").unlink()
+        prefix = self.root / "homebrew/bin"
+        prefix.mkdir(parents=True)
+        deadline = prefix / "gtimeout"
+        deadline.write_text(f'#!/bin/bash\nexec "{self.bin}/timeout" "$@"\n')
+        deadline.chmod(0o755)
+        brew = prefix / "brew"
+        brew.write_text(f'#!/bin/sh\necho \'export PATH="{prefix}:$PATH"\'\n')
+        brew.chmod(0o755)
+        result = self.run_script(self.render_t3(brew=brew))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_t3_custom_install_directory_cannot_leave_effective_cli_stable(self):
+        self.t3_stubs()
+        self.stub("t3", 'echo "t3 0.1.0"')
+        original = (self.bin / "t3").read_bytes()
+        custom = self.root / "custom-bin"
+        self.env["T3CODE_INSTALL_BIN_DIR"] = str(custom)
+        result = self.run_script(self.render_t3("linux"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("shadowing", result.stderr)
+        self.assertEqual((self.bin / "t3").read_bytes(), original)
+        self.assertTrue((custom / "t3").is_file())
+
+    def herdr_stubs(self, runtime="Linux"):
+        # Exclude the host's Herdr so this exercises a fresh headless image.
+        self.env["PATH"] = str(self.bin)
+        for name in ("mktemp", "rm", "cat", "mkdir", "chmod", "sh", "dirname"):
+            target = self.bin / name
+            if not target.exists():
+                target.symlink_to(shutil.which(name))
+        self.stub("uname", f'case "$1" in -s) echo {runtime};; -m) echo arm64;; esac')
+        self.stub("curl", '''while [[ $1 != -o ]]; do shift; done
+cat > "$2" <<'INSTALL'
+set -eu
+test "$HERDR_INSTALL_DIR" = "$HOME/.local/bin"
+test "${INSTALL_FAIL:-0}" = 0
+mkdir -p "$HERDR_INSTALL_DIR"
+printf '#!/bin/sh\necho "herdr 0.9.5"\n' > "$HERDR_INSTALL_DIR/herdr"
+chmod +x "$HERDR_INSTALL_DIR/herdr"
+INSTALL''')
+        self.stub("timeout", '[[ $1 == --kill-after=5s ]]; shift; [[ $1 == 300 || $1 == 15 ]]; shift; exec "$@"')
+        self.stub("gtimeout", 'exec "$(dirname "$0")/timeout" "$@"')
+
+    def render_herdr(self, platform="linux", brew=None):
+        rendered = self.render("home/run_after_19-herdr.sh.tmpl", platform, True)
+        # Never resolve a real host Homebrew while exercising installer paths.
+        fixture_brew = brew or self.root / "absent-homebrew/bin/brew"
+        for supported in ("/opt/homebrew/bin/brew", "/home/linuxbrew/.linuxbrew/bin/brew", "/usr/local/bin/brew"):
+            rendered = rendered.replace(supported, str(fixture_brew))
+        return rendered
+
+    def test_headless_herdr_without_homebrew_and_unchanged_rerun(self):
+        for platform, runtime in (("linux", "Linux"), ("darwin", "Darwin")):
+            with self.subTest(platform=platform):
+                target = self.home / ".local/bin/herdr"
+                target.unlink(missing_ok=True)
+                self.herdr_stubs(runtime)
+                rendered = self.render_herdr(platform)
+                result = self.run_script(rendered)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(target.is_file())
+                self.stub("curl", "exit 98")
+                result = self.run_script(rendered)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_headless_herdr_installer_failure_propagates(self):
+        self.herdr_stubs()
+        self.env["INSTALL_FAIL"] = "1"
+        result = self.run_script(self.render_herdr())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.home / ".local/bin/herdr").exists())
+
+    def test_existing_package_managed_herdr_is_preserved(self):
+        self.stub("herdr", "exit 0")
+        self.stub("curl", "exit 98")
+        result = self.run_script(self.render_herdr())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".local/bin/herdr").exists())
+
+    def test_homebrew_herdr_outside_incoming_path_is_preserved(self):
+        self.herdr_stubs()
+        prefix = self.root / "homebrew/bin"
+        prefix.mkdir(parents=True)
+        herdr = prefix / "herdr"
+        herdr.write_text('#!/bin/sh\necho "herdr 0.9.5"\n')
+        herdr.chmod(0o755)
+        brew = prefix / "brew"
+        brew.write_text(f'#!/bin/sh\necho \'export PATH="{prefix}:$PATH"\'\n')
+        brew.chmod(0o755)
+        rendered = self.render_herdr(brew=brew)
+        result = self.run_script(rendered)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / ".local/bin/herdr").exists(), "a direct install shadowed Homebrew")
+
+    def test_unusable_local_herdr_is_preserved_before_network(self):
+        self.herdr_stubs()
+        target = self.home / ".local/bin/herdr"
+        target.parent.mkdir(parents=True)
+        target.write_text("user-owned nonexecutable file")
+        self.stub("curl", "exit 98")
+        result = self.run_script(self.render_herdr())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Preserving unusable", result.stderr)
+        self.assertEqual(target.read_text(), "user-owned nonexecutable file")
+
+    def test_work_desktop_uses_nightly_app_and_cli(self):
+        brewfile = self.render("home/dot_config/homebrew/Brewfile.tmpl", work=True)
+        self.assertIn('cask "t3-code@nightly"', brewfile)
+        self.assertIn('brew "herdr"', brewfile)
+        self.t3_stubs("Darwin")
+        result = self.run_script(self.render_t3(work=True))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.home / ".local/bin/t3").is_file())
+        self.assertIn('brew "coreutils"', brewfile)
+        self.assertIn('brew "coreutils"', self.render("home/dot_config/homebrew/Brewfile.tmpl", headless=True))
+
+    def test_omarchy_direct_apply_stops_before_installation(self):
+        self.stub("uname", "echo Linux")
+        self.stub("omarchy", "exit 97")
+        result = self.run_script(self.render("home/run_before_00-install-homebrew.sh.tmpl", "linux", True))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Omarchy owns this environment", result.stderr)
+        self.assertNotIn("skipping Homebrew", result.stdout)
+
+    def test_legacy_resolver_is_preserved_in_backup_and_rerun_is_idle(self):
+        self.check_resolver("nameserver 100.100.100.100\n", retired=True)
+
+    def test_custom_resolver_is_not_changed(self):
+        self.check_resolver("nameserver 192.0.2.1\n", retired=False)
+
+    def test_symlink_resolver_is_not_changed(self):
+        self.check_resolver("nameserver 100.100.100.100\n", retired=False, symlink=True)
+
+    def check_resolver(self, content, retired, symlink=False):
+        etc = self.root / "etc"
+        target = etc / "resolver/ts.net"
+        target.parent.mkdir(parents=True)
+        if symlink:
+            original = self.root / "private-resolver"
+            original.write_text(content)
+            target.symlink_to(original)
+        else:
+            target.write_text(content)
+        self.stub("sudo", 'case $1 in mktemp|mv) exec "$@";; *) exit 98;; esac')
+        self.stub("dscacheutil", "exit 0")
+        self.stub("killall", "exit 0")
+        rendered = self.render("home/run_onchange_after_11-tailscale-dns.sh.tmpl").replace("/etc/", str(etc) + "/")
+        for _ in range(2):
+            result = self.run_script(rendered)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        backups = list(etc.glob("groundwork-tailscale-resolver.*/ts.net"))
+        self.assertEqual(len(backups), int(retired))
+        if retired:
+            self.assertFalse(target.exists())
+            self.assertEqual(backups[0].read_text(), content)
+        else:
+            self.assertEqual(target.read_text(), content)
+            self.assertEqual(target.is_symlink(), symlink)
+
+    def test_effective_tmux_bindings(self):
+        config = self.root / "tmux.conf"
+        config.write_text(self.render("home/dot_config/tmux/tmux.conf.tmpl"))
+        tpm = self.home / ".config/tmux/plugins/tpm/tpm"
+        tpm.parent.mkdir(parents=True)
+        tpm.write_text("#!/bin/sh\nexit 0\n")
+        tpm.chmod(0o755)
+        socket = self.root / "tmux.sock"
+        def tmux(*args):
+            return subprocess.run([shutil.which("tmux"), "-S", str(socket), *args], env=self.env,
+                                  capture_output=True, text=True, timeout=10)
+        try:
+            start = tmux("-f", str(config), "new-session", "-d", "-s", "habits")
+            self.assertEqual(start.returncode, 0, start.stderr)
+            # A reload must also remove/replace the old bindings.
+            self.assertEqual(tmux("source-file", str(config)).returncode, 0)
+            for key, action in {"h": "split-window -v", "v": "split-window -h",
+                                "r": "rename-window", "q": "source-file",
+                                "R": "rename-session", "K": "kill-session",
+                                "P": "switch-client -p", "O": "select-pane -T",
+                                "F": "groundwork-repos"}.items():
+                result = tmux("list-keys", "-T", "prefix", key)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(action, result.stdout)
+            for key in ("C-M-Left", "C-M-Right", "C-M-Up", "C-M-Down"):
+                self.assertIn("select-pane", tmux("list-keys", "-T", "root", key).stdout)
+        finally:
+            tmux("kill-server")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

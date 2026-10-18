@@ -1,0 +1,272 @@
+set -g mouse on
+set -g base-index 1
+setw -g pane-base-index 1
+set -g renumber-windows on
+# 50k lines/pane. Scrollback is a working buffer, not permanent storage: verbose
+# agent output across many long-lived panes is real memory. Important output
+# belongs in a log or a receipt (`tee` a long build, `Ctrl+Space Y` to copy the last
+# command); raise this only for a session you have designated as a log.
+set -g history-limit 50000
+set -g escape-time 10
+# Omarchy sends Alt+Shift+Enter as its own key. Without this, tmux treats it
+# as plain Alt+Enter and the beside-split chord cannot fire.
+set -g extended-keys on
+set -g extended-keys-format csi-u
+
+set -g default-terminal "tmux-256color"
+set -ga terminal-overrides ",xterm-256color:RGB,*:RGB"
+set-environment -g TMUX_PLUGIN_MANAGER_PATH "$HOME/.config/tmux/plugins/"
+
+setw -g mode-keys vi
+# external: tmux copies selections OUT to Ghostty via OSC 52, and (with
+# passthrough off, below) programs inside tmux cannot set the outer clipboard —
+# the right posture when panes run agents and untrusted scripts. Needs the outer
+# terminal's Ms capability. One native clipboard path (this + copy-selection
+# below); tmux-yank, which used an external pbcopy path, is not loaded.
+set -s set-clipboard external
+set -g detach-on-destroy off
+# Global passthrough is OFF. Left on, a passthrough-wrapped escape sequence would
+# let a VISIBLE-pane program reach Ghostty directly (e.g. a wrapped OSC 52
+# clipboard write), defeating set-clipboard external. yazi needs passthrough for
+# its Kitty-graphics previews, so the `y` shell function enables it on ITS pane
+# only and restores the prior value on exit — the boundary stays closed
+# elsewhere. TERM/TERM_PROGRAM are propagated so yazi detects the protocol (its
+# documented tmux setup).
+set -g allow-passthrough off
+set -ga update-environment TERM
+set -ga update-environment TERM_PROGRAM
+bind -T copy-mode-vi v send -X begin-selection
+bind -T copy-mode-vi C-v send -X rectangle-toggle
+bind -T copy-mode-vi y send -X copy-selection-and-cancel
+# A mouse drag copies on release — tmux's own convention, so Cmd+C-after-drag
+# muscle memory is not silently swallowed. (tmux's literal default is
+# copy-pipe-and-cancel; with copy-command unset that is the same behavior, and
+# copy-selection-and-cancel is bound instead so this does not silently change if
+# copy-command is ever set.) Stated explicitly rather than left to the default,
+# because this file previously unbound it and a long-lived server keeps the old
+# binding across a reload: an explicit bind overwrites it, a removed unbind would
+# not. Only applies where tmux owns the mouse — a mouse-aware app (nvim, lazygit,
+# Claude Code fullscreen) consumes the drag itself. The keyboard path is
+# unchanged (v to select, y to copy) and Shift+drag still hands the selection to
+# Ghostty. Tradeoff accepted 2026-07-26: highlighting to read replaces the
+# clipboard.
+bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-selection-and-cancel
+# tmux-yank is no longer loaded, but a long-lived server that HAD it keeps its
+# bindings after a reload, leaving the external pbcopy path on keys Groundwork
+# does not re-bind. Clear those keys — all lack a tmux default, so it is safe on
+# a fresh server too. (copy-mode-vi D keeps its native default and is left alone;
+# copy-mode-vi y and prefix C-y are re-bound below and by the helper.)
+unbind -q y
+unbind -q -T copy-mode-vi Y
+unbind -q -T copy-mode-vi M-y
+unbind -q -T copy-mode Y
+unbind -q -T copy-mode M-y
+# Right-click stays useful to mouse-aware apps: forward it to a pane running one
+# (Neovim, lazygit) or already in copy mode; in an ordinary shell pane show the
+# copy hint instead of tmux's pane menu. The pane menu moves to Option+right.
+bind -n MouseDown3Pane if-shell -F -t = '#{mouse_any_flag}' \
+  'select-pane -t=; send-keys -M' \
+  "select-pane -t=; display-message 'copy pane history: prefix [ … v … y   ·   raw terminal selection: hold Shift while dragging'"
+bind -n M-MouseDown3Pane display-menu -t = -x M -y M \
+  'Horizontal split' h 'split-window -h -c "#{pane_current_path}"' \
+  'Vertical split'   v 'split-window -v -c "#{pane_current_path}"' '' \
+  'Swap up'          u 'swap-pane -U' \
+  'Swap down'        d 'swap-pane -D' '' \
+  'Kill pane'        X 'confirm-before -p "kill pane #P? [y/N] " kill-pane' \
+  'Zoom'             z 'resize-pane -Z'
+# Copy the last completed command + its output, selected by semantic prompt
+# marks (OSC 133, emitted by Groundwork's zsh) — running commands and
+# prompt-looking output can't fool it. Terminal-native "select last output"
+# can't see inside tmux panes; this is the tmux-owned equivalent. Absolute
+# path and -b: don't trust a long-lived server's PATH, don't block the client.
+bind Y run-shell -b '"$HOME/.local/bin/tmux-copy-last" "#{pane_id}" "#{client_name}"'
+
+unbind C-b
+set -g prefix C-Space
+set -g prefix2 C-b
+bind C-Space send-prefix
+bind C-b send-prefix -2
+
+bind q source-file ~/.config/tmux/tmux.conf \; display-message "tmux reloaded"
+
+# Window naming is hybrid, and these are tmux's defaults — stated here so the
+# behavior is a documented decision, not an accident. Unnamed windows auto-name
+# from the running command (zsh, nvim, claude); renaming one with prefix-,
+# turns auto-rename off for that window only, so the human's name sticks.
+# allow-rename stays off so programs can't rename windows via escape sequences
+# (they may still set the pane title, shown in the pane border — that's the
+# right place for machine chatter like an agent's task summary).
+set -g allow-rename off
+setw -g automatic-rename on
+
+# rename feedback: the status line only re-renders every status-interval (10s)
+# or on events like switching windows, so a rename can look ignored. Force an
+# immediate status redraw after renaming a window or session, then save the
+# session state — continuum autosaves only every 15 minutes, and a rename that
+# misses the last save before a server restart is silently lost on restore.
+bind , command-prompt -I "#W" "rename-window -- '%%' ; refresh-client -S ; run-shell -b 'save=~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh; [ -x \"$save\" ] && \"$save\" quiet || true'"
+bind '$' command-prompt -I "#S" "rename-session -- '%%' ; refresh-client -S ; run-shell -b 'save=~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh; [ -x \"$save\" ] && \"$save\" quiet || true'"
+
+bind | split-window -h -c "#{pane_current_path}"
+bind - split-window -v -c "#{pane_current_path}"
+bind c new-window -c "#{pane_current_path}"
+
+# Match Omarchy's prefix actions as well as its direct chords. Clear displaced
+# home-row bindings on reload so an existing server gets the same map as a new one.
+unbind -q j
+unbind -q l
+bind h split-window -v -c "#{pane_current_path}"
+bind v split-window -h -c "#{pane_current_path}"
+bind r command-prompt -I "#W" "rename-window -- '%%' ; refresh-client -S ; run-shell -b 'save=~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh; [ -x \"$save\" ] && \"$save\" quiet || true'"
+bind k confirm-before -p "kill window #W and its panes? (y/n)" kill-window
+bind C new-session -c "#{pane_current_path}"
+bind R command-prompt -I "#S" "rename-session -- '%%' ; refresh-client -S ; run-shell -b 'save=~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh; [ -x \"$save\" ] && \"$save\" quiet || true'"
+bind K confirm-before -p "kill session #S and its windows? (y/n)" kill-session
+bind N switch-client -n
+bind P switch-client -p
+
+# Alt is Option on macOS. The terminal must deliver these to tmux; global
+# launchers and window managers must not intercept them.
+bind -N "Split pane below" -n M-Enter split-window -v -c "#{pane_current_path}"
+bind -N "Split pane beside" -n M-S-Enter split-window -h -c "#{pane_current_path}"
+bind -N "Kill pane" -n M-Escape confirm-before -p "kill pane #P (#{pane_current_command})? (y/n)" kill-pane
+bind -N "Focus pane left" -n C-M-Left select-pane -L
+bind -N "Focus pane down" -n C-M-Down select-pane -D
+bind -N "Focus pane up" -n C-M-Up select-pane -U
+bind -N "Focus pane right" -n C-M-Right select-pane -R
+bind -N "Previous window" -n M-Left select-window -t -1
+bind -N "Next window" -n M-Right select-window -t +1
+bind -N "Move window left" -n M-S-Left swap-window -t -1 \; select-window -t -1
+bind -N "Move window right" -n M-S-Right swap-window -t +1 \; select-window -t +1
+bind -N "Previous session" -n M-Up switch-client -p
+bind -N "Next session" -n M-Down switch-client -n
+bind -N "Resize pane left" -n C-M-S-Left resize-pane -L 5
+bind -N "Resize pane down" -n C-M-S-Down resize-pane -D 5
+bind -N "Resize pane up" -n C-M-S-Up resize-pane -U 5
+bind -N "Resize pane right" -n C-M-S-Right resize-pane -R 5
+bind -n M-1 select-window -t 1
+bind -n M-2 select-window -t 2
+bind -n M-3 select-window -t 3
+bind -n M-4 select-window -t 4
+bind -n M-5 select-window -t 5
+bind -n M-6 select-window -t 6
+bind -n M-7 select-window -t 7
+bind -n M-8 select-window -t 8
+bind -n M-9 select-window -t 9
+
+# keep readline control keys available to the shell after reloading older configs
+unbind -nq C-h
+unbind -nq C-j
+unbind -nq C-k
+unbind -nq C-l
+unbind -nq C-\\
+unbind -T prefix -q C-l
+
+# clear: C-l stays the normal shell clear-screen key; prefix C-k also wipes tmux scrollback.
+bind C-k send-keys C-l \; clear-history
+# Destructive keys ask first. tmux's own default for x is confirm-before, and
+# x sits right next to z (zoom) — a mistyped zoom must not silently destroy a
+# pane with a running agent, server, or unsaved editor in it.
+bind x confirm-before -p "kill pane #P (#{pane_current_command})? (y/n)" kill-pane
+
+# Retire the old home-row resize map on reload. Shift+K now closes a session.
+unbind -q H
+unbind -q J
+unbind -q L
+
+# reorder the current window in the list
+bind -r < swap-window -d -t -1
+bind -r > swap-window -d -t +1
+
+# show each pane's title and current directory in the border; useful when a full-screen app hides the prompt.
+set -g pane-border-status top
+set -g pane-border-format ' #{?pane_active,#[fg=colour225,bold],#[fg=colour245]}#{pane_index}:#{pane_title} #[fg=colour244]#{pane_current_path} '
+bind O command-prompt -I "#{pane_title}" "select-pane -T '%%'"
+
+# toggle typing into all panes at once
+bind S set-window-option synchronize-panes \; display-message "sync-panes #{?synchronize-panes,on,off}"
+
+# lazygit in a popup, opened in the current folder
+bind g display-popup -E -d "#{pane_current_path}" -w 90% -h 90% lazygit
+
+# Cross-repo navigation (groundwork-repos). Repositories are DISCOVERED under
+# the roots in ~/.config/groundwork/repos.conf — never hardcoded here, so a
+# fresh clone is reachable with no config change. prefix+g above stays "this
+# repo"; these two go wider. Shift+F: fuzzy-pick any discovered repo (git
+# status preview) and open-or-reuse its lazygit window. Shift+G: one lazygit
+# window per repo with uncommitted work — the "show me everything the agents
+# touched" key. Absolute paths and -b for the same reason as prefix+Y: don't
+# trust a long-lived server's PATH, don't block the client.
+bind -N "repo picker" F display-popup -E -w 90% -h 90% '"$HOME/.local/bin/groundwork-repos" pick'
+bind -N "lazygit for every dirty repo" G run-shell -b '"$HOME/.local/bin/groundwork-repos" changed'
+
+# Inside the picker, Ctrl+x kills the highlighted tmux session and reloads the
+# list (folder rows aren't live sessions, so Ctrl+x is a no-op on those).
+bind -N "session switcher" T display-popup -E -w 40% -h 50% \
+  "sesh connect \"$(sesh list --icons | fzf --ansi --reverse --no-sort --prompt 'sesh ' \
+    --header 'enter connect · ctrl-x kill session' \
+    --bind 'ctrl-x:execute-silent(tmux kill-session -t {2..})+reload(sesh list --icons)')\""
+
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-sensible'
+set -g @plugin 'tmux-plugins/tmux-resurrect'
+set -g @plugin 'tmux-plugins/tmux-continuum'
+set -g @plugin 'tmux-plugins/tmux-cpu'
+set -g @plugin 'tmux-plugins/tmux-battery'
+set -g @plugin 'christoomey/vim-tmux-navigator'
+set -g @plugin 'catppuccin/tmux#v2.3.2'
+
+# prefix+C-y: copy this pane's working directory (native, replacing tmux-yank's
+# @yank_pane_pwd). The helper reads the path from tmux and pipes it to
+# load-buffer -w — never through /bin/sh — so a directory name with shell
+# metacharacters cannot execute. Absolute path and -b for the same reason as
+# prefix+Y: don't trust a long-lived server's PATH, don't block the client.
+bind C-y run-shell -b '"$HOME/.local/bin/tmux-copy-cwd" "#{pane_id}" "#{client_name}"'
+
+set -g @vim_navigator_mapping_left 'M-h'
+set -g @vim_navigator_mapping_down 'M-j'
+set -g @vim_navigator_mapping_up 'M-k'
+set -g @vim_navigator_mapping_right 'M-l'
+set -g @vim_navigator_mapping_prev ''
+set -g @vim_navigator_prefix_mapping_clear_screen ''
+
+{{- if not .headless }}
+set -g @continuum-restore 'on'
+{{- else }}
+set -g @continuum-restore 'off'
+{{- end }}
+set -g @resurrect-dir '~/.local/share/tmux/resurrect'
+set -g @resurrect-capture-pane-contents 'on'
+
+# catppuccin v2: set the flavor AND build the status line, or the modules don't render.
+# Keep system modules glanceable, not chatty; tmux-sensible's default is 5s.
+set -g status-interval 10
+set -g status-left-length 100
+set -g status-right-length 160
+
+set -g @catppuccin_flavor 'mocha'
+set -g @catppuccin_window_status_style 'rounded'
+set -g @catppuccin_window_number_position 'right'
+set -g @catppuccin_window_text ' #W'
+set -g @catppuccin_window_current_text ' #W'
+set -g @catppuccin_date_time_text '%a %H:%M'
+
+# Catppuccin's CPU/RAM/battery modules contain plugin placeholders such as
+# #{cpu_percentage}. Source the theme before building the status line so the
+# -F expansions below expose those placeholders for tmux-cpu/tmux-battery.
+source-file -q ~/.config/tmux/plugins/tmux/catppuccin_options_tmux.conf
+source-file -q ~/.config/tmux/plugins/tmux/catppuccin_tmux.conf
+
+set -g status-left '#{E:@catppuccin_status_session}'
+set -g status-right '#{E:@catppuccin_status_application}'
+set -agF status-right '#{E:@catppuccin_status_cpu}'
+set -agF status-right '#{E:@catppuccin_status_ram}'
+set -ag status-right '#{E:@catppuccin_status_host}'
+if-shell 'pmset -g batt 2>/dev/null | grep -q InternalBattery || ls /sys/class/power_supply/BAT* >/dev/null 2>&1' "set -agF status-right '#{E:@catppuccin_status_battery}'"
+set -ag status-right '#{E:@catppuccin_status_date_time}'
+
+# Personal tmux overrides. This file is intentionally unmanaged by Groundwork and
+# loads after shared defaults, so local bindings/options can win without forking.
+source-file -q ~/.config/tmux/tmux.local.conf
+
+run '~/.config/tmux/plugins/tpm/tpm'

@@ -1,0 +1,8 @@
+{
+  "name": "Groundwork",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "dev"
+}

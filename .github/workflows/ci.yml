@@ -1,0 +1,739 @@
+name: CI
+
+run-name: >-
+  ${{ github.event_name == 'pull_request'
+      && format('CI · PR #{0} · head {1} · tested {2}', github.event.pull_request.number, github.event.pull_request.head.sha, github.sha)
+      || format('CI · {0} · tested {1}', github.ref_name, github.sha) }}
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded pull-request pushes are cancelled; main is not. A landed commit
+# must keep its own exact-SHA proof, and cancelling main would let two quick
+# pushes leave the first commit with no receipt at all — the thing the release
+# gate and the reusable-proof contract both depend on.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GROUNDWORK_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read # Zizmor SARIF telemetry reads the current workflow run.
+      contents: read
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Begin Zizmor SARIF timing
+        id: sarif-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Zizmor (SARIF upload)
+        id: zizmor-sarif
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          persona: pedantic
+          # This repository does not have GitHub code scanning enabled. Keep
+          # the local zizmor analysis, but do not attempt SARIF publication.
+          advanced-security: false
+
+      - name: Record Zizmor SARIF timing
+        id: sarif-time
+        if: ${{ always() && steps.sarif-start.outcome == 'success' }}
+        env:
+          STARTED: ${{ steps.sarif-start.outputs.epoch }}
+        run: echo "seconds=$(( $(date +%s) - STARTED ))" >>"$GITHUB_OUTPUT"
+
+      - name: Begin Zizmor gate timing
+        id: gate-start
+        if: ${{ always() }}
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Zizmor (gate)
+        id: zizmor-gate
+        if: ${{ always() }}
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          persona: pedantic
+          advanced-security: false
+          annotations: true
+
+      - name: Publish workflow-security receipt
+        if: ${{ always() }}
+        env:
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+          SARIF_STARTED: ${{ steps.sarif-start.outputs.epoch }}
+          SARIF_SECONDS: ${{ steps.sarif-time.outputs.seconds }}
+          SARIF_OUTCOME: ${{ steps.zizmor-sarif.outcome }}
+          GATE_STARTED: ${{ steps.gate-start.outputs.epoch }}
+          GATE_OUTCOME: ${{ steps.zizmor-gate.outcome }}
+        run: |
+          phase_result() {
+            case "$1" in
+              success) echo passed ;;
+              failure) echo failed ;;
+              cancelled) echo cancelled ;;
+              skipped) echo skipped ;;
+              *) echo failed ;;
+            esac
+          }
+          result=passed
+          [ "$SARIF_OUTCOME" = success ] || result=failed
+          [ "$GATE_OUTCOME" = success ] || result=failed
+          sarif_result="$(phase_result "$SARIF_OUTCOME")"
+          gate_result="$(phase_result "$GATE_OUTCOME")"
+          sarif_reason=''
+          gate_reason=''
+          [ "$SARIF_OUTCOME" != skipped ] || sarif_reason='SARIF analysis did not run'
+          [ "$GATE_OUTCOME" != skipped ] || gate_reason='workflow gate did not run'
+          printf 'Zizmor SARIF\t%s\t%s\t%s\n' "${SARIF_SECONDS:-0}" "$sarif_result" "$sarif_reason" \
+            >"$RUNNER_TEMP/workflow-lint-phases.tsv"
+          gate_seconds=0
+          if [ -n "$GATE_STARTED" ]; then
+            gate_seconds=$(( $(date +%s) - GATE_STARTED ))
+          fi
+          printf 'Zizmor gate\t%s\t%s\t%s\n' "$gate_seconds" "$gate_result" "$gate_reason" \
+            >>"$RUNNER_TEMP/workflow-lint-phases.tsv"
+          {
+            printf 'SARIF upload\t%s\n' "$SARIF_OUTCOME"
+            printf 'Zizmor findings\t%s\n' "$([ "$GATE_OUTCOME" = success ] && echo 0 || echo 'see annotations')"
+          } >"$RUNNER_TEMP/workflow-lint-facts.tsv"
+          scripts/write-ci-receipt \
+            --output "$RUNNER_TEMP/groundwork-job-workflow-lint.json" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --receipt-kind ci-job \
+            --title "Workflow security" \
+            --result "$result" \
+            --scope "Zizmor pedantic workflow audit and SARIF publication" \
+            --platform-os linux \
+            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-arch "$RUNNER_ARCH" \
+            --job-budget-seconds 60 \
+            --workflow-safety-timeout-seconds 600 \
+            --started-epoch "$JOB_STARTED_EPOCH" \
+            --phase-file "$RUNNER_TEMP/workflow-lint-phases.tsv" \
+            --fact-file "$RUNNER_TEMP/workflow-lint-facts.tsv" \
+            --proof-type "security static-analysis proof" \
+            --cache-state not-applicable \
+            --local-equivalent "uvx zizmor --persona pedantic --no-online-audits .github/workflows" \
+            --inspect "gh run view $GITHUB_RUN_ID"
+          [ "$result" = passed ]
+
+      - name: Upload workflow-security receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-workflow-lint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/groundwork-job-workflow-lint.json
+          if-no-files-found: error
+          retention-days: 30
+
+  static_linux:
+    name: static-linux
+    runs-on: ubuntu-24.04
+    # 13 min = the setup step's own 6-min worst case + this job's 300s (5-min)
+    # validator budget below + ~1 min checkout/Node/Corepack overhead, with a
+    # small margin. Sized against what the validator is declared entitled to
+    # use, not against two lucky observed run totals -- a run that legitimately
+    # needs its full validator budget must not be truncated by setup's own
+    # worst case eating into it.
+    timeout-minutes: 13
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Install repository Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository pnpm through Corepack
+        run: |
+          set -euo pipefail
+          scripts/enable-repository-pnpm
+
+      - name: Install validation tools
+        # 6 min = the shared script's own worst-case single-call retry cycle
+        # (4 attempts x 60s + 5+10+20s backoff = ~4.6 min, see
+        # ci-install-linux-tools) plus normal remaining setup time. Real
+        # normal-run durations are 2-3.5 minutes total (measured against
+        # actual job runs, not assumed); this is a failure-detection ceiling,
+        # not the expected duration.
+        timeout-minutes: 6
+        run: scripts/ci-install-linux-tools
+
+      - name: Register shellcheck problem matcher
+        run: echo "::add-matcher::.github/problem-matchers/shellcheck-gcc.json"
+
+      - name: Validate static contracts and publish final job receipt
+        env:
+          GROUNDWORK_REQUIRE_NODE_TOOLCHAIN: "1"
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+        run: >-
+          scripts/run-validation-job --suite static
+          --detail-output "$RUNNER_TEMP/groundwork-detail-static.json"
+          --job-output "$RUNNER_TEMP/groundwork-job-static-linux.json"
+          --summary "$GITHUB_STEP_SUMMARY"
+          --job-budget-seconds 300
+          --workflow-safety-timeout-seconds 780
+          --validation-deadline-seconds 540
+          --job-started-epoch "$JOB_STARTED_EPOCH"
+
+      - name: Upload static receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-static-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/groundwork-job-static-linux.json
+            ${{ runner.temp }}/groundwork-detail-static.json
+          if-no-files-found: error
+          retention-days: 30
+
+  update_contract_linux:
+    name: update-contract-linux
+    runs-on: ubuntu-24.04
+    # 17 min = the setup step's own 6-min worst case + this job's 480s (8-min)
+    # validator budget below + ~1 min checkout/Node/Corepack overhead, with a
+    # small margin. Was already 15 min before this change, which left the
+    # setup step's new worst case zero real slack against the validator's own
+    # declared budget once combined.
+    timeout-minutes: 17
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Install repository Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository pnpm through Corepack
+        run: |
+          set -euo pipefail
+          scripts/enable-repository-pnpm
+
+      - name: Install validation tools
+        # 6 min = the shared script's own worst-case single-call retry cycle
+        # (4 attempts x 60s + 5+10+20s backoff = ~4.6 min, see
+        # ci-install-linux-tools) plus normal remaining setup time. Real
+        # normal-run durations are 2-3.5 minutes total (measured against
+        # actual job runs, not assumed); this is a failure-detection ceiling,
+        # not the expected duration.
+        timeout-minutes: 6
+        run: scripts/ci-install-linux-tools
+
+      - name: Validate update contracts and publish final job receipt
+        env:
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+        run: >-
+          scripts/run-validation-job --suite update
+          --detail-output "$RUNNER_TEMP/groundwork-detail-update.json"
+          --job-output "$RUNNER_TEMP/groundwork-job-update-contract-linux.json"
+          --summary "$GITHUB_STEP_SUMMARY"
+          --job-budget-seconds 480
+          --workflow-safety-timeout-seconds 1020
+          --validation-deadline-seconds 840
+          --job-started-epoch "$JOB_STARTED_EPOCH"
+
+      - name: Upload update receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-update-contract-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/groundwork-job-update-contract-linux.json
+            ${{ runner.temp }}/groundwork-detail-update.json
+          if-no-files-found: error
+          retention-days: 30
+
+  docker_contract_linux:
+    name: docker-contract-linux
+    runs-on: ubuntu-24.04
+    # 15 min = the setup step's own 6-min worst case + this job's 420s (7-min)
+    # validator budget below + ~1 min checkout/Node/Corepack overhead, with a
+    # small margin. Same reasoning as static-linux: sized against what the
+    # validator is declared entitled to use, not a lucky observed total.
+    timeout-minutes: 15
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install repository Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository pnpm through Corepack
+        run: |
+          set -euo pipefail
+          scripts/enable-repository-pnpm
+
+      - name: Install validation tools
+        # 6 min = the shared script's own worst-case single-call retry cycle
+        # (4 attempts x 60s + 5+10+20s backoff = ~4.6 min, see
+        # ci-install-linux-tools) plus normal remaining setup time. Real
+        # normal-run durations are 2-3.5 minutes total (measured against
+        # actual job runs, not assumed); this is a failure-detection ceiling,
+        # not the expected duration.
+        timeout-minutes: 6
+        run: scripts/ci-install-linux-tools
+
+      - name: Validate Docker contracts and publish final job receipt
+        env:
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+        run: >-
+          scripts/run-validation-job --suite docker
+          --detail-output "$RUNNER_TEMP/groundwork-detail-docker.json"
+          --job-output "$RUNNER_TEMP/groundwork-job-docker-contract-linux.json"
+          --summary "$GITHUB_STEP_SUMMARY"
+          --job-budget-seconds 420
+          --workflow-safety-timeout-seconds 900
+          --validation-deadline-seconds 540
+          --job-started-epoch "$JOB_STARTED_EPOCH"
+
+      - name: Upload Docker-contract receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-docker-contract-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/groundwork-job-docker-contract-linux.json
+            ${{ runner.temp }}/groundwork-detail-docker.json
+          if-no-files-found: error
+          retention-days: 30
+
+  platform_macos:
+    name: platform-macos
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install repository Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository pnpm through Corepack
+        run: |
+          set -euo pipefail
+          scripts/enable-repository-pnpm
+
+      - name: Install validation tools
+        timeout-minutes: 5
+        env:
+          # Same reasoning as scripts/ci-install-linux-tools: this step's only
+          # bound used to be the outer job timeout, and a transient bottle
+          # download failure looked identical to a real hang. Homebrew already
+          # retries curl-level failures when told to; nothing had told it to.
+          HOMEBREW_CURL_RETRIES: "3"
+        run: |
+          if brew tap | grep -qxF aws/tap; then
+            brew untap --force aws/tap
+          fi
+          brew install tmux chezmoi ripgrep jq
+
+      - name: Verify tmux feature floor
+        run: home/dot_local/bin/executable_tmux-copy-last --check-tmux-version
+
+      - name: Validate native macOS and cask contracts, then publish final job receipt
+        env:
+          GROUNDWORK_REQUIRE_TMUX: "1"
+          GROUNDWORK_REQUIRE_NODE_TOOLCHAIN: "1"
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+        run: >-
+          scripts/run-validation-job --suite platform-macos
+          --detail-output "$RUNNER_TEMP/groundwork-detail-platform-macos.json"
+          --job-output "$RUNNER_TEMP/groundwork-job-platform-macos.json"
+          --summary "$GITHUB_STEP_SUMMARY"
+          --job-budget-seconds 600
+          --workflow-safety-timeout-seconds 900
+          --validation-deadline-seconds 840
+          --job-started-epoch "$JOB_STARTED_EPOCH"
+          --with-cask-audit
+
+      - name: Upload macOS receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-platform-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/groundwork-job-platform-macos.json
+            ${{ runner.temp }}/groundwork-detail-platform-macos.json
+          if-no-files-found: error
+          retention-days: 30
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Begin Gitleaks timing
+        id: gitleaks-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Record secret-scan source identity
+        run: scripts/write-ci-receipt --capture-source "$RUNNER_TEMP/secret-scan-source-before.json"
+
+      - name: Gitleaks
+        id: gitleaks
+        uses: docker://ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: /github/workspace
+        with:
+          args: git --redact --verbose --log-opts=--all .
+
+      - name: Publish secret-scan receipt
+        if: ${{ always() }}
+        env:
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+          GITLEAKS_STARTED: ${{ steps.gitleaks-start.outputs.epoch }}
+          GITLEAKS_OUTCOME: ${{ steps.gitleaks.outcome }}
+        run: |
+          phase_result() {
+            case "$1" in
+              success) echo passed ;;
+              failure) echo failed ;;
+              cancelled) echo cancelled ;;
+              skipped) echo skipped ;;
+              *) echo failed ;;
+            esac
+          }
+          result=failed
+          findings='see annotations'
+          scan_result="$(phase_result "$GITLEAKS_OUTCOME")"
+          scan_reason=''
+          [ "$GITLEAKS_OUTCOME" = success ] && {
+            result=passed
+            findings=0
+          }
+          [ "$GITLEAKS_OUTCOME" != skipped ] || scan_reason='full-history scan did not run'
+          seconds=0
+          if [ -n "$GITLEAKS_STARTED" ]; then
+            seconds=$(( $(date +%s) - GITLEAKS_STARTED ))
+          fi
+          printf 'Gitleaks full-history scan\t%s\t%s\t%s\n' "$seconds" "$scan_result" "$scan_reason" \
+            >"$RUNNER_TEMP/secret-scan-phases.tsv"
+          {
+            printf 'Findings\t%s\n' "$findings"
+            printf 'History scope\tfull git history\n'
+          } >"$RUNNER_TEMP/secret-scan-facts.tsv"
+          scripts/write-ci-receipt \
+            --output "$RUNNER_TEMP/groundwork-job-secret-scan.json" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --receipt-kind ci-job \
+            --title "Secret scan" \
+            --result "$result" \
+            --scope "Gitleaks over the complete repository history" \
+            --platform-os linux \
+            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-arch "$RUNNER_ARCH" \
+            --job-budget-seconds 60 \
+            --workflow-safety-timeout-seconds 600 \
+            --started-epoch "$JOB_STARTED_EPOCH" \
+            --phase-file "$RUNNER_TEMP/secret-scan-phases.tsv" \
+            --fact-file "$RUNNER_TEMP/secret-scan-facts.tsv" \
+            --source-before "$RUNNER_TEMP/secret-scan-source-before.json" \
+            --require-clean-source \
+            --proof-type "full-history security scan" \
+            --cache-state not-applicable \
+            --local-equivalent "gitleaks git --log-opts=--all" \
+            --inspect "gh run view $GITHUB_RUN_ID"
+          [ "$result" = passed ]
+
+      - name: Upload secret-scan receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-secret-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/groundwork-job-secret-scan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Record job start
+        id: job-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Begin BuildKit setup timing
+        id: buildkit-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        id: buildkit
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Record BuildKit setup timing
+        id: buildkit-time
+        if: ${{ always() && steps.buildkit-start.outcome == 'success' }}
+        env:
+          STARTED: ${{ steps.buildkit-start.outputs.epoch }}
+        run: echo "seconds=$(( $(date +%s) - STARTED ))" >>"$GITHUB_OUTPUT"
+
+      - name: Declare scratch lifecycle metadata
+        id: scratch
+        run: echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$GITHUB_OUTPUT"
+
+      - name: Begin image-build timing
+        id: build-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Build amd64 image
+        id: image-build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: groundwork/scratch:ci-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            dev.roost.ephemeral=true
+            dev.roost.built=${{ steps.scratch.outputs.built }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secrets: |
+            github_token=${{ github.token }}
+
+      - name: Record image-build timing
+        id: build-time
+        if: ${{ always() && steps.build-start.outcome == 'success' }}
+        env:
+          STARTED: ${{ steps.build-start.outputs.epoch }}
+        run: echo "seconds=$(( $(date +%s) - STARTED ))" >>"$GITHUB_OUTPUT"
+
+      - name: Smoke test and dispose exact image ID
+        id: smoke
+        if: ${{ always() && steps.image-build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          started="$(date +%s)"
+          status=0
+          scripts/verify-docker-image --existing --purpose "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            2>&1 | tee "$RUNNER_TEMP/smoke-versions.txt" || status=$?
+          echo "seconds=$(( $(date +%s) - started ))" >>"$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Publish Docker image receipt
+        if: ${{ always() }}
+        env:
+          JOB_STARTED_EPOCH: ${{ steps.job-start.outputs.epoch }}
+          BUILDKIT_OUTCOME: ${{ steps.buildkit.outcome }}
+          BUILDKIT_SECONDS: ${{ steps.buildkit-time.outputs.seconds }}
+          BUILD_OUTCOME: ${{ steps.image-build.outcome }}
+          BUILD_SECONDS: ${{ steps.build-time.outputs.seconds }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          SMOKE_SECONDS: ${{ steps.smoke.outputs.seconds }}
+          IMAGE_DIGEST: ${{ steps.image-build.outputs.digest }}
+          IMAGE_ID: ${{ steps.image-build.outputs.imageid }}
+        run: |
+          phase_result() {
+            case "$1" in
+              success) echo passed ;;
+              failure) echo failed ;;
+              cancelled) echo cancelled ;;
+              skipped) echo skipped ;;
+              *) echo failed ;;
+            esac
+          }
+          buildkit_result="$(phase_result "$BUILDKIT_OUTCOME")"
+          build_result="$(phase_result "$BUILD_OUTCOME")"
+          smoke_result="$(phase_result "$SMOKE_OUTCOME")"
+          buildkit_reason=''
+          build_reason=''
+          smoke_reason=''
+          [ "$BUILDKIT_OUTCOME" != skipped ] || buildkit_reason='BuildKit setup did not start'
+          [ "$BUILD_OUTCOME" != skipped ] || build_reason='BuildKit setup did not pass'
+          [ "$SMOKE_OUTCOME" != skipped ] || smoke_reason='image build did not pass'
+          {
+            printf 'BuildKit setup\t%s\t%s\t%s\n' "${BUILDKIT_SECONDS:-0}" "$buildkit_result" "$buildkit_reason"
+            printf 'Image build and load\t%s\t%s\t%s\n' "${BUILD_SECONDS:-0}" "$build_result" "$build_reason"
+            printf 'Smoke and exact-ID disposal\t%s\t%s\t%s\n' "${SMOKE_SECONDS:-0}" "$smoke_result" "$smoke_reason"
+          } >"$RUNNER_TEMP/docker-build-phases.tsv"
+          cleanup_proof=failed
+          versions=unavailable
+          if [ -f "$RUNNER_TEMP/smoke-versions.txt" ]; then
+            if [ -n "$IMAGE_ID" ] && grep -qF "removed image $IMAGE_ID" "$RUNNER_TEMP/smoke-versions.txt"; then
+              cleanup_proof=passed
+            fi
+            versions="$(awk '/^(ripgrep|NVIM|tmux|mise|uv|zoxide|atuin|starship|lazygit|delta|eza|sesh)/ { printf "%s%s", separator, $0; separator="; " }' "$RUNNER_TEMP/smoke-versions.txt")"
+            [ -n "$versions" ] || versions=unavailable
+          fi
+          result=passed
+          for outcome in "$BUILDKIT_OUTCOME" "$BUILD_OUTCOME" "$SMOKE_OUTCOME"; do
+            [ "$outcome" = success ] || result=failed
+          done
+          [ "$cleanup_proof" = passed ] || result=failed
+          {
+            printf 'Target platform\tlinux/amd64\n'
+            printf 'GHA cache\timport and export configured; exact reuse remains in the action log\n'
+            printf 'Image digest\t%s\n' "${IMAGE_DIGEST:-unavailable}"
+            printf 'Image ID\t%s\n' "${IMAGE_ID:-unavailable}"
+            printf 'Exact-ID cleanup\t%s\n' "$cleanup_proof"
+            printf 'Smoke-tested versions\t%s\n' "$versions"
+          } >"$RUNNER_TEMP/docker-build-facts.tsv"
+          scripts/write-ci-receipt \
+            --output "$RUNNER_TEMP/groundwork-job-docker-build.json" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --receipt-kind ci-job \
+            --title "Docker image" \
+            --result "$result" \
+            --scope "build, load, smoke, and dispose the exact amd64 Groundwork image" \
+            --platform-os linux \
+            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-arch "$RUNNER_ARCH" \
+            --job-budget-seconds 240 \
+            --workflow-safety-timeout-seconds 1800 \
+            --started-epoch "$JOB_STARTED_EPOCH" \
+            --phase-file "$RUNNER_TEMP/docker-build-phases.tsv" \
+            --fact-file "$RUNNER_TEMP/docker-build-facts.tsv" \
+            --proof-type "container build and installed-tool smoke proof" \
+            --cache-state unavailable \
+            --local-equivalent "scripts/verify-docker-image --purpose local-proof" \
+            --inspect "gh run view $GITHUB_RUN_ID"
+          [ "$result" = passed ]
+
+      - name: Upload Docker image receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-job-docker-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/groundwork-job-docker-build.json
+          if-no-files-found: error
+          retention-days: 30
+
+  ci_gate:
+    name: ci-gate
+    if: ${{ always() }}
+    needs:
+      - static_linux
+      - update_contract_linux
+      - docker_contract_linux
+      - platform_macos
+      - docker-build
+      - workflow-lint
+      - secret-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Record gate start
+        id: gate-start
+        run: echo "epoch=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout receipt validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download required job receipts
+        id: receipts
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: groundwork-job-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/groundwork-ci-receipts
+          merge-multiple: true
+
+      - name: Publish aggregate CI receipt
+        env:
+          GATE_STARTED_EPOCH: ${{ steps.gate-start.outputs.epoch }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RECEIPT_DOWNLOAD_OUTCOME: ${{ steps.receipts.outcome }}
+        run: >-
+          scripts/aggregate-ci-receipts --mode ci
+          --needs-json "$NEEDS_JSON"
+          --download-outcome "$RECEIPT_DOWNLOAD_OUTCOME"
+          --receipt-directory "$RUNNER_TEMP/groundwork-ci-receipts"
+          --output "$RUNNER_TEMP/groundwork-receipt-ci-gate.json"
+          --summary "$GITHUB_STEP_SUMMARY"
+          --budget-seconds 300
+          --started-epoch "$GATE_STARTED_EPOCH"
+          --lane "static_linux|Static Linux|lint, docs, profiles|static|forbid"
+          --lane "update_contract_linux|Update contract|locks, signals, package maintenance|update|forbid"
+          --lane "docker_contract_linux|Docker contract|exact-resource lifecycle|docker|forbid"
+          --lane "platform_macos|Platform macOS|tmux, PTY, BSD, Homebrew|platform-macos|allow-platform"
+          --lane "docker-build|Docker image|build, smoke, exact-ID disposal|-|none"
+          --lane "workflow-lint|Workflow security|Zizmor and SARIF|-|none"
+          --lane "secret-scan|Security|full-history secret scan|-|none"
+
+      - name: Upload aggregate CI receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: groundwork-receipt-ci-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/groundwork-receipt-ci-gate.json
+          if-no-files-found: error
+          retention-days: 30

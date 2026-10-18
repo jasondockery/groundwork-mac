@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Claude Code is Anthropic&#x27;s coding agent for the terminal, editor, and desktop, and it is the default agent Groundwork installs. This page maps its surfaces…">
+<title>Claude &amp; Claude Code · Groundwork</title>
+<meta property="og:site_name" content="Groundwork">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jasondockery.github.io/groundwork/claude.html">
+<meta property="og:title" content="Claude &amp; Claude Code · Groundwork">
+<meta property="og:description" content="Claude Code is Anthropic&#x27;s coding agent for the terminal, editor, and desktop, and it is the default agent Groundwork installs. This page maps its surfaces…">
+<meta property="og:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Claude &amp; Claude Code · Groundwork">
+<meta name="twitter:description" content="Claude Code is Anthropic&#x27;s coding agent for the terminal, editor, and desktop, and it is the default agent Groundwork installs. This page maps its surfaces…">
+<meta name="twitter:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<link rel="canonical" href="https://jasondockery.github.io/groundwork/claude.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("fg-theme");
+    if (!theme && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="topbar">
+  <span class="name">Groundwork</span>
+  <button class="icon-btn" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Open navigation">☰ menu</button>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="layout">
+  <aside id="site-sidebar" class="sidebar">
+    <div class="brand-row">
+      <a class="brand" href="index.html">
+      <span class="mark">AI-native</span>
+      <span class="name">Groundwork</span>
+      </a>
+      <a class="repo-link" href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener" aria-label="View Groundwork on GitHub">GitHub</a>
+      <button class="icon-btn nav-close" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Close navigation">close menu</button>
+    </div>
+    <nav class="site-nav" aria-label="Documentation">
+    <section class="nav-group">
+      <h2 class="nav-heading">Start here</h2>
+      <a href="index.html">Overview</a>
+      <a href="why.html">Why Groundwork</a>
+      <a href="path.html">The path</a>
+      <a href="agentic-engineering.html">Vibe &rarr; agentic</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="practice.html">Practice plan</a>
+      <a href="groundwork-twelve.html">Groundwork Twelve</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Set up</h2>
+      <a href="setup.html">Setup &amp; chezmoi</a>
+      <a href="platforms.html">Platforms</a>
+      <a href="customizing.html">Customizing</a>
+      <a href="development.html">Development</a>
+      <a href="installed.html">What&apos;s installed</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Foundations</h2>
+      <a href="command-line.html">Command line &amp; Unix</a>
+      <a href="shell.html">Shell &amp; CLI</a>
+      <a href="herdr.html">Herdr</a>
+      <a href="tmux.html">tmux</a>
+      <a href="tmux-repository-windows.html">tmux repo windows</a>
+      <a href="neovim.html">Neovim</a>
+      <a href="git.html">Git</a>
+      <a href="lazygit.html">lazygit</a>
+      <a href="data.html">Data &amp; storage</a>
+      <a href="editors-ai.html">Editors &amp; AI</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Daily workflow</h2>
+      <a href="workflow.html">Everyday workflow</a>
+      <a href="repo-navigation.html">Repo navigation</a>
+      <a href="new-project.html">Starting a project</a>
+      <a href="knowledge.html">Knowledge base</a>
+      <a href="dependencies.html">Dependencies</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Directing agents</h2>
+      <a href="agents.html">AI agents &amp; rules</a>
+      <a href="worktrees.html">Worktrees &amp; parallel agents</a>
+      <a href="specs.html">Specs &amp; targets</a>
+      <a href="skills-playbooks.html">Skills &amp; playbooks</a>
+      <a href="ai-budget.html">Know your AI budget</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">AI tools</h2>
+      <a href="claude.html" class="active">Claude &amp; Claude Code</a>
+      <a href="codex.html">Codex UI &amp; CLI</a>
+      <a href="gpt.html">GPT &amp; ChatGPT</a>
+      <a href="glm.html">GLM &amp; open models</a>
+      <a href="grok.html">Grok &amp; Grok Build</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Interest tracks</h2>
+      <a href="game-dev.html">FPS &middot; Browser</a>
+      <a href="game-dev-unity.html">FPS &middot; Unity</a>
+      <a href="game-dev-learn.html">FPS &middot; Learn dev</a>
+      <a href="web-dev.html">Web &amp; sites</a>
+      <a href="app-dev.html">Apps</a>
+      <a href="gen-media.html">Image &amp; video</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Mac desktop</h2>
+      <a href="macos.html">macOS desktop</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a href="apps.html">Apps &amp; browsers</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Reference</h2>
+      <a href="cheatsheet.html">Cheat sheet</a>
+      <a href="commands.html">Command catalog</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="resources.html">Resource library</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+    </section>
+    </nav>
+    <button class="icon-btn theme-toggle" data-theme-toggle><span data-theme-label>◑ Latte</span></button>
+  <p class="sidebar-meta">Built by <a href="https://www.linkedin.com/in/jasondockery/" target="_blank" rel="noopener">Jason Dockery</a></p>
+  </aside>
+
+  <main id="main" class="main">
+    <div class="content">
+<p class="eyebrow">Anthropic coding agent</p>
+<h1>Claude Code is the agent this whole setup assumes you have.</h1>
+<p class="lead">Claude Code is Anthropic&apos;s coding agent for the terminal, editor, and desktop, and it is the default agent Groundwork installs. This page maps its surfaces, the daily commands, and the gauges that keep long sessions healthy.</p>
+
+<div class="trigger"><b>When you'll want this</b> You want an agent that reads your project, plans before editing, runs its own checks, and leaves you a diff you can defend.</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>Which Claude surface to use</h2>
+<table class="keytable">
+  <tr><td><strong>Claude Code CLI</strong></td><td>The daily driver. Start it in a project folder, give it a task, approve narrowly, review the diff. Installed by Groundwork (the <code>claude-code@latest</code> cask).</td></tr>
+  <tr><td><strong>VS Code extension</strong></td><td>The same agent attached to a visible editor buffer: inline diffs, @-mentions, and plan review without leaving the file. Groundwork installs it alongside VS Code for when you want the diff in a GUI.</td></tr>
+  <tr><td><strong>JetBrains plugin</strong></td><td>The same agent inside IntelliJ IDEA, PyCharm, WebStorm, and other JetBrains IDEs, running in the IDE terminal. Not installed by Groundwork; add it from the JetBrains Marketplace if that&apos;s your editor.</td></tr>
+  <tr><td><strong>Claude desktop app</strong></td><td>Anthropic&apos;s desktop app: general chat plus a Code tab for running and reviewing Claude Code sessions side by side. Groundwork installs it on personal machines only — work machines skip AI apps; reach for it when juggling threads outgrows the terminal.</td></tr>
+  <tr><td><strong>claude.ai web</strong></td><td>Chat, research, and cloud Claude Code sessions (<a href="https://claude.ai/code" target="_blank" rel="noopener">claude.ai/code</a>) from any browser, no install required — useful for a long task on a repo you don&apos;t have checked out locally.</td></tr>
+  <tr><td><strong>Agent SDK</strong></td><td>For building your own agents on top of Claude Code&apos;s tools and orchestration, in Python or TypeScript. Skip this unless you&apos;re building an agent product rather than using one.</td></tr>
+</table>
+
+<div class="callout note">
+  <span class="label">Groundwork default</span>
+  <p>Use the CLI for daily repo work, an editor extension when you want Claude inside your editor (inline diffs in VS Code; the IDE terminal in JetBrains), and the desktop app or claude.ai web when a task benefits from parallel sessions or runs better off your laptop. Automated review on every pull request (GitHub Actions, GitLab CI/CD) is a separate, opt-in layer on top of the same agent — see <a href="agents.html">AI agents &amp; rules</a> for the shared contract every surface follows.</p>
+</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>Daily commands</h2>
+<table class="keytable">
+  <tr><td><code>claude</code></td><td>Open the interactive session in the current project.</td></tr>
+  <tr><td><code>claude "explain this repo"</code></td><td>Start with a one-shot prompt from the shell.</td></tr>
+  <tr><td><code>claude --continue</code></td><td>Reopen the most recent session for this directory; <code>--resume</code> (or <code>/resume</code>) opens a picker across all of them.</td></tr>
+  <tr><td><kbd>Shift</kbd><kbd>Tab</kbd> or <code>--permission-mode &lt;mode&gt;</code></td><td>Cycle or set how much Claude can do without asking: Manual (the default — Claude asks before each edit or command; nothing changes without your yes) &rarr; Accept edits &rarr; Plan (read-only research). Auto and Bypass permissions are opt-in: Bypass skips every approval prompt, so reserve it for a throwaway container or worktree — never a machine holding credentials or work you can&apos;t lose. Trade approval friction for autonomy on purpose, not by accident.</td></tr>
+  <tr><td><code>/plan &lt;description&gt;</code></td><td>Enter plan mode directly: Claude researches and proposes a plan without touching files, then asks how you want it to proceed.</td></tr>
+  <tr><td><code>/context</code> &amp; <code>/usage</code></td><td>The two gauges: context-window usage and plan limits. Check both before long work — see <a href="ai-budget.html">Know your AI budget</a>.</td></tr>
+  <tr><td><code>/compact &lt;focus&gt;</code></td><td>Summarize the session deliberately, telling the model what to keep.</td></tr>
+  <tr><td><code>/rewind</code></td><td>Roll the conversation and/or the code back to an earlier checkpoint when a session goes sideways.</td></tr>
+  <tr><td><code>/review [PR]</code></td><td>A fast, read-only, single-pass review of a GitHub pull request — findings only, no edits.</td></tr>
+  <tr><td><code>/statusline</code></td><td>Put an always-on readout (model, context, whatever you script) at the bottom of every session.</td></tr>
+  <tr><td><code>/model</code></td><td>Pick the model for the session — see &quot;Which model to pick&quot; below.</td></tr>
+</table>
+
+<div class="drill">
+  <div class="num">1</div>
+  <div class="body">
+    <h3>Try it now: work a real change in plan mode first</h3>
+    <p>In a project you know, run <code>claude</code> and press <kbd>Shift</kbd><kbd>Tab</kbd> until the status line shows plan mode (or start with <code>claude --permission-mode plan</code>). Ask for a real change. Read the plan before you approve it — that&apos;s where you catch a wrong assumption before Claude touches a file.</p>
+  </div>
+</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>Copying a conversation out</h2>
+<p>Reaching for tmux copy mode to grab a long Claude answer is the wrong tool: Claude Code redraws its own interface, so what tmux retains is the rendered frames, not the conversation. It also runs a mouse-aware view, which means a drag inside it goes to Claude Code rather than becoming a tmux selection. Use the app&apos;s own route instead.</p>
+<table class="keytable">
+  <tr><td><span class="keys"><kbd>Ctrl</kbd><kbd>O</kbd></span></td><td>Toggle the transcript viewer — the full conversation with tool calls, timestamps, and the model used</td></tr>
+  <tr><td><span class="keys"><kbd>[</kbd></span></td><td>Inside the viewer: write the whole conversation into the terminal&apos;s real scrollback, so tmux copy mode and terminal search can finally see it</td></tr>
+  <tr><td><span class="keys"><kbd>v</kbd></span></td><td>Inside the viewer: write the conversation to a temp file and open it in <code>$VISUAL</code>/<code>$EDITOR</code> — best when you want to edit or save it</td></tr>
+  <tr><td><span class="keys"><kbd>q</kbd></span></td><td>Leave the viewer</td></tr>
+</table>
+<div class="callout note">
+  <span class="label">Both need fullscreen rendering</span>
+  <p><kbd>[</kbd> and <kbd>v</kbd> are fullscreen-renderer features. Run <code>/tui</code> with no argument to see which renderer is active; press <kbd>?</kbd> inside the viewer for its full shortcut list. <kbd>Ctrl</kbd><kbd>O</kbd> itself works in either renderer.</p>
+</div>
+<p>The order that works: <kbd>Ctrl</kbd><kbd>O</kbd>, then <kbd>[</kbd>, then <kbd>q</kbd> — now <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>[</kbd></span> puts you in tmux copy mode over the real text, where <kbd>/</kbd> searches and <kbd>v</kbd>/<kbd>y</kbd> select and copy (<a href="tmux.html">tmux</a>).</p>
+<div class="callout note">
+  <span class="label">Ctrl+Space belongs to tmux first</span>
+  <p>Inside tmux, <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd></span> is the prefix, so tmux handles it before the application in the pane. To send a literal <kbd>Ctrl</kbd><kbd>Space</kbd> through to the application, press it twice: <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>Ctrl</kbd><kbd>Space</kbd></span>.</p>
+</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>Which model to pick</h2>
+<p><code>/model</code> switches the model for the current session and saves it as your default. The choice trades quality for speed and cost — see <a href="ai-budget.html">Know your AI budget</a> for the budget side of that tradeoff.</p>
+<table class="keytable">
+  <tr><td><strong>Claude Fable 5</strong></td><td>Anthropic&apos;s most capable model, tuned for long-running agents. Reach for it on the hardest design, architecture, or review work, or a task you expect to run unattended for a long stretch.</td></tr>
+  <tr><td><strong>Claude Opus 4.8</strong></td><td>Built for complex agentic coding and enterprise work — a strong default for anything you&apos;d call &quot;the hard part.&quot;</td></tr>
+  <tr><td><strong>Claude Sonnet 5</strong></td><td>The best combination of speed and intelligence, and Claude Code&apos;s default model. Good for most day-to-day work.</td></tr>
+  <tr><td><strong>Claude Haiku 4.5</strong></td><td>The fastest model with near-frontier intelligence. Use it for mechanical work: renames, boilerplate, formatting, quick lookups.</td></tr>
+</table>
+<p>Rule of thumb: spend a heavier model on decisions you&apos;d want a senior engineer&apos;s judgment on — design, security-sensitive changes, review — and let a lighter model burn through mechanical work where a wrong guess is cheap to catch and fix.</p>
+
+<h2><span class="hash" aria-hidden="true">#</span>The contract is the same as every agent's</h2>
+<p>Claude Code reads this repo&apos;s <code>AGENTS.md</code> through a thin adapter, inspects before editing, and is expected to verify before claiming done — the shared contract <a href="agents.html">AI agents &amp; rules</a> defines for every tool. What differs per tool is the surface, not the discipline: inspect, plan, edit, verify, review, commit.</p>
+
+<h2><span class="hash" aria-hidden="true">#</span>Good first prompts</h2>
+<div class="prompt-card"><span class="who">inspect</span>Read <code>AGENTS.md</code>, inspect this repo, and summarize the project structure and validation commands. Do not edit files yet.</div>
+<div class="prompt-card"><span class="who">plan first</span>Enter plan mode, read this codebase, and propose a plan for &lt;task&gt;. Do not start editing until I approve it.</div>
+<div class="prompt-card"><span class="who">small change</span>Make the smallest change needed to fix this issue. Show me the plan first, then run the relevant validation after editing.</div>
+<div class="prompt-card"><span class="who">review</span>Review my uncommitted changes for correctness, missing tests, docs drift, and risky assumptions. Do not modify files.</div>
+
+<h2><span class="hash" aria-hidden="true">#</span>Official references</h2>
+<ul>
+  <li><a href="https://code.claude.com/docs/en/quickstart" target="_blank" rel="noopener">Claude Code quickstart</a> — start here if you have never run Claude Code: install it and walk through a first real task.</li>
+  <li><a href="https://code.claude.com/docs" target="_blank" rel="noopener">Claude Code docs</a> — the full docs hub: every surface, workflow, and setting, once you&apos;re past the basics.</li>
+  <li><a href="https://code.claude.com/docs/en/cli-reference" target="_blank" rel="noopener">CLI reference</a> — every command and flag in one place, for scripting Claude Code or tuning a session precisely.</li>
+  <li><a href="https://code.claude.com/docs/en/permission-modes" target="_blank" rel="noopener">Permission modes</a> — the full detail behind Manual, Accept edits, Plan, Auto, and Bypass permissions, for tightening or loosening how much an agent can do unsupervised.</li>
+  <li><a href="https://claude.com/download" target="_blank" rel="noopener">Claude app downloads</a> — the desktop and mobile apps.</li>
+  <li><a href="agents.html">Groundwork agent rules</a> — how this repo keeps one shared agent contract across tools.</li>
+</ul>
+
+<div class="pagenav">
+  <a href="ai-budget.html"><span class="dir">← Prev</span>Know your AI budget</a>
+  <a href="codex.html"><span class="dir">Next →</span>Codex UI &amp; CLI</a>
+</div>
+
+      <footer class="site">Built to be rebuilt. <a href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener">Open source</a>, no tracking, works offline. · <a class="gw-version" href="https://github.com/jasondockery/groundwork/releases" target="_blank" rel="noopener">dev</a></footer>
+    </div>
+  </main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

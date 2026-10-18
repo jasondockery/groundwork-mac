@@ -1,0 +1,550 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the fixtures from the developer's own terminal. These cases assert
+# what a launcher does in a FRESH session; inheriting an ambient multiplexer
+# makes them assert nesting instead, so running the validator the normal way —
+# from inside tmux — failed on the environment rather than on the code. The
+# nesting cases below set these variables explicitly where they are exercised.
+unset TMUX TMUX_PANE HERDR_ENV
+
+repo="$(cd "$(dirname "$0")/.." && pwd -P)"
+tmp_parent=/tmp
+[[ ! -d /private/tmp ]] || tmp_parent=/private/tmp
+tmp="$(mktemp -d "$tmp_parent/groundwork-multiplexer.XXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+
+empty_config="$tmp/empty-config.toml"
+: >"$empty_config"
+base='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"none","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"profile_preset":"personal-current","environment_role":"personal","release_posture":"current","work":false,"headless":false,"xcode":false,"beta":false'
+
+render() { # selection os source output [arch]
+  local selection="$1" os="$2" source="$3" output="$4" arch="${5:-arm64}" os_release='{}'
+  [[ "$os" != linux ]] || os_release='{"ID":"ubuntu"}'
+  chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
+    --override-data "{${base},\"terminal_multiplexer\":\"$selection\",\"chezmoi\":{\"os\":\"$os\",\"arch\":\"$arch\",\"osRelease\":$os_release}}" \
+    execute-template <"$source" >"$output"
+}
+
+assert_absent() { # literal file
+  if grep -qF "$1" "$2"; then
+    printf 'unexpected managed surface %s in %s\n' "$1" "$2" >&2
+    exit 1
+  fi
+}
+
+for os in darwin linux; do
+  for selection in herdr tmux both none; do
+    prefix="$tmp/$os-$selection"
+    render "$selection" "$os" "$repo/home/dot_config/homebrew/Brewfile.tmpl" "$prefix.Brewfile"
+    render "$selection" "$os" "$repo/home/run_after_20-tools.sh.tmpl" "$prefix.tools"
+    render "$selection" "$os" "$repo/home/run_after_21-t3-code.sh.tmpl" "$prefix.t3"
+    render "$selection" "$os" "$repo/home/run_after_09-herdr-config-ownership.sh.tmpl" "$prefix.herdr-hook"
+    render "$selection" "$os" "$repo/home/dot_local/bin/executable_groundwork-mux.tmpl" "$prefix.launcher"
+    render "$selection" "$os" "$repo/home/.chezmoiignore" "$prefix.ignore"
+    bash -n "$prefix.tools"
+    bash -n "$prefix.t3"
+    bash -n "$prefix.herdr-hook"
+    bash -n "$prefix.launcher"
+
+    grep -qxF 'brew "herdr"' "$prefix.Brewfile"
+    if [[ "$os" == darwin ]]; then
+      grep -qF 'cask "t3-code@nightly"' "$prefix.Brewfile"
+      grep -qF 'cask "vorssaint"' "$prefix.Brewfile"
+    else
+      assert_absent 'cask "t3-code@nightly"' "$prefix.Brewfile"
+      assert_absent 'cask "vorssaint"' "$prefix.Brewfile"
+    fi
+    grep -qF 'groundwork_herdr_apply_owned' "$prefix.herdr-hook"
+    grep -qF 'herdr completion zsh' "$prefix.tools"
+    if [[ "$selection" == tmux || "$selection" == both ]]; then
+      grep -qxF 'brew "tmux"' "$prefix.Brewfile"
+      grep -qxF 'brew "sesh"' "$prefix.Brewfile"
+      grep -qxF 'brew "tmuxp"' "$prefix.Brewfile"
+      grep -qF 'tmux_plugin_dir=' "$prefix.tools"
+      assert_absent '.config/tmux/**' "$prefix.ignore"
+    else
+      assert_absent 'brew "tmux"' "$prefix.Brewfile"
+      assert_absent 'brew "sesh"' "$prefix.Brewfile"
+      assert_absent 'brew "tmuxp"' "$prefix.Brewfile"
+      assert_absent 'tmux_plugin_dir=' "$prefix.tools"
+      grep -qxF '.config/tmux/**' "$prefix.ignore"
+      grep -qxF '.config/sesh/**' "$prefix.ignore"
+    fi
+  done
+done
+
+render tmux linux "$repo/home/dot_config/homebrew/Brewfile.tmpl" "$tmp/linux-amd64.Brewfile" amd64
+assert_absent 'cask "t3-code@nightly"' "$tmp/linux-amd64.Brewfile"
+assert_absent 'cask "vorssaint"' "$tmp/linux-amd64.Brewfile"
+render tmux darwin "$repo/home/dot_config/homebrew/Brewfile.tmpl" "$tmp/darwin-amd64.Brewfile" amd64
+assert_absent 'cask "vorssaint"' "$tmp/darwin-amd64.Brewfile"
+grep -qF 'cask "t3-code@nightly"' "$tmp/darwin-amd64.Brewfile"
+render herdr linux "$repo/home/dot_config/homebrew/Brewfile.tmpl" "$tmp/linux-arm64.Brewfile" arm64
+assert_absent 'cask "t3-code@nightly"' "$tmp/linux-arm64.Brewfile"
+for arch in amd64 arm64; do
+  render herdr linux "$repo/home/run_after_21-t3-code.sh.tmpl" "$tmp/linux-$arch.t3" "$arch"
+  grep -qF 'https://t3.codes/install.sh' "$tmp/linux-$arch.t3"
+done
+
+grep -qF 'set -g prefix C-Space' "$repo/home/dot_config/tmux/tmux.conf.tmpl"
+grep -qF 'set -g prefix2 C-b' "$repo/home/dot_config/tmux/tmux.conf.tmpl"
+grep -qF 'bind C-b send-prefix -2' "$repo/home/dot_config/tmux/tmux.conf.tmpl"
+
+python3 - "$repo/home/.chezmoitemplates/herdr.toml" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as source:
+    config = tomllib.load(source)
+assert config["onboarding"] is False
+assert config["theme"] == {"name": "catppuccin"}
+assert config["terminal"] == {"shell_mode": "auto", "new_cwd": "follow"}
+keys = config["keys"]
+expected_keys = {'prefix': ['ctrl+space', 'ctrl+b'],
+ 'help': 'prefix+?',
+ 'settings': 'prefix+shift+s',
+ 'detach': 'prefix+d',
+ 'reload_config': 'prefix+q',
+ 'resize_mode': ['prefix+ctrl+left',
+                 'prefix+ctrl+down',
+                 'prefix+ctrl+up',
+                 'prefix+ctrl+right'],
+ 'copy_mode': 'prefix+[',
+ 'split_vertical': ['prefix+v', 'alt+shift+enter', 'prefix+|'],
+ 'split_horizontal': ['prefix+h', 'alt+enter', 'prefix+minus'],
+ 'close_pane': ['prefix+x', 'alt+esc'],
+ 'zoom': 'prefix+z',
+ 'last_pane': 'prefix+;',
+ 'focus_pane_left': 'ctrl+alt+left',
+ 'focus_pane_down': 'ctrl+alt+down',
+ 'focus_pane_up': 'ctrl+alt+up',
+ 'focus_pane_right': 'ctrl+alt+right',
+ 'resize_pane_left': 'ctrl+alt+shift+left',
+ 'resize_pane_down': 'ctrl+alt+shift+down',
+ 'resize_pane_up': 'ctrl+alt+shift+up',
+ 'resize_pane_right': 'ctrl+alt+shift+right',
+ 'swap_pane_left': [],
+ 'swap_pane_down': [],
+ 'swap_pane_up': [],
+ 'swap_pane_right': [],
+ 'rename_pane': 'prefix+shift+o',
+ 'new_tab': 'prefix+c',
+ 'rename_tab': ['prefix+r', 'prefix+comma'],
+ 'close_tab': ['prefix+k', 'prefix+ampersand'],
+ 'switch_tab': ['prefix+1..9', 'alt+1..9'],
+ 'previous_tab': ['prefix+p', 'alt+left'],
+ 'next_tab': ['prefix+n', 'alt+right'],
+ 'move_tab_previous': 'alt+shift+left',
+ 'move_tab_next': 'alt+shift+right',
+ 'workspace_picker': 'prefix+s',
+ 'goto': 'prefix+shift+t',
+ 'new_workspace': 'prefix+shift+c',
+ 'rename_workspace': ['prefix+shift+r', 'prefix+$'],
+ 'close_workspace': 'prefix+shift+k',
+ 'previous_workspace': ['prefix+shift+p', 'alt+up'],
+ 'next_workspace': ['prefix+shift+n', 'alt+down']}
+for action, binding in expected_keys.items():
+    assert keys[action] == binding, (action, keys.get(action))
+
+# Model the retained built-in defaults (reviewed against Herdr 0.9.1): an explicitly configured value
+# replaces its default, and an empty list removes the action. This catches a
+# future local collision between configured actions and any retained
+# built-in instead of proving only that TOML can round-trip `[]`.
+herdr_defaults = {
+    "help": "prefix+?",
+    "settings": "prefix+s",
+    "new_workspace": "prefix+shift+n",
+    "new_worktree": "prefix+shift+g",
+    "open_worktree": [],
+    "remove_worktree": [],
+    "rename_workspace": "prefix+shift+w",
+    "close_workspace": "prefix+shift+d",
+    "workspace_picker": "prefix+w",
+    "goto": "prefix+g",
+    "detach": "prefix+q",
+    "reload_config": "prefix+shift+r",
+    "open_notification_target": "prefix+o",
+    "previous_workspace": [],
+    "next_workspace": [],
+    "previous_agent": [],
+    "next_agent": [],
+    "focus_agent": [],
+    "new_tab": "prefix+c",
+    "rename_tab": "prefix+shift+t",
+    "previous_tab": "prefix+p",
+    "next_tab": "prefix+n",
+    "switch_tab": "prefix+1..9",
+    "switch_workspace": [],
+    "close_tab": "prefix+shift+x",
+    "rename_pane": "prefix+shift+p",
+    "edit_scrollback": "prefix+e",
+    "copy_mode": "prefix+[",
+    "focus_pane_left": "prefix+h",
+    "focus_pane_down": "prefix+j",
+    "focus_pane_up": "prefix+k",
+    "focus_pane_right": "prefix+l",
+    "swap_pane_left": "prefix+shift+h",
+    "swap_pane_down": "prefix+shift+j",
+    "swap_pane_up": "prefix+shift+k",
+    "swap_pane_right": "prefix+shift+l",
+    "cycle_pane_next": "prefix+tab",
+    "cycle_pane_previous": "prefix+shift+tab",
+    "last_pane": [],
+    "split_vertical": "prefix+v",
+    "split_horizontal": "prefix+minus",
+    "close_pane": "prefix+x",
+    "zoom": "prefix+z",
+    "resize_mode": "prefix+r",
+    "resize_pane_left": [],
+    "resize_pane_down": [],
+    "resize_pane_up": [],
+    "resize_pane_right": [],
+    "move_tab_previous": [],
+    "move_tab_next": [],
+    "toggle_sidebar": "prefix+b",
+}
+effective_key_owners = {}
+for action, default in herdr_defaults.items():
+    configured = keys[action] if action in keys else default
+    bindings = [configured] if isinstance(configured, str) else configured
+    for binding in bindings:
+        assert binding not in effective_key_owners, (
+            binding,
+            effective_key_owners.get(binding),
+            action,
+        )
+        effective_key_owners[binding] = action
+for command in keys["command"]:
+    binding = command["key"]
+    assert binding not in effective_key_owners, (
+        binding,
+        effective_key_owners.get(binding),
+        "command",
+    )
+    effective_key_owners[binding] = "command"
+for direction in ("left", "down", "up", "right"):
+    assert f"swap_pane_{direction}" not in effective_key_owners.values()
+
+assert keys["command"] == [{
+    "key": "prefix+g",
+    "type": "popup",
+    "command": 'if [ -n "${HERDR_ACTIVE_PANE_CWD:-}" ]; then cd "$HERDR_ACTIVE_PANE_CWD" || exit; fi; exec lazygit',
+    "description": "open lazygit in the active pane directory when available",
+    "width": "90%",
+    "height": "90%",
+}]
+assert config["session"]["resume_agents_on_restore"] is True
+assert config["remote"]["manage_ssh_config"] is False
+assert config["experimental"] == {"allow_nested": False, "pane_history": False}
+assert config["ui"] == {
+    "sidebar_start_collapsed": False,
+    "mouse_capture": True,
+    "copy_on_select": True,
+    "confirm_close": True,
+    "prompt_new_tab_name": False,
+    "pane_borders": True,
+    "pane_scrollbars": False,
+    "pane_gaps": False,
+    "sound": {"enabled": False},
+}
+PY
+
+# Herdr 0.8 passes popup commands the active pane directory as an environment
+# variable but does not use it as the popup process cwd. Exercise the configured
+# shell command with a recording lazygit stub to prove it changes directories
+# when the value is available and safely retains the popup cwd when it is not.
+python3 - "$repo/home/.chezmoitemplates/herdr.toml" "$tmp" <<'PY'
+import os
+import pathlib
+import stat
+import subprocess
+import sys
+import tomllib
+
+config_path = pathlib.Path(sys.argv[1])
+fixture = pathlib.Path(sys.argv[2]) / "herdr popup fixture"
+bin_dir = fixture / "bin with spaces"
+active_repo = fixture / "active pane repo"
+fallback_dir = fixture / "server fallback"
+for directory in (bin_dir, active_repo, fallback_dir):
+    directory.mkdir(parents=True)
+
+lazygit = bin_dir / "lazygit"
+lazygit.write_text("#!/bin/sh\npwd -P >\"$GROUNDWORK_LAZYGIT_CWD\"\n")
+lazygit.chmod(lazygit.stat().st_mode | stat.S_IXUSR)
+cwd_path = fixture / "lazygit cwd"
+
+with config_path.open("rb") as source:
+    commands = tomllib.load(source)["keys"]["command"]
+popup = next(command for command in commands if command["type"] == "popup")
+
+environment = dict(os.environ)
+environment.update({
+    "GROUNDWORK_LAZYGIT_CWD": str(cwd_path),
+    "HERDR_ACTIVE_PANE_CWD": str(active_repo),
+    "PATH": str(bin_dir) + os.pathsep + environment.get("PATH", ""),
+})
+subprocess.run(
+    ["/bin/sh", "-c", popup["command"]],
+    check=True,
+    cwd=fallback_dir,
+    env=environment,
+)
+assert pathlib.Path(cwd_path.read_text().strip()).resolve() == active_repo.resolve()
+
+environment.pop("HERDR_ACTIVE_PANE_CWD")
+subprocess.run(
+    ["/bin/sh", "-c", popup["command"]],
+    check=True,
+    cwd=fallback_dir,
+    env=environment,
+)
+assert pathlib.Path(cwd_path.read_text().strip()).resolve() == fallback_dir.resolve()
+PY
+
+# The launcher keeps Herdr primary for `both`, never aliases tmux, and refuses
+# automatic nesting before resolving either binary.
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/herdr" <<'SH'
+#!/usr/bin/env bash
+printf 'herdr:%s\n' "$*"
+SH
+cat >"$tmp/bin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf 'tmux:%s\n' "$*"
+SH
+chmod +x "$tmp/bin/herdr" "$tmp/bin/tmux"
+for selection in herdr both tmux none; do
+  render "$selection" darwin "$repo/home/dot_local/bin/executable_groundwork-mux.tmpl" "$tmp/launcher-$selection"
+  chmod +x "$tmp/launcher-$selection"
+done
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-herdr" --session demo | grep -qxF 'herdr:--session demo'
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-both" --session demo | grep -qxF 'herdr:--session demo'
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-tmux" new -s demo | grep -qxF 'tmux:new -s demo'
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-herdr" status --json \
+  | grep -qxF '{"schema":"groundwork.terminal-multiplexer-status","schemaVersion":1,"terminalMultiplexer":{"selection":"herdr","managed":["herdr"],"available":{"herdr":true,"tmux":true},"primary":"herdr","fallback":null,"nesting":"disabled"}}'
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-both" status --json \
+  | grep -qxF '{"schema":"groundwork.terminal-multiplexer-status","schemaVersion":1,"terminalMultiplexer":{"selection":"both","managed":["herdr","tmux"],"available":{"herdr":true,"tmux":true},"primary":"herdr","fallback":"tmux","nesting":"disabled"}}'
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-both" status >"$tmp/status-human.out"
+grep -qF 'Selection  both' "$tmp/status-human.out"
+grep -qF 'Managed    herdr, tmux' "$tmp/status-human.out"
+grep -qF 'Available  herdr=true, tmux=true' "$tmp/status-human.out"
+grep -qF 'Primary    herdr' "$tmp/status-human.out"
+grep -qF 'Fallback   tmux' "$tmp/status-human.out"
+grep -qF 'Nesting    disabled' "$tmp/status-human.out"
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-none" status --json \
+  | grep -qxF '{"schema":"groundwork.terminal-multiplexer-status","schemaVersion":1,"terminalMultiplexer":{"selection":"none","managed":[],"available":{"herdr":true,"tmux":true},"primary":null,"fallback":null,"nesting":"disabled"}}'
+HERDR_ENV=1 PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-both" status --json \
+  | grep -qF '"selection":"both"'
+if PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-both" status --json extra >"$tmp/status-extra.out" 2>"$tmp/status-extra.err"; then
+  echo "launcher accepted extra status arguments" >&2
+  exit 1
+fi
+grep -qF 'usage: groundwork-mux status [--json]' "$tmp/status-extra.err"
+
+# Desired management and executable availability are separate observations.
+# A failed install must not be reported as installed, while an unselected
+# leftover remains visible for deliberate owner cleanup.
+mkdir -p "$tmp/tmux-only-bin"
+cp "$tmp/bin/tmux" "$tmp/tmux-only-bin/tmux"
+PATH="$tmp/tmux-only-bin" /bin/bash "$tmp/launcher-herdr" status --json >"$tmp/selected-missing.json"
+grep -qF '"managed":["herdr"]' "$tmp/selected-missing.json"
+grep -qF '"available":{"herdr":false,"tmux":true}' "$tmp/selected-missing.json"
+PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-none" status --json >"$tmp/unselected-present.json"
+grep -qF '"managed":[]' "$tmp/unselected-present.json"
+grep -qF '"available":{"herdr":true,"tmux":true}' "$tmp/unselected-present.json"
+if PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-none" >"$tmp/none.out" 2>"$tmp/none.err"; then
+  echo "none selection launched a multiplexer" >&2
+  exit 1
+fi
+grep -qF 'no multiplexer is managed' "$tmp/none.err"
+if HERDR_ENV=1 PATH="$tmp/bin:/usr/bin:/bin" "$tmp/launcher-both" >"$tmp/nested.out" 2>"$tmp/nested.err"; then
+  echo "launcher allowed nested Herdr/tmux" >&2
+  exit 1
+fi
+grep -qF 'automatic nesting is disabled' "$tmp/nested.err"
+test ! -s "$tmp/nested.out"
+
+# Fresh setup recommends Herdr; a pre-field Groundwork config retains tmux; all
+# four stored values survive regeneration without a prompt.
+fresh_data='{"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}'
+chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
+  --override-data "$fresh_data" execute-template --init \
+  --promptBool work=false,headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
+  --promptString name=Test,email_personal=test@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name= \
+  --promptChoice password_manager=none,key_repeat=fast,terminal_multiplexer=1 \
+  <"$repo/home/.chezmoi.toml.tmpl" >"$tmp/fresh-config"
+grep -qF 'terminal_multiplexer = "herdr"' "$tmp/fresh-config"
+for selection in herdr tmux both none; do
+  chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
+    --override-data "{${base},\"terminal_multiplexer\":\"$selection\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+    execute-template --init <"$repo/home/.chezmoi.toml.tmpl" >"$tmp/stored-$selection"
+  grep -qF "terminal_multiplexer = \"$selection\"" "$tmp/stored-$selection"
+done
+chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
+  --override-data "{${base},\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+  execute-template --init <"$repo/home/.chezmoi.toml.tmpl" >"$tmp/legacy-config"
+grep -qF 'terminal_multiplexer = "tmux"' "$tmp/legacy-config"
+chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
+  --override-data "{${base},\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+  execute-template <"$repo/home/dot_local/bin/executable_groundwork-mux.tmpl" >"$tmp/legacy-launcher"
+grep -qxF 'selection="tmux"' "$tmp/legacy-launcher"
+
+# Missing remains the one legacy-tmux migration signal. Every explicitly
+# invalid stored value must fail in each selection-dependent consumer before
+# it can silently reinterpret it. Herdr config ownership is selection-neutral.
+invalid_data="{${base},\"terminal_multiplexer\":\"tmuux\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}"
+invalid_consumers=(
+  home/.chezmoi.toml.tmpl
+  home/.chezmoiignore
+  home/dot_config/homebrew/Brewfile.tmpl
+  home/run_after_20-tools.sh.tmpl
+  home/dot_local/bin/executable_groundwork-mux.tmpl
+  home/dot_local/bin/executable_groundwork-herdr-integrations.tmpl
+  home/dot_local/bin/executable_groundwork-profile.tmpl
+)
+for invalid_source in "${invalid_consumers[@]}"; do
+  invalid_name="$(printf '%s' "$invalid_source" | tr '/.' '__')"
+  if chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
+    --override-data "$invalid_data" execute-template --init \
+    <"$repo/$invalid_source" >"$tmp/$invalid_name.out" 2>"$tmp/$invalid_name.err"; then
+    echo "$invalid_source accepted an explicitly invalid multiplexer selection" >&2
+    exit 1
+  fi
+  grep -qF 'invalid terminal_multiplexer value "tmuux"' "$tmp/$invalid_name.err"
+done
+grep -qF 'github.com/herdrdev/herdr#license' "$repo/home/.chezmoi.toml.tmpl"
+grep -qF 'Herdr (recommended; Apache-2.0)' "$repo/home/dot_local/bin/executable_groundwork-configure"
+assert_absent 'github.com/ogulcancelik/herdr' "$repo/home/.chezmoi.toml.tmpl"
+assert_absent 'AGPL-3.0' "$repo/home/dot_local/bin/executable_groundwork-configure"
+
+# Agent hooks are explicit, literal-consent operations and delegate only the
+# two supported tools detected on PATH. No apply hook invokes them.
+render herdr darwin "$repo/home/dot_local/bin/executable_groundwork-herdr-integrations.tmpl" "$tmp/integrations"
+chmod +x "$tmp/integrations"
+mkdir -p "$tmp/integration-bin" "$tmp/integration-home/.claude" "$tmp/integration-home/.codex"
+cat >"$tmp/integration-bin/herdr" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$HERDR_TEST_LOG"
+if [[ "$*" == "integration install codex" && "${HERDR_FAIL_CODEX:-0}" == 1 ]]; then
+  exit 9
+fi
+[[ "$*" != "integration status" ]] || printf 'status ok\n'
+SH
+cat >"$tmp/integration-bin/claude" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cat >"$tmp/integration-bin/codex" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$tmp/integration-bin"/*
+: >"$tmp/integration.log"
+if HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install >"$tmp/integration-no.out" 2>"$tmp/integration-no.err"; then
+  echo "integration install accepted missing literal consent" >&2
+  exit 1
+fi
+test ! -s "$tmp/integration.log"
+HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install --yes >"$tmp/integration-install.out"
+grep -qxF 'integration install claude' "$tmp/integration.log"
+grep -qxF 'integration install codex' "$tmp/integration.log"
+grep -qxF 'integration status' "$tmp/integration.log"
+: >"$tmp/integration.log"
+if HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" HERDR_FAIL_CODEX=1 PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install --yes >"$tmp/integration-partial.out" 2>"$tmp/integration-partial.err"; then
+  echo "partial integration install reported success" >&2
+  exit 1
+fi
+grep -qxF 'integration install claude' "$tmp/integration.log"
+grep -qxF 'integration install codex' "$tmp/integration.log"
+grep -qxF 'integration status' "$tmp/integration.log"
+grep -qF 'completed for: claude' "$tmp/integration-partial.err"
+grep -qF 'failed for: codex' "$tmp/integration-partial.err"
+grep -qF "rerun 'groundwork-herdr-integrations install --yes'" "$tmp/integration-partial.err"
+HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install --yes >"$tmp/integration-repair.out"
+assert_hook="$repo/home/run_after_09-herdr-config-ownership.sh.tmpl"
+assert_absent 'integration install' "$assert_hook"
+
+# Ownership is atomic and fail closed for user files, changed files, symlinks,
+# receipt failures, and repeat application.
+# shellcheck source=/dev/null
+source "$repo/home/dot_local/lib/groundwork/herdr-config.sh"
+managed_home="$tmp/managed-home"
+target="$managed_home/.config/herdr/config.toml"
+receipt="$managed_home/.local/state/groundwork/herdr-config.sha256"
+desired="$repo/home/.chezmoitemplates/herdr.toml"
+mkdir -p "$managed_home/.config" "$managed_home/.local/state"
+groundwork_herdr_apply_owned "$target" "$desired" "$receipt"
+first_hash="$(groundwork_herdr_sha256 "$target")"
+groundwork_herdr_apply_owned "$target" "$desired" "$receipt"
+[[ "$(groundwork_herdr_sha256 "$target")" == "$first_hash" ]]
+grep -qxF "sha256:$first_hash" "$receipt"
+
+printf '\n# user change\n' >>"$target"
+if groundwork_herdr_apply_owned "$target" "$desired" "$receipt" >"$tmp/drift.out" 2>"$tmp/drift.err"; then
+  echo "changed managed config was overwritten" >&2
+  exit 1
+fi
+grep -qF '# user change' "$target"
+grep -qF 'unowned or changed file blocks adoption' "$tmp/drift.err"
+if groundwork_herdr_remove_owned "$target" "$receipt" >"$tmp/remove.out" 2>"$tmp/remove.err"; then
+  echo "changed managed config was removed" >&2
+  exit 1
+fi
+grep -qF '# user change' "$target"
+
+rm -f "$target" "$receipt"
+printf 'user = true\n' >"$target"
+if groundwork_herdr_apply_owned "$target" "$desired" "$receipt" >"$tmp/unowned.out" 2>"$tmp/unowned.err"; then
+  echo "unowned config was overwritten" >&2
+  exit 1
+fi
+grep -qxF 'user = true' "$target"
+
+rm -f "$target"
+ln -s "$tmp/symlink-destination" "$target"
+if groundwork_herdr_apply_owned "$target" "$desired" "$receipt" >"$tmp/symlink.out" 2>"$tmp/symlink.err"; then
+  echo "symlink config was followed" >&2
+  exit 1
+fi
+test -L "$target"
+grep -qF 'is a symlink' "$tmp/symlink.err"
+
+rm -f "$target"
+groundwork_herdr_apply_owned "$target" "$desired" "$receipt"
+previous_hash="$(groundwork_herdr_sha256 "$target")"
+# shellcheck disable=SC2329 # injected failure seam invoked by apply_owned
+groundwork_herdr_record() { return 1; }
+if groundwork_herdr_apply_owned "$target" "$desired" "$receipt" >"$tmp/record.out" 2>"$tmp/record.err"; then
+  echo "receipt failure reported success" >&2
+  exit 1
+fi
+[[ "$(groundwork_herdr_sha256 "$target")" == "$previous_hash" ]]
+grep -qF 'new file was withdrawn' "$tmp/record.err"
+unset -f groundwork_herdr_record
+# shellcheck source=/dev/null
+source "$repo/home/dot_local/lib/groundwork/herdr-config.sh"
+groundwork_herdr_remove_owned "$target" "$receipt"
+test ! -e "$target"
+test ! -e "$receipt"
+
+real_home="$tmp/real-home"
+linked_home="$tmp/linked-home"
+mkdir -p "$real_home/.config" "$real_home/.local/state"
+ln -s "$real_home" "$linked_home"
+if groundwork_herdr_apply_owned "$linked_home/.config/herdr/config.toml" "$desired" "$linked_home/.local/state/groundwork/herdr-config.sha256" >"$tmp/home-link.out" 2>"$tmp/home-link.err"; then
+  echo "symlinked HOME ancestor was followed" >&2
+  exit 1
+fi
+grep -qF 'path ancestor is a symlink' "$tmp/home-link.err"
+
+grep -qE '^fields_key=\(.*terminal_multiplexer' "$repo/home/dot_local/bin/executable_groundwork-configure"
+grep -qF 'multiplexer_values=(herdr tmux both none)' "$repo/home/dot_local/bin/executable_groundwork-configure"
+grep -qF 'Existing' "$repo/home/.chezmoi.toml.tmpl"
+grep -qF 'installations predate this field' "$repo/home/.chezmoi.toml.tmpl"
+
+echo "terminal multiplexer selection and ownership fixtures passed"
+python3 "$repo/scripts/test-platform-habits"

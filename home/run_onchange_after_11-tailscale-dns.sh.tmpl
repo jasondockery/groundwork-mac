@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+{{ if eq .chezmoi.os "darwin" -}}
+# Tailscale owns split DNS. Retire only the exact legacy Groundwork resolver;
+# custom files and symlinks remain user-owned. Keep a root-owned recovery copy.
+target="/etc/resolver/ts.net"
+if [[ ! -e "$target" && ! -L "$target" ]]; then
+  exit 0
+fi
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+printf '%s\n' 'nameserver 100.100.100.100' >"$tmp"
+if [[ -L "$target" || ! -f "$target" ]] || ! cmp -s "$tmp" "$target"; then
+  echo "Preserving custom $target; review it if Tailscale MagicDNS fails."
+  exit 0
+fi
+backup_dir="$(sudo mktemp -d /etc/groundwork-tailscale-resolver.XXXXXX)"
+sudo mv "$target" "$backup_dir/ts.net"
+printf 'Retired legacy Tailscale resolver; recovery copy: %s/ts.net\n' "$backup_dir"
+sudo dscacheutil -flushcache || true
+sudo killall -HUP mDNSResponder || true
+{{ end -}}

@@ -1,0 +1,26 @@
+name: p
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install repository Node
+        uses: actions/setup-node@0000000000000000000000000000000000000000
+        with:
+          node-version-file: .node-version
+      - name: Corepack
+        run: corepack enable
+      - name: Run
+        run: scripts/run-fixture-job --suite full
+  shared_bootstrap:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install repository Node
+        uses: actions/setup-node@0000000000000000000000000000000000000000
+        with:
+          node-version-file: .node-version
+      - name: Enable repository pnpm
+        run: |
+          set -euo pipefail
+          scripts/enable-repository-pnpm
+      - name: Run
+        run: scripts/run-fixture-job --suite full

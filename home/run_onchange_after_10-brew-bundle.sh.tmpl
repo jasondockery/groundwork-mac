@@ -1,0 +1,348 @@
+#!/usr/bin/env bash
+set -euo pipefail
+{{- $brewfile := joinPath .chezmoi.sourceDir "dot_config/homebrew/Brewfile.tmpl" }}
+{{- if stat $brewfile }}
+# Brewfile hash: {{ includeTemplate "dot_config/homebrew/Brewfile.tmpl" . | sha256sum }}
+{{- end }}
+{{- $browserBrewfile := joinPath .chezmoi.sourceDir "dot_config/homebrew/Brewfile.browser.tmpl" }}
+{{- if stat $browserBrewfile }}
+# Browser Brewfile hash: {{ includeTemplate "dot_config/homebrew/Brewfile.browser.tmpl" . | sha256sum }}
+{{- end }}
+{{- $optionalBrewfile := joinPath .chezmoi.sourceDir "dot_config/homebrew/Brewfile.optional.tmpl" }}
+{{- if stat $optionalBrewfile }}
+# Optional Brewfile hash: {{ includeTemplate "dot_config/homebrew/Brewfile.optional.tmpl" . | sha256sum }}
+{{- end }}
+
+# Selection stays canonical and absolute. `shellenv` output is EVAL'd, so
+# resolving this from PATH would execute whatever a planted `brew` earlier on
+# PATH contained -- the exact trust this fixed list exists to withhold.
+# GROUNDWORK_BREW_BIN is an explicit, visible seam for pointing the hook at a
+# controlled Homebrew in tests; it is never consulted implicitly.
+for brew_bin in "${GROUNDWORK_BREW_BIN:-}" \
+  /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
+  [[ -n "$brew_bin" && -x "$brew_bin" ]] && eval "$("$brew_bin" shellenv)" && break
+done
+unset brew_bin
+
+command -v brew >/dev/null 2>&1 || exit 0
+
+# claude-code and claude-code@latest both install the `claude` binary, so
+# existing stable-channel installs need to be removed before brew bundle can
+# switch them to the latest channel declared in the Brewfile.
+if grep -q '^cask "claude-code@latest"' "$HOME/.config/homebrew/Brewfile" \
+  && brew list --cask claude-code >/dev/null 2>&1 \
+  && ! brew list --cask claude-code@latest >/dev/null 2>&1; then
+  brew uninstall --cask claude-code
+fi
+
+# --verbose streams each download and install; the default prints one
+# "Fetching ..." line and then nothing for a multi-gigabyte fetch, which
+# reads as a hang and invites a Ctrl+C that only delays the install.
+# Downloads still run in parallel and the fetch phase can be quiet for
+# stretches, so say so up front, and let Homebrew print a heartbeat dot
+# (at most one per minute) whenever it would otherwise be silent.
+echo "Groundwork: fetching Homebrew packages — a fresh install downloads"
+echo "several gigabytes in parallel and can look quiet for minutes at a"
+echo "time. It has not hung; interrupting only delays it (it resumes)."
+export HOMEBREW_VERBOSE_USING_DOTS=1
+# Curl-level retries for the transient failures curl itself classifies as
+# retryable (timeouts, 5xx). The curl-92 stream errors it does NOT retry are
+# handled after the fact by groundwork-brew-refetch below.
+export HOMEBREW_CURL_RETRIES=3
+# `brew bundle` shells out to `brew install`, so Homebrew's default ask mode
+# applies to every package here. On a fresh machine that plan is nothing but
+# dependencies, so an attached terminal turns the first install into a wall of
+# confirmations; without a terminal it never asks and the proof stays green.
+# The Brewfile IS the approved set, so Groundwork answers for it.
+export HOMEBREW_NO_ASK=1
+# Applying managed files installs anything missing but deliberately does not
+# upgrade already-installed packages. update-all owns upgrades after it has
+# classified the exact candidate set; this keeps a routine chezmoi apply from
+# entering a privileged application replacement merely because the Brewfile
+# changed.
+#
+# One failed package must not skip the recovery steps below (a dead cask
+# should never leave the launcher or keyboard driver down), but the script
+# still exits non-zero afterwards so chezmoi retries the bundle on the next
+# apply instead of recording it as done. Interactive macOS work keeps a real
+# terminal while saving a normalized log, so password prompts stay visible and
+# groundwork-brew-repair can still offer Homebrew's exact remediation commands.
+brew_output_lib="$HOME/.local/share/groundwork/lib/brew-output.sh"
+if [[ ! -r "$brew_output_lib" ]]; then
+  echo "Groundwork: Homebrew output classifier is missing: $brew_output_lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$brew_output_lib"
+brew_log_dir="$HOME/.local/state/groundwork/logs"
+mkdir -p "$brew_log_dir"
+bundle_log_final="$brew_log_dir/homebrew-bundle-latest.log"
+bundle_log="$(mktemp "$brew_log_dir/homebrew-bundle.XXXXXX")"
+chmod 600 "$bundle_log"
+bundle_file="$HOME/.config/homebrew/Brewfile"
+bundle_file_owned=0
+if [[ -n "${GROUNDWORK_BREWFILE_SKIP_CASKS:-}" ]]; then
+  skip_file="$(mktemp "${TMPDIR:-/tmp}/groundwork-brew-skip.XXXXXX")"
+  bundle_file="$(mktemp "${TMPDIR:-/tmp}/groundwork-brewfile.XXXXXX")"
+  bundle_file_owned=1
+  chmod 600 "$skip_file" "$bundle_file"
+  printf '%s\n' "$GROUNDWORK_BREWFILE_SKIP_CASKS" >"$skip_file"
+  if ! awk 'NF != 1 || $0 !~ /^[A-Za-z0-9@+._-]+$/ { exit 1 }' "$skip_file"; then
+    rm -f -- "$skip_file" "$bundle_file"
+    echo "Groundwork: the Brewfile cask-skip set is malformed; no bundle was attempted." >&2
+    exit 1
+  fi
+  awk -v skip_file="$skip_file" '
+    BEGIN {
+      while ((getline token < skip_file) > 0) skipped[token] = 1
+      close(skip_file)
+    }
+    $1 == "cask" {
+      token = $2
+      gsub(/^"|"$/, "", token)
+      if (skipped[token]) next
+    }
+    { print }
+  ' "$HOME/.config/homebrew/Brewfile" >"$bundle_file"
+  rm -f -- "$skip_file"
+fi
+bundle_receipt_owned=0
+if [[ "${GROUNDWORK_UPDATE_LOCK_HELD:-}" == "1" &&
+  -n "${GROUNDWORK_UPDATE_RECEIPT_DIR:-}" &&
+  -d "$GROUNDWORK_UPDATE_RECEIPT_DIR" && ! -L "$GROUNDWORK_UPDATE_RECEIPT_DIR" ]]; then
+  bundle_receipt="$GROUNDWORK_UPDATE_RECEIPT_DIR/homebrew-bundle.tsv"
+else
+  bundle_receipt="$(mktemp "${TMPDIR:-/tmp}/groundwork-brew-bundle-receipt.XXXXXX")"
+  bundle_receipt_owned=1
+fi
+bundle_log_exit() {
+  local status=$?
+  trap - EXIT
+  # An INT/TERM/HUP trap exits this shell directly, which skips the sweep inside
+  # the attached Homebrew stage. Close any stage still live BEFORE restoring the
+  # terminal, so the transaction never ends with brew, sudo, or an installer
+  # still running against a pane nobody holds.
+  local stage_cleanup_status=0
+  if declare -F gw_brew_cleanup_active_stage >/dev/null 2>&1; then
+    gw_brew_cleanup_active_stage || stage_cleanup_status=$?
+    if [[ "$stage_cleanup_status" -ne 0 ]]; then
+      # Outranks whatever set the status, including a signal. "Cancelled" and
+      # "cancelled but Homebrew may still be running" are different outcomes,
+      # and only the second one needs someone to look.
+      echo "Groundwork: could not confirm the interrupted Homebrew stage stopped (exit $stage_cleanup_status)." >&2
+      status="$stage_cleanup_status"
+    fi
+  fi
+  # The bundle can hand this terminal to script(1), which disables signal
+  # generation on it. However this hook ends, give the pane back usable — and if
+  # it could not be given back, say so and fail rather than record a clean apply
+  # over a terminal that no longer answers Ctrl-C.
+  local tty_restore_status=0
+  if declare -F gw_brew_tty_restore >/dev/null 2>&1; then
+    gw_brew_tty_restore || tty_restore_status=$?
+    if [[ "$tty_restore_status" -ne 0 ]]; then
+      echo "Groundwork: this terminal was not restored to its original mode (exit $tty_restore_status)." >&2
+      echo "Run 'stty sane' in this pane to recover it." >&2
+      status="$tty_restore_status"
+    fi
+  fi
+  mv -f -- "$bundle_log" "$bundle_log_final" 2>/dev/null || true
+  [[ "$bundle_receipt_owned" -eq 0 ]] || rm -f -- "$bundle_receipt" || true
+  [[ "$bundle_file_owned" -eq 0 ]] || rm -f -- "$bundle_file" || true
+  exit "$status"
+}
+trap bundle_log_exit EXIT
+# Key color on the run-wide signal: update-all exports GROUNDWORK_COLOR before
+# the sync, and a direct `chezmoi apply` in a terminal gets the TTY fallback.
+# NO_COLOR still wins there. Noninteractive runs use the classified pipe;
+# interactive macOS runs keep Homebrew's own PTY output intact.
+groundwork_color="${GROUNDWORK_COLOR:-}"
+if [[ -z "$groundwork_color" ]]; then
+  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    groundwork_color=1
+  else
+    groundwork_color=0
+  fi
+fi
+if [[ "$groundwork_color" == "1" ]]; then
+  export HOMEBREW_COLOR=1
+fi
+bundle_status=0
+# Checksums are an INSTALL-time policy, not just an upgrade-time one: a fresh
+# machine gets its casks from here, long before update-all ever runs.
+# HOMEBREW_CASK_OPTS is how --require-sha reaches `brew bundle`'s cask installs.
+# A cask with no checksum must fail the bundle, not be quietly accepted.
+#
+# The user's own HOMEBREW_CASK_OPTS is PRESERVED, not replaced: it can carry
+# their appdir, language, --no-binaries, or their own --require-sha. Groundwork
+# appends its requirement for its own commands and never exports over theirs.
+user_cask_opts="${HOMEBREW_CASK_OPTS-}"
+safe_cask_opts="${user_cask_opts:+$user_cask_opts }--require-sha"
+HOMEBREW_CASK_OPTS="$safe_cask_opts" \
+  gw_brew_run_logged "$bundle_log" "$bundle_receipt" reset "Homebrew bundle" -- \
+    brew bundle install --no-upgrade --verbose --file="$bundle_file" \
+    || bundle_status=$?
+# A cancelled bundle is not a failed bundle looking for a repair. Stop here:
+# repair prompts, re-fetches, and the retry would all run against a terminal the
+# person just asked to have back. 124 is the hard deadline and 125 means
+# cancellation could not be completed cleanly; neither may be followed by more
+# Homebrew work either.
+case "$bundle_status" in
+  124 | 125 | 129 | 130 | 143)
+    echo "Groundwork: Homebrew bundle cancelled; nothing further was started." >&2
+    echo "Nothing that already installed was removed; the next chezmoi apply retries only what is missing." >&2
+    exit "$bundle_status"
+    ;;
+esac
+# The repair helper runs even when the bundle exited 0: Homebrew's per-cask
+# "cannot be upgraded as-is" warning does not fail the run, so it would
+# otherwise repeat on every apply forever. Its exit code distinguishes
+# outcomes that demand opposite responses (0 repaired / 1 nothing / 2
+# declined / 3 approved-but-FAILED / 4 unparseable suggestion).
+repair_status=0
+"$HOME/.local/bin/groundwork-brew-repair" "$bundle_log" || repair_status=$?
+retry_bundle=0
+if [[ "$repair_status" -eq 0 && "$bundle_status" -ne 0 ]]; then
+  retry_bundle=1
+elif [[ "$repair_status" -eq 3 ]]; then
+  echo "Groundwork: the Homebrew repair you approved did not complete — review the output above."
+  [[ "$bundle_status" -ne 0 ]] || bundle_status=1
+elif [[ "$repair_status" -ge 4 ]]; then
+  echo "Groundwork: Homebrew printed a remediation Groundwork could not safely parse; review the log above and run it yourself."
+fi
+# Failed downloads (curl 92 and friends) are not retried by curl's ordinary
+# --retry; re-fetch just those artifacts serially, then retry the bundle so
+# it picks them up from the cache.
+if [[ "$bundle_status" -ne 0 ]] \
+  && "$HOME/.local/bin/groundwork-brew-refetch" "$bundle_log"; then
+  retry_bundle=1
+fi
+if [[ "$retry_bundle" -eq 1 ]]; then
+  bundle_status=0
+  HOMEBREW_CASK_OPTS="$safe_cask_opts" \
+    gw_brew_run_logged "$bundle_log" "$bundle_receipt" append "Homebrew bundle retry" -- \
+      brew bundle install --no-upgrade --verbose --file="$bundle_file" \
+      || bundle_status=$?
+  case "$bundle_status" in
+    124 | 125 | 129 | 130 | 143)
+      echo "Groundwork: Homebrew bundle retry cancelled; nothing further was started." >&2
+      exit "$bundle_status"
+      ;;
+  esac
+fi
+gw_brew_report_classification \
+  "Homebrew bundle" "$bundle_receipt" "$bundle_log_final" "$bundle_status"
+
+{{- if and (eq .chezmoi.os "darwin") (not .headless) }}
+# Homebrew may quit always-on apps (Karabiner, Raycast, BetterDisplay,
+# Anybox) during an install/upgrade and does not relaunch them; reopen any
+# that are installed but not running so hotkeys, keyboard rules, and menu-bar
+# services do not silently disappear.
+"$HOME/.local/bin/groundwork-apps-start" || true
+{{- end }}
+
+if [[ "$bundle_status" -ne 0 ]]; then
+  echo "Groundwork: brew bundle failed for at least one package — scroll up for its 'failed' line."
+  echo "Everything that installed is fine and stays installed; the next chezmoi apply retries only what's missing."
+  echo "To retry just the packages now: brew bundle --file=\"\$HOME/.config/homebrew/Brewfile\""
+  exit "$bundle_status"
+fi
+{{- if and (eq .chezmoi.os "darwin") (not .headless) }}
+
+# ---- Chrome checksum exceptions, and ONLY after the safe lane succeeded ----
+#
+# Chrome stable and Beta ship `sha256 :no_check` upstream (Google's own updater
+# owns the binaries), so neither can satisfy the --require-sha policy the main
+# Brewfile is installed under. The selected casks live in Brewfile.browser and
+# are installed here only after every checksum-verified package succeeded: a
+# failed safe lane must never trigger an unchecked exception lane.
+#
+# Failure is real: `run_onchange` must retry until the profile's browser set is
+# present. Validate the rendered manifest completely before the first install,
+# then act on that exact bounded token list. Posture changes never uninstall a
+# former channel or touch browser data.
+browser_manifest="$HOME/.config/homebrew/Brewfile.browser"
+[[ -f "$browser_manifest" ]] || {
+  echo "Groundwork: browser manifest is missing: $browser_manifest" >&2
+  exit 1
+}
+browser_casks=()
+while IFS= read -r browser_line; do
+  case "$browser_line" in
+    "" | \#*) ;;
+    'cask "google-chrome"') browser_casks+=(google-chrome) ;;
+    'cask "google-chrome@beta"') browser_casks+=(google-chrome@beta) ;;
+    *)
+      printf 'Groundwork: unsupported browser manifest entry: %s\n' "$browser_line" >&2
+      exit 1
+      ;;
+  esac
+done <"$browser_manifest"
+((${#browser_casks[@]} > 0)) || {
+  echo "Groundwork: desktop browser manifest selected no Chrome cask." >&2
+  exit 1
+}
+
+if [[ "$user_cask_opts" == *--require-sha* ]]; then
+  cat >&2 <<'CONFLICT'
+Groundwork selected its managed Chrome channel, but your own HOMEBREW_CASK_OPTS
+requires checksummed casks and Google's official Chrome casks ship none.
+
+Chrome was NOT installed and this apply is incomplete. Keep your policy and
+manage the browser outside Groundwork, or remove your own --require-sha before
+rerunning chezmoi apply. Groundwork never weakens a user or organization policy.
+CONFLICT
+  exit 1
+fi
+
+for browser_cask in "${browser_casks[@]}"; do
+  if brew list --cask "$browser_cask" >/dev/null 2>&1; then
+    echo "Groundwork: managed browser present: $browser_cask"
+    continue
+  fi
+  echo "Groundwork: installing $browser_cask from Google's official Homebrew cask."
+  echo "  This cask declares 'sha256 :no_check'; Google's updater owns the binary."
+  echo "  The main Groundwork Brewfile remains entirely checksum-verified."
+  HOMEBREW_CASK_OPTS="$user_cask_opts" brew install --cask "$browser_cask"
+done
+{{- end }}
+
+# ---- Optional packages, and ONLY after every required package succeeded ----
+#
+# Nothing in Brewfile.optional is depended on by anything else, so a failure
+# here is reported and this run still succeeds. It is retried on the next
+# apply, which is what lets a package blocked today land by itself once its
+# blocker clears. A failed required lane must never reach this point: an
+# incomplete machine is not the place to start optional work.
+optional_manifest="$HOME/.config/homebrew/Brewfile.optional"
+if [[ -s "$optional_manifest" ]] && grep -qvE '^[[:space:]]*(#.*)?$' "$optional_manifest"; then
+  # Homebrew refuses to LOAD a formula from an untrusted third-party tap, and
+  # that refusal fails the whole manifest rather than just its own package.
+  # This applies the supply-chain decision already recorded in the manifest and
+  # enforced by the validator's tap allowlist; it does not make a new one.
+  # Formula-level rather than whole-tap trust, so it never covers whatever that
+  # tap publishes next. `brew trust` is idempotent.
+  if grep -qxF 'brew "cliamp"' "$optional_manifest"; then
+    if ! brew trust --formula bjarneo/cliamp/cliamp >/dev/null 2>&1; then
+      echo "Groundwork: could not trust bjarneo/cliamp/cliamp; it will fail to load." >&2
+      echo "  Trust it yourself with: brew trust --formula bjarneo/cliamp/cliamp" >&2
+    fi
+  fi
+  optional_status=0
+  HOMEBREW_CASK_OPTS="$safe_cask_opts" \
+    gw_brew_run_logged "$bundle_log" "$bundle_receipt" append "Homebrew bundle (optional)" -- \
+      brew bundle install --no-upgrade --verbose --file="$optional_manifest" \
+      || optional_status=$?
+  if [[ "$optional_status" -ne 0 ]]; then
+    cat >&2 <<'OPTIONAL'
+Groundwork: an optional package did not install. This did NOT fail your update.
+  Every required package above is installed; only Brewfile.optional is affected.
+  Groundwork retries it on the next apply, so no action is needed to recover.
+  A common cause on macOS is a package with no prebuilt bottle: Homebrew builds
+  it from source, and an Xcode older than your macOS version stops that build.
+  Compare the versions with: brew config | grep -E 'macOS|CLT|Xcode'
+  To stop installing it at all, remove it from Brewfile.optional with:
+    chezmoi edit --apply ~/.config/homebrew/Brewfile.optional
+OPTIONAL
+  fi
+fi

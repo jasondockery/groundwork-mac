@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Every shortcut and daily helper worth memorizing, pulled together for quick scanning or printing. Each section links to the page that teaches it in full.">
+<title>Cheat sheet · Groundwork</title>
+<meta property="og:site_name" content="Groundwork">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jasondockery.github.io/groundwork/cheatsheet.html">
+<meta property="og:title" content="Cheat sheet · Groundwork">
+<meta property="og:description" content="Every shortcut and daily helper worth memorizing, pulled together for quick scanning or printing. Each section links to the page that teaches it in full.">
+<meta property="og:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cheat sheet · Groundwork">
+<meta name="twitter:description" content="Every shortcut and daily helper worth memorizing, pulled together for quick scanning or printing. Each section links to the page that teaches it in full.">
+<meta name="twitter:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<link rel="canonical" href="https://jasondockery.github.io/groundwork/cheatsheet.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("fg-theme");
+    if (!theme && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="topbar">
+  <span class="name">Groundwork</span>
+  <button class="icon-btn" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Open navigation">☰ menu</button>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="layout">
+  <aside id="site-sidebar" class="sidebar">
+    <div class="brand-row">
+      <a class="brand" href="index.html">
+      <span class="mark">AI-native</span>
+      <span class="name">Groundwork</span>
+      </a>
+      <a class="repo-link" href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener" aria-label="View Groundwork on GitHub">GitHub</a>
+      <button class="icon-btn nav-close" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Close navigation">close menu</button>
+    </div>
+    <nav class="site-nav" aria-label="Documentation">
+    <section class="nav-group">
+      <h2 class="nav-heading">Start here</h2>
+      <a href="index.html">Overview</a>
+      <a href="why.html">Why Groundwork</a>
+      <a href="path.html">The path</a>
+      <a href="agentic-engineering.html">Vibe &rarr; agentic</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="practice.html">Practice plan</a>
+      <a href="groundwork-twelve.html">Groundwork Twelve</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Set up</h2>
+      <a href="setup.html">Setup &amp; chezmoi</a>
+      <a href="platforms.html">Platforms</a>
+      <a href="customizing.html">Customizing</a>
+      <a href="development.html">Development</a>
+      <a href="installed.html">What&apos;s installed</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Foundations</h2>
+      <a href="command-line.html">Command line &amp; Unix</a>
+      <a href="shell.html">Shell &amp; CLI</a>
+      <a href="herdr.html">Herdr</a>
+      <a href="tmux.html">tmux</a>
+      <a href="tmux-repository-windows.html">tmux repo windows</a>
+      <a href="neovim.html">Neovim</a>
+      <a href="git.html">Git</a>
+      <a href="lazygit.html">lazygit</a>
+      <a href="data.html">Data &amp; storage</a>
+      <a href="editors-ai.html">Editors &amp; AI</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Daily workflow</h2>
+      <a href="workflow.html">Everyday workflow</a>
+      <a href="repo-navigation.html">Repo navigation</a>
+      <a href="new-project.html">Starting a project</a>
+      <a href="knowledge.html">Knowledge base</a>
+      <a href="dependencies.html">Dependencies</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Directing agents</h2>
+      <a href="agents.html">AI agents &amp; rules</a>
+      <a href="worktrees.html">Worktrees &amp; parallel agents</a>
+      <a href="specs.html">Specs &amp; targets</a>
+      <a href="skills-playbooks.html">Skills &amp; playbooks</a>
+      <a href="ai-budget.html">Know your AI budget</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">AI tools</h2>
+      <a href="claude.html">Claude &amp; Claude Code</a>
+      <a href="codex.html">Codex UI &amp; CLI</a>
+      <a href="gpt.html">GPT &amp; ChatGPT</a>
+      <a href="glm.html">GLM &amp; open models</a>
+      <a href="grok.html">Grok &amp; Grok Build</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Interest tracks</h2>
+      <a href="game-dev.html">FPS &middot; Browser</a>
+      <a href="game-dev-unity.html">FPS &middot; Unity</a>
+      <a href="game-dev-learn.html">FPS &middot; Learn dev</a>
+      <a href="web-dev.html">Web &amp; sites</a>
+      <a href="app-dev.html">Apps</a>
+      <a href="gen-media.html">Image &amp; video</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Mac desktop</h2>
+      <a href="macos.html">macOS desktop</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a href="apps.html">Apps &amp; browsers</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Reference</h2>
+      <a href="cheatsheet.html" class="active">Cheat sheet</a>
+      <a href="commands.html">Command catalog</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="resources.html">Resource library</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+    </section>
+    </nav>
+    <button class="icon-btn theme-toggle" data-theme-toggle><span data-theme-label>◑ Latte</span></button>
+  <p class="sidebar-meta">Built by <a href="https://www.linkedin.com/in/jasondockery/" target="_blank" rel="noopener">Jason Dockery</a></p>
+  </aside>
+
+  <main id="main" class="main">
+    <div class="content">
+      <p class="eyebrow">Reference</p>
+      <h1>Cheat sheet: the keys that matter, all on one page.</h1>
+      <p class="lead">Every shortcut and daily helper worth memorizing, pulled together for quick scanning or printing. Each section links to the page that teaches it in full.</p>
+      <p>The inclusion rule is daily recall: this page carries commands and keys a learner is expected to reach for during normal work. One-time setup, repair-only paths, diagnostics, and internal runners stay in the <a href="commands.html">command catalog</a> or their teaching page instead of crowding the memory aid — with one named exception: the Groundwork &amp; setup helpers section keeps the per-install helpers (extensions, default browser) that people come back for after adding a browser or a machine, so they're findable without the full catalog.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Keyboard &amp; launcher <span class="muted">— <a href="keyboard.html">Keyboard</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><kbd>Caps</kbd> tap</span> <span class="act">Escape</span></div>
+          <div class="qr"><span class="keys"><kbd>Caps</kbd> hold</span> <span class="act">Control</span></div>
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>Space</kbd></span> <span class="act">Raycast launcher</span></div>
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>,</kbd></span> <span class="act">settings for current app</span></div>
+          <div class="qr"><span class="keys"><code>groundwork-help</code></span> <span class="act">show command catalog</span></div>
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>K</kbd></span> <span class="act">clear Ghostty</span></div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>macOS desktop &amp; tabs <span class="muted">— <a href="macos.html">macOS desktop</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>Tab</kbd></span> <span class="act">switch apps</span></div>
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>`</kbd></span> <span class="act">cycle windows in app</span></div>
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>N</kbd> / <kbd>⌘</kbd><kbd>T</kbd></span> <span class="act">new window / tab</span></div>
+          <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>W</kbd> / <kbd>⌘</kbd><kbd>Q</kbd></span> <span class="act">close tab/window / quit app</span></div>
+          <div class="qr"><span class="keys"><kbd>⌃</kbd><kbd>Tab</kbd></span> <span class="act">next tab</span></div>
+          <div class="qr"><span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd></span> <span class="act">reopen closed tab</span></div>
+          <div class="qr"><span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>F</kbd></span> <span class="act">toggle full screen</span></div>
+          <div class="qr"><span class="keys"><kbd>⌃</kbd><kbd>↑</kbd> / <kbd>⌃</kbd><kbd>↓</kbd></span> <span class="act">Mission Control / app windows</span></div>
+          <div class="qr"><span class="keys"><kbd>⌃</kbd><kbd>←</kbd> / <kbd>⌃</kbd><kbd>→</kbd></span> <span class="act">move spaces</span></div>
+          <div class="qr"><span class="keys"><kbd>Esc</kbd></span> <span class="act">exit many full-screen views</span></div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Raycast, Anybox &amp; displays <span class="muted">— <a href="apps.html">Apps</a> · <a href="macos.html">macOS</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-sections">
+          <div class="quickref-section">
+            <h3>Raycast</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>⌘</kbd><kbd>Space</kbd></span> <span class="act">open launcher</span></div>
+              <div class="qr"><span class="keys">type app / file</span> <span class="act">launch or open</span></div>
+              <div class="qr"><span class="keys">type math</span> <span class="act">calculator</span></div>
+              <div class="qr"><span class="keys">Clipboard History</span> <span class="act">recall copied text</span></div>
+              <div class="qr"><span class="keys">Window Management</span> <span class="act">snap and move windows</span></div>
+              <div class="qr"><span class="keys">aliases first</span> <span class="act">typed keywords before global hotkeys</span></div>
+              <div class="qr"><span class="keys">Cloud Sync/export</span> <span class="act">Raycast settings live in Raycast</span></div>
+              <div class="qr"><span class="keys"><code>raycast-extensions</code></span> <span class="act">open Store checklist</span></div>
+              <div class="qr"><span class="keys">Browser Bookmarks</span> <span class="act">search browser bookmarks</span></div>
+              <div class="qr"><span class="keys">Browser Tabs</span> <span class="act">live tabs for Safari/Chromium</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Anybox</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><code>ab</code></span> <span class="act">recommended alias: Search Links</span></div>
+              <div class="qr"><span class="keys"><code>as</code></span> <span class="act">recommended alias: Save Current Tab</span></div>
+              <div class="qr"><span class="keys">Search Links prefs</span> <span class="act">tags/folders on, icons off</span></div>
+              <div class="qr"><span class="keys">Anybox menu bar</span> <span class="act">quick find / quick save</span></div>
+              <div class="qr"><span class="keys">iCloud sync</span> <span class="act">links and Quick Links stay app-owned</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Windows</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys">Raycast launcher search</span> <span class="act">type window command: left half</span></div>
+              <div class="qr"><span class="keys">Raycast launcher search</span> <span class="act">type window command: right half</span></div>
+              <div class="qr"><span class="keys">Raycast launcher search</span> <span class="act">type window command: maximize</span></div>
+              <div class="qr"><span class="keys">Raycast launcher search</span> <span class="act">type window command: restore</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Displays</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys">BetterDisplay menu</span> <span class="act">resolution presets</span></div>
+              <div class="qr"><span class="keys"><code>betterdisplaycli</code></span> <span class="act">display automation</span></div>
+              <div class="qr"><span class="keys">Native window menu</span> <span class="act">move windows, not displays</span></div>
+              <div class="qr"><span class="keys">Raycast AI</span> <span class="act">Pro path for Claude/GPT/Grok</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>tmux <span class="muted">— <a href="tmux.html">tmux</a> · prefix is <kbd>Ctrl</kbd><kbd>Space</kbd></span></h2>
+      <div class="quickref">
+        <div class="quickref-sections">
+          <div class="quickref-section">
+            <h3>Panes</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Enter</kbd></span> <span class="act">split below</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>Enter</kbd></span> <span class="act">split beside</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Escape</kbd></span> <span class="act">close pane after confirmation</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Left</kbd></span> <span class="act">focus pane left</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Down</kbd></span> <span class="act">focus pane below</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Up</kbd></span> <span class="act">focus pane above</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Right</kbd></span> <span class="act">focus pane right</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>|</kbd> / <kbd>-</kbd></span> <span class="act">split right / down</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>h</kbd>/<kbd>j</kbd>/<kbd>k</kbd>/<kbd>l</kbd></span> <span class="act">move panes</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>O</kbd></span> <span class="act">rename pane</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>z</kbd></span> <span class="act">zoom active pane</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>x</kbd></span> <span class="act">close active pane</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Windows</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Left</kbd></span> <span class="act">previous window</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Right</kbd></span> <span class="act">next window</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>c</kbd></span> <span class="act">new window</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>1</kbd>…<kbd>9</kbd></span> <span class="act">jump by number</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>,</kbd></span> <span class="act">rename window</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>&lt;</kbd>/<kbd>&gt;</kbd></span> <span class="act">reorder window</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>&amp;</kbd></span> <span class="act">close window + panes</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Sessions</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>d</kbd></span> <span class="act">detach, keep running</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>T</kbd></span> <span class="act">session switcher</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>$</kbd></span> <span class="act">rename session</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Ctrl</kbd><kbd>r</kbd></span> <span class="act">restore snapshot</span></div>
+              <div class="qr"><span class="keys"><code>tmuxp load</code></span> <span class="act">start project layout</span></div>
+              <div class="qr"><span class="keys"><code>tmux-fresh</code></span> <span class="act">start without restore</span></div>
+              <div class="qr"><span class="keys"><code>tmux kill-session</code></span> <span class="act">end live session</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Tools &amp; scrollback</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>g</kbd></span> <span class="act">lazygit popup</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>[</kbd> · <kbd>v</kbd> · <kbd>y</kbd></span> <span class="act">copy mode: select &amp; copy from history</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>Y</kbd></span> <span class="act">copy last command + output</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Ctrl</kbd><kbd>y</kbd></span> <span class="act">copy the pane's directory</span></div>
+              <div class="qr"><span class="keys">drag</span> <span class="act">quick-copy on release (tmux panes only) — replaces the clipboard</span></div>
+              <div class="qr"><span class="keys"><kbd>Shift</kbd>+drag</span> <span class="act">raw terminal selection (in tmux)</span></div>
+              <div class="qr"><span class="keys">status line</span> <span class="act">CPU, RAM, battery, host, time</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Ctrl</kbd><kbd>s</kbd></span> <span class="act">save session now</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>I</kbd></span> <span class="act">repair plugins</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>U</kbd></span> <span class="act">update plugins</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>q</kbd></span> <span class="act">reload config</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Neovim <span class="muted">— <a href="neovim.html">Neovim</a> · leader is <kbd>Space</kbd></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><kbd>i</kbd> / <kbd>Esc</kbd></span> <span class="act">insert / normal mode</span></div>
+          <div class="qr"><span class="keys"><kbd>:</kbd><kbd>w</kbd> / <kbd>:</kbd><kbd>q</kbd></span> <span class="act">save / quit</span></div>
+          <div class="qr"><span class="keys"><kbd>d</kbd><kbd>d</kbd> / <kbd>y</kbd><kbd>y</kbd> / <kbd>p</kbd></span> <span class="act">cut / copy line / paste</span></div>
+          <div class="qr"><span class="keys"><kbd>c</kbd><kbd>i</kbd><kbd>w</kbd></span> <span class="act">change the word</span></div>
+          <div class="qr"><span class="keys"><kbd>u</kbd> / <kbd>Ctrl</kbd><kbd>r</kbd></span> <span class="act">undo / redo</span></div>
+          <div class="qr"><span class="keys"><kbd>gg</kbd> / <kbd>G</kbd></span> <span class="act">top / bottom of file</span></div>
+          <div class="qr"><span class="keys"><kbd>Space</kbd><kbd>Space</kbd></span> <span class="act">find a file</span></div>
+          <div class="qr"><span class="keys"><kbd>Space</kbd><kbd>/</kbd></span> <span class="act">search in project</span></div>
+          <div class="qr"><span class="keys"><kbd>Space</kbd><kbd>e</kbd></span> <span class="act">file explorer</span></div>
+          <div class="qr"><span class="keys"><kbd>Space</kbd><kbd>g</kbd><kbd>g</kbd></span> <span class="act">lazygit</span></div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Shell &amp; command line <span class="muted">— <a href="shell.html">Shell</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>A</kbd> / <kbd>Ctrl</kbd><kbd>E</kbd></span> <span class="act">line start / end</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>E</kbd></span> <span class="act">accept autosuggestion</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>W</kbd> / <kbd>Ctrl</kbd><kbd>U</kbd></span> <span class="act">delete word / line</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>L</kbd></span> <span class="act">clear screen</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>R</kbd></span> <span class="act">search history</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>P</kbd> / <kbd>Ctrl</kbd><kbd>N</kbd></span> <span class="act">prev / next command</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span> <span class="act">insert file path</span></div>
+          <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>C</kbd></span> <span class="act">pick folder and cd</span></div>
+          <div class="qr"><span class="keys"><kbd>Tab</kbd></span> <span class="act">autocomplete</span></div>
+          <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>C</kbd></span> <span class="act">stop a command</span></div>
+          <div class="qr"><span class="keys"><code>z</code> name</span> <span class="act">jump to a folder</span></div>
+          <div class="qr"><span class="keys"><code>mkdir -p</code> dir</span> <span class="act">add a folder</span></div>
+          <div class="qr"><span class="keys"><code>pwd</code></span> <span class="act">show current folder</span></div>
+          <div class="qr"><span class="keys"><code>open .</code></span> <span class="act">open folder in Finder <span class="muted">(macOS)</span></span></div>
+          <div class="qr"><span class="keys"><code>cd ..</code> / <code>cd -</code></span> <span class="act">up / previous folder</span></div>
+          <div class="qr"><span class="keys"><code>rg</code> / <code>fd</code></span> <span class="act">search text / find files</span></div>
+          <div class="qr"><span class="keys"><code>rga</code></span> <span class="act">search hidden + ignored files</span></div>
+          <div class="qr"><span class="keys"><code>rgf</code></span> <span class="act">fuzzy content search</span></div>
+          <div class="qr"><span class="keys"><code>copy-context</code> paths</span> <span class="act">copy files for AI review</span></div>
+          <div class="qr"><span class="keys"><code>ll</code></span> <span class="act">list with git status</span></div>
+          <div class="qr"><span class="keys"><code>lt</code></span> <span class="act">tree view, two levels</span></div>
+          <div class="qr"><span class="keys"><code>y</code></span> <span class="act">visual file browser (yazi)</span></div>
+          <div class="qr"><span class="keys"><code>update-all</code></span> <span class="act">manual tool upgrades</span></div>
+        </div>
+      </div>
+      <div class="callout note">
+        <span class="label">Inside tmux, shell keys stay shell keys</span>
+        <p><kbd>Alt</kbd><kbd>h</kbd>/<kbd>j</kbd>/<kbd>k</kbd>/<kbd>l</kbd> moves between panes and Neovim splits, so <kbd>Ctrl</kbd><kbd>L</kbd>, <kbd>Ctrl</kbd><kbd>K</kbd>, <kbd>Backspace</kbd>, and <kbd>Enter</kbd> keep their normal shell behavior. <kbd>Ctrl</kbd><kbd>Space</kbd> is tmux's prefix; press it twice to send a literal <kbd>Ctrl</kbd><kbd>Space</kbd> through. Shell line-start remains <kbd>Ctrl</kbd><kbd>A</kbd>.</p>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Groundwork &amp; setup helpers <span class="muted">— <a href="commands.html">Commands</a> · <a href="setup.html">Setup</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><code>groundwork-help</code></span> <span class="act">show all helper commands</span></div>
+          <div class="qr"><span class="keys"><code>groundwork-help browser</code></span> <span class="act">filter command catalog</span></div>
+          <div class="qr"><span class="keys"><code>groundwork-help --pick</code></span> <span class="act">fuzzy-pick a command</span></div>
+          <div class="qr"><span class="keys"><code>chezmoi diff</code></span> <span class="act">preview generated changes</span></div>
+          <div class="qr"><span class="keys"><code>chezmoi apply</code></span> <span class="act">apply Groundwork</span></div>
+          <div class="qr"><span class="keys"><code>chezmoi update --init</code></span> <span class="act">pull, regenerate config, apply</span></div>
+          <div class="qr"><span class="keys"><code>groundwork-configure</code></span> <span class="act">review / change a setup answer</span></div>
+          <div class="qr"><span class="keys"><code>chezmoi edit</code></span> <span class="act">edit a source template</span></div>
+          <div class="qr"><span class="keys"><code>new-project</code></span> <span class="act">scaffold a repo</span></div>
+          <div class="qr"><span class="keys"><code>new-wiki</code></span> <span class="act">scaffold an LLM wiki</span></div>
+          <div class="qr"><span class="keys"><code>copy-context</code></span> <span class="act">copy selected code context</span></div>
+          <div class="qr"><span class="keys"><code>obsidian-plugins</code></span> <span class="act">install vault plugins <span class="muted">(macOS)</span></span></div>
+          <div class="qr"><span class="keys"><code>browser-extensions --open</code></span> <span class="act">open vetted browser links <span class="muted">(macOS)</span></span></div>
+          <div class="qr"><span class="keys"><code>raycast-extensions --open</code></span> <span class="act">open Raycast Store links <span class="muted">(macOS)</span></span></div>
+          <div class="qr"><span class="keys"><code>defaultbrowser</code></span> <span class="act">inspect or choose the macOS default browser</span></div>
+          <div class="qr"><span class="keys"><code>update-all</code></span> <span class="act">upgrade brew, mise, AI tools</span></div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Git &amp; lazygit <span class="muted">— <a href="git.html">Git</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><code>git status</code></span> <span class="act">what changed</span></div>
+          <div class="qr"><span class="keys"><code>git add .</code></span> <span class="act">stage everything</span></div>
+          <div class="qr"><span class="keys"><code>git commit -m</code></span> <span class="act">save a snapshot</span></div>
+          <div class="qr"><span class="keys"><code>git push</code> / <code>pull</code></span> <span class="act">sync with GitHub</span></div>
+          <div class="qr"><span class="keys"><code>git switch -c</code></span> <span class="act">new branch</span></div>
+          <div class="qr"><span class="keys"><code>git branches</code></span> <span class="act">branches, newest commit first, with state</span></div>
+          <div class="qr"><span class="keys"><code>git gone</code></span> <span class="act">upstream gone — inspect, not proof</span></div>
+          <div class="qr"><span class="keys"><code>lg</code></span> <span class="act">open lazygit</span></div>
+          <div class="qr"><span class="keys">lazygit <kbd>Space</kbd></span> <span class="act">stage file / line</span></div>
+          <div class="qr"><span class="keys">lazygit <kbd>c</kbd></span> <span class="act">commit</span></div>
+          <div class="qr"><span class="keys">lazygit <kbd>P</kbd> / <kbd>p</kbd></span> <span class="act">push / pull</span></div>
+          <div class="qr"><span class="keys">lazygit <kbd>n</kbd></span> <span class="act">new branch</span></div>
+          <div class="qr"><span class="keys">lazygit <kbd>z</kbd> / <kbd>Z</kbd></span> <span class="act">undo / redo</span></div>
+          <div class="qr"><span class="keys">lazygit <kbd>?</kbd></span> <span class="act">all shortcuts</span></div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Browsers, extensions &amp; link capture <span class="muted">— <a href="apps.html">Apps</a> · <a href="knowledge.html">Knowledge</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-grid">
+          <div class="qr"><span class="keys"><code>browser-extensions</code></span> <span class="act">list recommended extensions <span class="muted">(macOS)</span></span></div>
+          <div class="qr"><span class="keys"><code>browser-extensions --open</code></span> <span class="act">open extension install pages</span></div>
+          <div class="qr"><span class="keys"><code>groundwork-profile show</code></span> <span class="act">show managed Chrome channel</span></div>
+          <div class="qr"><span class="keys">Chrome Sync</span> <span class="act">optional account-owned sync</span></div>
+          <div class="qr"><span class="keys">Anybox extension</span> <span class="act">save pages/selections to Anybox</span></div>
+          <div class="qr"><span class="keys">Obsidian Clipper</span> <span class="act">save web pages to raw/clippings</span></div>
+          <div class="qr"><span class="keys">Raycast Bookmarks</span> <span class="act">bookmarks need no browser add-on</span></div>
+          <div class="qr"><span class="keys">Chrome live tabs</span> <span class="act">Raycast Browser Tabs or Anybox</span></div>
+          <div class="qr"><span class="keys">Privacy.com</span> <span class="act">service link, not extension</span></div>
+          <div class="qr"><span class="keys">React / Redux devtools</span> <span class="act">frontend debugging</span></div>
+          <div class="qr"><span class="keys">axe DevTools</span> <span class="act">accessibility checks</span></div>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>AI agents, editors &amp; knowledge <span class="muted">— <a href="editors-ai.html">Editors &amp; AI</a> · <a href="knowledge.html">Knowledge</a></span></h2>
+      <div class="quickref">
+        <div class="quickref-sections">
+          <div class="quickref-section">
+            <h3>Agents</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><code>claude</code></span> <span class="act">primary terminal agent</span></div>
+              <div class="qr"><span class="keys"><code>codex</code></span> <span class="act">OpenAI terminal agent</span></div>
+              <div class="qr"><span class="keys">Codex app</span> <span class="act">parallel agent tasks</span></div>
+              <div class="qr"><span class="keys"><code>AGENTS.md</code></span> <span class="act">shared project instructions</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Editors</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys">VS Code</span> <span class="act">default GUI editor</span></div>
+              <div class="qr"><span class="keys">Cursor</span> <span class="act">AI-first editor</span></div>
+              <div class="qr"><span class="keys">Zed</span> <span class="act">fast collaborative editor</span></div>
+              <div class="qr"><span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd></span> <span class="act">VS Code Command Palette</span></div>
+              <div class="qr"><span class="keys">Copy Opened Files to Clipboard</span> <span class="act">VS Code tab context</span></div>
+              <div class="qr"><span class="keys"><code>rg TODO</code></span> <span class="act">TODOs without an extension</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>LLM wiki</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><code>new-wiki</code></span> <span class="act">create LLM wiki vault/repo</span></div>
+              <div class="qr"><span class="keys"><code>obsidian-plugins .</code></span> <span class="act">install plugin set</span></div>
+              <div class="qr"><span class="keys"><code>raw/</code></span> <span class="act">source material</span></div>
+              <div class="qr"><span class="keys"><code>wiki/</code></span> <span class="act">agent-maintained notes</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Obsidian</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys">Web Clipper</span> <span class="act">capture pages as Markdown</span></div>
+              <div class="qr"><span class="keys">Smart Connections</span> <span class="act">semantic note search</span></div>
+              <div class="qr"><span class="keys">Templater / Dataview</span> <span class="act">structured notes</span></div>
+              <div class="qr"><span class="keys">Obsidian Git</span> <span class="act">vault history</span></div>
+              <div class="qr"><span class="keys">Vim mode</span> <span class="act">on in managed vault defaults</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout tip">
+        <span class="label">Forgot one in the moment?</span>
+        <p>Each tool lists its own keys live: <span class="keys"><kbd>prefix</kbd> <kbd>?</kbd></span> in tmux, <kbd>Space</kbd> then wait in Neovim (which-key), <kbd>?</kbd> in lazygit, and <code>--help</code> on any command.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="commands.html"><span class="dir">← Prev</span>Command catalog</a>
+        <a href="glossary.html"><span class="dir">Next →</span>Glossary</a>
+      </div>
+      <footer class="site">Scan it, print it, or just trust the muscle memory it builds. · <a class="gw-version" href="https://github.com/jasondockery/groundwork/releases" target="_blank" rel="noopener">dev</a></footer>
+    </div>
+  </main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

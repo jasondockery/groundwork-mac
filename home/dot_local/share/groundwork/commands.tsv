@@ -1,0 +1,197 @@
+# category	command	kind	description
+daily	groundwork-help [query]	command	Show this command catalog. Add a word to filter, like groundwork-help git or groundwork-help update.
+daily	groundwork-help --pick [query]	command	Fuzzy-pick a command from the catalog with fzf; prints it and copies it to the clipboard when possible.
+daily	groundwork-docs	command	Open the complete local Groundwork site from the checkout chezmoi is actually using. Resolves visible ~/code and legacy ~/.local/share/chezmoi source layouts instead of trusting a copied file:// path; prints the exact path on headless platforms.
+daily	update-all	command	The one normal maintenance command: under one machine-wide lock, synchronize Groundwork, inventory every Homebrew formula/cask and Mac App Store app, update every exact eligible installed item through its classified owner lane, then run supported package-manager maintenance and label-scoped Docker scratch cleanup. App Store inventory uses the reviewed mas 7.x JSON-object stream. Each exact mutation first establishes macOS authorization in the foreground process group on real interactive stdin/stderr under a separate bounded watchdog, then runs non-prompting in its own process group under a conservative 30-minute backstop; redirected/automated runs report exact IDs action-required. Checksummed self-updating and latest casks use targeted exact-token greedy-aware lanes; global greedy remains prohibited. Cask mutation matches Homebrew's own default and may quit a running app that declares a safe quit action; --no-app-quit opts out for one invocation. Pinned, explicitly policy-declared vendor-covered, disabled, deprecated, manual/MDM-unresolved, deferred-running, and actual failure outcomes remain distinct. After the transaction releases its lock, a default-no interactive action center may invoke separately locked ChatGPT helpers; noninteractive runs print commands only. Maintenance and action receipts share one invocation ID, and the action receipt binds the immutable maintenance receipt by filename and SHA-256.
+maintenance	groundwork-app-adopt <app>	command	Separately inspect and consent to Homebrew identical-artifact adoption for an explicitly mapped manual macOS app. --check performs the complete nonmutating eligibility proof for an outer action center: status 0 means the requested Homebrew-owned state is already satisfied, status 3 means safe adoption is available but no mutation occurred, and any other nonzero status means eligibility was not proved. Currently supports ChatGPT; strictly verifies the code signature before reading the signing team, then repeats signature, bundle, executable, ownership, running-state, and MDM checks after consent; and refuses symlinked paths or any force, removal, reinstall, deletion, or zap behavior. update-all may invoke it only after releasing the transaction lock, a fresh status-3 check, and literal interactive consent.
+maintenance	groundwork-app-remove <app>	command	Separately inspect and consent to removal of an explicitly mapped legacy macOS app while preserving the current replacement. --check performs the same nonmutating eligibility proof for an outer action center: status 0 means the requested absent state is already satisfied, status 3 means safe removal to Trash is available but no mutation occurred, and any other nonzero status means eligibility was not proved. Supports ChatGPT Classic and deprecated codex-app as distinct identities; holds the machine update lock, strictly verifies each code signature before reading its signing team, verifies bundle identity and exact Homebrew artifacts again after consent, moves manual bundles to Trash while preserving shared data, refuses running/MDM/changed state, and never uses --zap or removes shared user data. update-all may offer Classic only after current ChatGPT ownership is verified, the update lock is released, and a fresh status-3 check succeeds; codex-app remains separately owner-invoked.
+maintenance	update-all --no-app-quit	command	Keep every running application open instead of letting Homebrew quit it for eligible cask replacement during this invocation. Defers each observed running cask, passes Homebrew's no-quit mutation guard, and continues unrelated updates.
+maintenance	update-all --skip-maintenance	command	Exceptional fast refresh: synchronize and upgrade tools but skip package-manager and Docker scratch maintenance. It never clears existing pending maintenance and exits nonzero if an earlier maintenance failure still needs repair.
+maintenance	groundwork-cleanup	command	Advanced read-only report: Homebrew/npm cache sizes; exact trusted pnpm candidates with store, size, pin, representative repository, and all selectors; machine-wide cadence; conflicts, custom stores, and unmatched generations for owner review. Changes no persistent state.
+maintenance	groundwork-cleanup --yes	command	Run supported Homebrew and npm maintenance now, plus exact-pinned trusted pnpm stores when the machine-wide cadence or pending repair says due.
+maintenance	groundwork-cleanup --yes --force	command	Exceptional override: attempt normal Homebrew and npm maintenance and every eligible pnpm candidate immediately, ignoring pnpm cadence. Routine retries use update-all, or groundwork-cleanup --yes when upgrades should not repeat. Repository dependency installations such as node_modules are not modified; Homebrew may remove installed orphan formula dependencies, while requested formulae/casks remain.
+maintenance	groundwork-cleanup --yes --clear-pending <stage>	command	Acknowledge one pending homebrew, npm, pnpm, or maintenance-helper reminder that cannot be repaired because its manager was intentionally removed. Clears only Groundwork's reminder, performs no cleanup, and preserves an audit note.
+daily	groundwork-configure	command	Canonical settings editor for mutable preferences, including environment role, release posture, terminal multiplexer (Herdr/tmux/both/none), and Xcode beta. Existing tmux users stay on tmux until they change it. Other settings change only when selected, with preview and confirmation; accepting applies the selected desired state immediately.
+daily	groundwork-mux	command	Start the configured primary multiplexer. Herdr is primary for Herdr/Both, tmux for tmux, None refuses, and an existing Herdr/tmux environment refuses automatic nesting.
+daily	groundwork-mux status --json	command	Print schema-versioned terminal-multiplexer state: desired managed set, live Herdr/tmux executable availability, primary/fallback roles, and disabled nesting.
+herdr	groundwork-herdr-config status	command	Read-only report of the effective Herdr config and Groundwork's exact ownership receipt.
+herdr	groundwork-herdr-config diff	command	Compare the effective Herdr config with Groundwork's exact source template.
+herdr	groundwork-herdr-config edit	command	Edit Groundwork's Herdr source template through chezmoi; apply after review.
+herdr	groundwork-herdr-config remove --yes	command	Remove only an unchanged receipt-matching Groundwork Herdr config; preserve the binary, sessions, agent settings, and user changes.
+herdr	groundwork-herdr-integrations status	command	Inspect Herdr's official agent integration state.
+herdr	groundwork-herdr-integrations install --yes	command	Explicitly install Herdr's official Claude Code and Codex hooks for agent tools detected on this machine; never runs during chezmoi apply.
+herdr	groundwork-herdr-integrations uninstall --yes	command	Explicitly delegate removal of detected Claude Code/Codex hooks to Herdr's supported integration lifecycle.
+herdr	herdr status	command	Inspect the Herdr server and client state.
+herdr	herdr integration status	command	Show installed Herdr agent integration versions and state.
+herdr	Ctrl+Space then d	key	Detach the Herdr client while the live server and pane processes continue.
+herdr	Ctrl+Space then ?	key	Show Herdr's active keybindings and Groundwork's full Herdr shortcut map.
+herdr	Ctrl+Space then [	key	Enter Herdr copy mode.
+daily	groundwork-platform	command	Report the current platform as darwin, linux, wsl2, wsl1, wsl-unknown, or unsupported.
+daily	groundwork-distro [--family]	command	On Linux or WSL, report the distribution ID; --family reports its bootstrap family (debian, fedora, arch, opensuse, or unknown).
+daily	groundwork-profile show	command	Show the bootstrap seed, saved environment role, application release posture, terminal multiplexer selection, Xcode and Xcode-beta status, headless state, and detected operating-system channel.
+daily	groundwork-profile set <current|preview>	command	Focused shortcut into groundwork-configure's guarded preview-and-confirm transaction for stable versus preview release posture. Confirming applies the selected desired state immediately; update-all owns later upgrades and maintenance.
+daily	groundwork-profile edit	command	Open the chezmoi config when the role, preset, or another profile field needs direct review.
+tmux	Ctrl+Space then Shift+Y	key	Copy the last completed command and its output into a tmux buffer (and the clipboard when supported); a platform + directory line is prepended so pasted output tells an agent where it ran. Review for secrets before pasting into an AI tool.
+tmux	Ctrl+Space then Ctrl+y	key	Copy the current pane's working directory to the clipboard (native OSC 52 via a helper that reads the path from tmux and never runs it through a shell).
+tmux	Ctrl+Space then z	key	Zoom the active pane to fill the screen; press again to restore. The status line shows Z while zoomed — this is what happened if a pane suddenly took over the screen.
+tmux	Ctrl+Space then Shift+F	key	Repo picker popup: fuzzy-search every repository discovered under your configured roots, preview its git status, and jump to (or open) its lazygit window.
+tmux	Ctrl+Space then Shift+G	key	Open a lazygit window for every repository with uncommitted changes (groundwork-repos changed).
+tmux	Ctrl+Space then x	key	Close the active pane. It asks first, because x sits next to z (zoom).
+tmux	tmux copy-mode-vi: v	key	Start a selection while browsing tmux pane history.
+tmux	tmux copy-mode-vi: Ctrl+v	key	Toggle a rectangular selection while browsing tmux pane history.
+tmux	tmux copy-mode-vi: y	key	Copy the selection to the tmux buffer and supported system clipboard, then leave copy mode.
+tmux	tmux copy-mode-vi: drag	key	Drag with the mouse to select in a pane; the selection copies to the tmux buffer and system clipboard the moment you release. Convenient, but it replaces whatever the clipboard held.
+tmux	tmux right-click	key	In a mouse-aware app, forward right-click to the app; in an ordinary shell pane, show the copy-model hint.
+tmux	tmux Option+right-click	key	Open tmux's pane menu without taking ordinary right-click away from mouse-aware apps.
+tmux	Ctrl+Space then Ctrl+Space	key	Send a literal Ctrl+Space to the program inside the active pane.
+tmux	Ctrl+Space then Ctrl+b	key	Send the secondary Ctrl+B prefix to the program inside the active pane.
+tmux	Ctrl+Space then $	key	Rename the active tmux session.
+tmux	Ctrl+Space then |	key	Split the active pane left and right in its current directory.
+tmux	Ctrl+Space then -	key	Split the active pane top and bottom in its current directory.
+tmux	Ctrl+Space then c	key	Create a new window in the active pane's current directory.
+tmux	Ctrl+Space then h	key	Split the pane below. Same action as Omarchy.
+tmux	Ctrl+Space then k	key	Close the active window after confirmation. Same key as Omarchy.
+tmux	Ctrl+Space then Ctrl+k	key	Clear the visible shell screen and tmux's retained history for the active pane.
+tmux	Ctrl+Space then K	key	Close the active session after confirmation. Same key as Omarchy.
+tmux	Ctrl+Space then <	key	Move the active window one position to the left.
+tmux	Ctrl+Space then >	key	Move the active window one position to the right.
+tmux	Ctrl+Space then S	key	Toggle synchronized input across every pane in the active window.
+tmux	Ctrl+Space then g	key	Open lazygit for the active pane's current repository.
+tmux	Ctrl+Space then T	key	Open the session switcher; inside it, Ctrl+x closes the highlighted live session.
+daily	chezmoi diff	command	Preview dotfile changes before applying them to your home directory.
+daily	chezmoi apply	command	Apply the source repo to your home directory.
+daily	chezmoi update --init	command	Git pull the Groundwork repo and apply it; --init keeps every setup answer and asks only newly added questions. Syncs config, not already-installed tool upgrades.
+daily	chezmoi edit <file>	command	Edit a managed dotfile at its source instead of editing the generated home file.
+daily	chezmoi cd	command	Open a shell in the Groundwork source repo.
+daily	groundwork-restore	command	Restore the first-run backup of managed files and macOS defaults.
+daily	groundwork-doctor	command	Read-only machine health report. Its default run checks shell/runtime/tool ownership, the selected browser, Karabiner compatibility and process memory, whether always-on apps Homebrew may have quit are running again, and Docker health and leftovers on macOS. An unusually large Karabiner footprint includes the exact repair command. It never changes settings or state.
+daily	groundwork-doctor --docker	command	Run only the Docker section, including report-only detection of old unlabeled Groundwork validation tags that bypassed the scratch lifecycle. The documented groundwork:latest runnable tag is excluded.
+daily	groundwork-doctor --shell	command	Run only the shell runtime section: managed zsh installed, registered, selected as login shell, and running here.
+daily	groundwork-doctor --runtimes	command	Flag any mise-managed runtime adopted inside the 5-day release floor. A cooldown filters what you acquire; it never rolls back what you already have.
+daily	groundwork-doctor --karabiner	command	Run only the default report's Karabiner section: version and compatibility, current macOS support, root Core Service PID, owner, elapsed time, RSS, memory footprint, compressed memory, and an exact restart recommendation when the shared review threshold is met. One snapshot is not a growth rate or diagnosis.
+daily	groundwork-doctor --always-on-apps	command	Run only the always-on-app section: whether Karabiner-Elements, Raycast, BetterDisplay, and Anybox are running, since Homebrew may quit one while replacing its cask and does not relaunch it. update-all reports the same finding but never relaunches an app itself; this is where the exact groundwork-apps-start recovery command is named.
+maintenance	groundwork-karabiner-restart	command	Request Karabiner's documented user-domain restart and wait up to 10 seconds for a different root Core Service PID. No changed PID means failure and menu/Settings guidance; private root launch daemons stay untouched.
+daily	groundwork-doctor --storage	command	Opt-in read-only storage report (skipped by the default run because du over large trees is slow): sizes of the known large developer areas (Homebrew cache, pnpm store generations, npm cache, Xcode device support and simulators, a legacy ~/.nvm, Parallels VMs), each classified and paired with the command or app surface that owns cleaning it. Curated, not a full disk scan; reports only, never deletes.
+daily	groundwork-doctor --node-toolchain	command	Report who owns Node and pnpm on this machine: the active Node, Corepack or competing pnpm ownership, every distinct pnpm owner on PATH, repository pins, nested-process agreement, and any pnpm global-tool directory outside PATH. Explains project-local tools and the five-day-floor personal mise npm-tool lane without running pnpm setup.
+daily	groundwork-yazi-config status	command	Report whether Yazi's effective yazi.toml is absent, exactly Groundwork-owned, changed, unowned, or non-regular. Read-only.
+daily	groundwork-yazi-config diff	command	Preview the effective Yazi yazi.toml against Groundwork's exact source template without changing either file.
+daily	groundwork-yazi-config edit	command	Open Groundwork's exact Yazi source template through chezmoi; run chezmoi apply afterward to apply the reviewed source.
+daily	groundwork-yazi-config remove --yes	command	Remove only an unchanged yazi.toml that matches Groundwork's exact ownership receipt. Other Yazi files and user changes are preserved; chezmoi apply restores the managed file.
+daily	groundwork-docker-tidy	command	Dry-run Docker tidy, by enumeration: every image labeled dev.roost.ephemeral=true is inspected and reported as eligible (past the 72h grace by its strict-parsed dev.roost.built label, exactly one scratch-namespace tag, no container references), retained (in grace), protected (multiple tags, a non-scratch tag, or a container reference), or unverified (missing jq or missing/malformed build label — retained, never removed); exited containers carrying the label are judged by the same grace window against their CreatedAt. Never volumes, never unlabeled images, never dangling images or builder cache.
+daily	groundwork-docker-tidy --yes	command	Remove the eligible set: exited containers labeled dev.roost.ephemeral=true whose CreatedAt is past the same 72h grace, then each eligible image — all re-checked immediately before explicit-ID deletion. Per-call and total-lane deadlines bound the transaction; update-all uses the fixed-budget canonical local-only --automatic mode. Daemon-wide cleanup remains separate.
+daily	groundwork-docker-tidy --yes --clear-pending	command	Acknowledge the Docker scratch reminder only after Docker was intentionally removed and cleanup cannot be retried. Performs no Docker query or deletion and preserves a timestamped audit note.
+daily	groundwork-docker-cache-tidy	command	Dry-run preview of the DAEMON-WIDE cleanup: stopped containers, dangling images, and builder cache from every project on this machine, not just Groundwork. Owner-run only — update-all and scheduled agent paths never invoke it.
+daily	groundwork-docker-cache-tidy --yes	command	Apply bounded daemon-wide cleanup through a trusted CLI against a verified local Unix endpoint: prune stopped containers and dangling images, and prune builder cache toward the 5GB retention target (--keep-storage asks Docker to retain a target; it is not a guarantee). Remote daemons, volumes, and tagged images are never touched.
+daily	groundwork-pnpm-store-tidy	command	Single-directory diagnostic: dry-run report of every pnpm store generation and the store selected by the current directory. The automatic machine-maintenance path is update-all; use this narrower command when diagnosing one repository's selection.
+daily	groundwork-pnpm-store-tidy --yes	command	Run pnpm store prune on the store selected by the current directory, re-checked (store and version) immediately before pruning — a moved selection or a packageManager pin that disagrees with the resolved pnpm is refused — with a measured before/after/reclaimed receipt. Projects are not modified; pruned packages re-download on next use. Other store generations are never touched — another repository's packageManager may select them.
+project	groundwork-docker-build-scratch <purpose> <context> --rm-after	command	Build and remove a proof-only Docker image under the ephemeral contract: the wrapper owns both labels, the scratch tag, and the image ID. Inside Groundwork, use scripts/verify-docker-image when the proof must run the image.
+project	scripts/verify-docker-image	command	Inside the Groundwork repository, use a trusted CLI against a verified local Unix endpoint to mechanically build, smoke-run, and remove a uniquely tagged scratch image by its exact image ID. CID-file ownership and bounded EXIT/HUP/INT/TERM cleanup make removal independent of whether the smoke test succeeds; a repointed tag is reported and never removed.
+shell	groundwork-shell-adopt	command	Make Groundwork's Homebrew zsh your login shell (records your current shell first, registers the new one in /etc/shells, runs chsh, verifies the account record). Your previous shell stays untouched as the recovery path.
+shell	groundwork-shell-adopt --status	command	Report the shell runtime state (managed zsh, account login shell, $SHELL, recorded previous shell) and change nothing.
+shell	groundwork-shell-adopt --revert	command	Restore the login shell you had before adopting. Works even when Homebrew is unavailable.
+shell	groundwork-shell-adopt --revert-to <shell>	command	Restore a specific login shell, for when no previous one was recorded.
+project	groundwork-repos	command	Table of every Git repository discovered under your configured roots (~/.config/groundwork/repos.conf): branch, dirty/clean as symbol + word, ahead/behind, worktree marker, path. Discovery is dynamic — a fresh clone appears within the cache TTL (30s), or immediately with --refresh, no config edit.
+project	groundwork-repos pick	command	Fuzzy-pick a discovered repository (fzf) with a live git-status preview, then open or reuse its lazygit tmux window. Inside tmux it becomes a window; outside, it creates or attaches the repos session.
+project	groundwork-repos changed	command	Open one lazygit tmux window per repository with uncommitted work — the fastest way to see everything your agents left unreviewed.
+project	new-project <path>	command	Scaffold AGENTS.md, agent folders, editor settings, and .gitignore for a new repo.
+project	new-twelve-log [path]	function	Scaffold a Groundwork Twelve learning log, initialize it as a Git repo, and enter it; defaults to ~/groundwork-log.
+project	new-wiki <path>	function	Scaffold a private agent-maintained knowledge wiki with raw/wiki layers and Obsidian setup.
+project	copy-context <paths>	command	Copy selected files or folders to the clipboard with path headers and contents for AI review.
+project	obsidian-plugins <vault>	command	Install the Groundwork-managed Obsidian plugin set into a vault.
+project	gh auth login	command	Sign in to GitHub for gh and HTTPS Git operations.
+project	gh auth setup-git	command	Configure gh as Git's HTTPS credential helper in an unmanaged Git config. Groundwork already renders the equivalent helper block, so this is normally unnecessary here.
+shell	ll	alias	List files with details, hidden files, Git status, and directories first.
+shell	ls	alias	List files with eza, grouping directories first.
+shell	lt	function	Hidden-inclusive tree view, two levels deep, honoring Git ignores and excluding .git internals. Pass a path to inspect only that path.
+shell	ltt	function	Hidden-inclusive tree view, three levels deep, honoring Git ignores and excluding .git internals. Pass a path to inspect only that path.
+shell	lg	alias	Open lazygit.
+shell	vim / vi	alias	Open Neovim.
+shell	cat	alias	Use bat for syntax-highlighted file viewing.
+shell	z <folder>	command	Jump to a frecent folder with zoxide.
+shell	Alt+C	key	Fuzzy-pick a folder, including hidden developer folders while honoring ignores and excluding .git internals; preview it as a tree and cd into it.
+shell	Ctrl+T	key	Fuzzy-pick files, including hidden developer files while honoring ignores and excluding .git internals; preview with bat and insert the chosen paths.
+shell	y	function	Open Yazi with developer dotfiles initially visible; period toggles them, q quits into the browsed folder, and Q returns to the starting folder.
+shell	largest [path]	command	Show the 50 largest files and folders under a path, followed by safe cleanup guidance for each result type.
+shell	largest --files [path]	command	Show only the largest files under a path; use / for the startup filesystem.
+shell	largest --folders [path]	command	Show only the largest folders under a path; add -n N to change the result count.
+shell	mkdir -p <folder>	command	Create a folder, including parent folders if needed.
+shell	pwd	command	Print the current folder path.
+shell	open .	command	Open the current folder in Finder.
+shell	rg <text>	command	Search file contents quickly. Lowercase searches are case-insensitive by default.
+shell	rga <text>	alias	Search hidden and gitignored files too, while still skipping .git internals.
+shell	rgh <text>	alias	Search hidden files while preserving ignore rules and excluding .git internals.
+shell	rgf [text]	function	Search hidden and ordinary files while preserving ignore rules, fuzzy-pick a result, preview it with bat, and open it in the editor.
+shell	fd <name>	command	Find files by name quickly.
+shell	fdh <name>	alias	Find hidden and ordinary paths while preserving ignore rules and excluding .git internals.
+shell	Ctrl+R	key	Search shell history with atuin/fzf.
+shell	atuin ai inline	command	Run Atuin's opt-in English-to-shell assistant after setup.
+mac	defaultbrowser	command	List or set the macOS default browser; Groundwork never changes it automatically.
+mac	browser-extensions [--open]	command	List or open the recommended Chrome extension links.
+mac	raycast-extensions [--open]	command	List or open the recommended Raycast Store extension links.
+mac	betterdisplaycli	command	BetterDisplay command-line interface for display automation.
+mac	open -a <App>	command	Open a macOS app from the shell.
+dev	mise use <tool@version>	command	Pin a runtime/tool version in the current project.
+dev	mise upgrade	command	Upgrade globally managed mise tools, including floating baselines such as Node LTS. Takes effect at your next prompt, even in already-open terminals.
+dev	pnpm	command	JavaScript package manager selected by Corepack from the repository packageManager field; mise owns Node.
+dev	python	command	Python installed and versioned by mise; avoid relying on macOS system Python.
+dev	uv	command	Fast Python package, project, script, tool, and virtualenv manager.
+git	git status	command	Show changed files.
+git	git diff	command	Show unstaged changes.
+git	git add -p	command	Interactively stage parts of a change.
+git	git commit -m <message>	command	Commit staged changes.
+git	git show --stat	command	Show the latest commit summary.
+git	git branches	command	List local branches, newest commit first, with upstream tracking, a [gone] marker for branches whose upstream is no longer on the remote, the relative date, and the last commit subject. Offline; run git fetch -p first to refresh [gone].
+git	git gone	command	List local branches whose upstream tracking ref has vanished since the last fetch/prune (merged, renamed, or deleted) — candidates to inspect, not proof of a merge. Offline and read-only.
+git	git recent	command	Compact table of local branches ordered by tip commit date: relative date then name. Offline.
+git	groundwork-github-ssh status	command	Probe GitHub SSH on port 22 and ssh.github.com on 443 with a bounded deadline, and report which route git currently uses. Read-only.
+git	groundwork-github-ssh enable-443	command	Route github.com SSH via ssh.github.com:443 for networks that stall port 22. Shows the exact change, asks [y/N], backs up ~/.ssh/config, installs a Groundwork-owned snippet plus one marked Include line, and fingerprint-checks GitHub's published host keys. --yes consents non-interactively.
+git	groundwork-github-ssh revert-443	command	Remove the managed port-443 fallback — Groundwork's override only; other SSH configuration of yours that selects 443 stays in force. Asks [y/N] first; backups are kept. --yes consents non-interactively.
+tmux	tmux new -s <name>	command	Start a named tmux session.
+tmux	tmux attach -t <name>	command	Attach to an existing tmux session.
+tmux	tmuxp load .tmuxp.yaml	command	Start a project layout from a checked-in tmuxp config.
+tmux	tmuxp freeze > .tmuxp.yaml	command	Capture the current tmux session as a starter layout config.
+tmux	tmux-fresh	command	Start tmux without restoring the previous resurrect snapshot.
+tmux	~/.config/tmux/plugins/tpm/bin/update_plugins all	command	Update tmux plugins from a normal shell when TPM's tmux pane is hard to read.
+tmux	Ctrl+Space then Ctrl+s	key	Save a tmux-resurrect snapshot now.
+tmux	Ctrl+Space then Ctrl+r	key	Restore the last tmux-resurrect snapshot.
+tmux	Ctrl+Space then Shift+U	key	Update tmux plugins with TPM; press Esc or Enter if the update pane does not repaint.
+tmux	Ctrl+Space then Shift+I	key	Install or repair tmux plugins with TPM.
+tmux	Ctrl+Space then q	key	Reload tmux config.
+tmux	Ctrl+Space then Shift+O	key	Rename the active pane.
+tmux	Ctrl+Space then ,	key	Rename the active window.
+tmux	Ctrl+Space then &	key	Close the current window and all panes inside it.
+tmux	tmux kill-session -t <name>	command	End a named tmux session.
+tmux	tmux kill-server	command	End every live tmux session; snapshots are separate.
+tmux	Alt+h/j/k/l	key	Move between tmux panes and Neovim splits.
+tmux	tmux Alt+Enter	key	Split the pane below. Same chord as Omarchy.
+tmux	tmux Alt+Shift+Enter	key	Split the pane beside. Same chord as Omarchy.
+tmux	tmux Alt+Escape	key	Close the active pane after a confirmation.
+tmux	tmux Ctrl+Alt+Left	key	Move focus to the pane on the left. Same chord as Omarchy.
+tmux	tmux Ctrl+Alt+Down	key	Move focus to the pane below. Same chord as Omarchy.
+tmux	tmux Ctrl+Alt+Up	key	Move focus to the pane above. Same chord as Omarchy.
+tmux	tmux Ctrl+Alt+Right	key	Move focus to the pane on the right. Same chord as Omarchy.
+tmux	tmux Alt+Left	key	Previous tmux window. Same chord as Omarchy. Inside tmux this replaces word-left; use Alt+B.
+tmux	tmux Alt+Right	key	Next tmux window. Same chord as Omarchy. Inside tmux this replaces word-right; use Alt+F.
+tmux	Ctrl+Space then v	key	Split the pane beside. Same key as Omarchy.
+tmux	Ctrl+Space then r	key	Rename the active window. Same key as Omarchy.
+tmux	Ctrl+Space then C	key	Create a session. Uppercase C, matching Omarchy.
+tmux	Ctrl+Space then Shift+R	key	Rename the active session. Same key as Omarchy.
+tmux	Ctrl+Space then N	key	Switch to the next session. Uppercase N, matching Omarchy.
+tmux	Ctrl+Space then P	key	Switch to the previous session. Uppercase P, matching Omarchy.
+tmux	tmux Alt+Shift+Left	key	Move the window left, matching Omarchy.
+tmux	tmux Alt+Shift+Right	key	Move the window right, matching Omarchy.
+tmux	tmux Alt+Up	key	Switch to the previous session, matching Omarchy.
+tmux	tmux Alt+Down	key	Switch to the next session, matching Omarchy.
+tmux	tmux Ctrl+Alt+Shift+Left	key	Resize the pane toward left, matching Omarchy.
+tmux	tmux Ctrl+Alt+Shift+Down	key	Resize the pane toward down, matching Omarchy.
+tmux	tmux Ctrl+Alt+Shift+Up	key	Resize the pane toward up, matching Omarchy.
+tmux	tmux Ctrl+Alt+Shift+Right	key	Resize the pane toward right, matching Omarchy.
+tmux	tmux Alt+1	key	Switch to window 1, matching Omarchy.
+tmux	tmux Alt+2	key	Switch to window 2, matching Omarchy.
+tmux	tmux Alt+3	key	Switch to window 3, matching Omarchy.
+tmux	tmux Alt+4	key	Switch to window 4, matching Omarchy.
+tmux	tmux Alt+5	key	Switch to window 5, matching Omarchy.
+tmux	tmux Alt+6	key	Switch to window 6, matching Omarchy.
+tmux	tmux Alt+7	key	Switch to window 7, matching Omarchy.
+tmux	tmux Alt+8	key	Switch to window 8, matching Omarchy.
+tmux	tmux Alt+9	key	Switch to window 9, matching Omarchy.

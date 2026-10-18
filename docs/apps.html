@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Not everything happens in a terminal. On a Mac, Groundwork installs a small desktop layer around the agent workflow: the browser you inspect with, a…">
+<title>Apps &amp; browsers · Groundwork</title>
+<meta property="og:site_name" content="Groundwork">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jasondockery.github.io/groundwork/apps.html">
+<meta property="og:title" content="Apps &amp; browsers · Groundwork">
+<meta property="og:description" content="Not everything happens in a terminal. On a Mac, Groundwork installs a small desktop layer around the agent workflow: the browser you inspect with, a…">
+<meta property="og:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Apps &amp; browsers · Groundwork">
+<meta name="twitter:description" content="Not everything happens in a terminal. On a Mac, Groundwork installs a small desktop layer around the agent workflow: the browser you inspect with, a…">
+<meta name="twitter:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<link rel="canonical" href="https://jasondockery.github.io/groundwork/apps.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("fg-theme");
+    if (!theme && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="topbar">
+  <span class="name">Groundwork</span>
+  <button class="icon-btn" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Open navigation">☰ menu</button>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="layout">
+  <aside id="site-sidebar" class="sidebar">
+    <div class="brand-row">
+      <a class="brand" href="index.html">
+      <span class="mark">AI-native</span>
+      <span class="name">Groundwork</span>
+      </a>
+      <a class="repo-link" href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener" aria-label="View Groundwork on GitHub">GitHub</a>
+      <button class="icon-btn nav-close" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Close navigation">close menu</button>
+    </div>
+    <nav class="site-nav" aria-label="Documentation">
+    <section class="nav-group">
+      <h2 class="nav-heading">Start here</h2>
+      <a href="index.html">Overview</a>
+      <a href="why.html">Why Groundwork</a>
+      <a href="path.html">The path</a>
+      <a href="agentic-engineering.html">Vibe &rarr; agentic</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="practice.html">Practice plan</a>
+      <a href="groundwork-twelve.html">Groundwork Twelve</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Set up</h2>
+      <a href="setup.html">Setup &amp; chezmoi</a>
+      <a href="platforms.html">Platforms</a>
+      <a href="customizing.html">Customizing</a>
+      <a href="development.html">Development</a>
+      <a href="installed.html">What&apos;s installed</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Foundations</h2>
+      <a href="command-line.html">Command line &amp; Unix</a>
+      <a href="shell.html">Shell &amp; CLI</a>
+      <a href="herdr.html">Herdr</a>
+      <a href="tmux.html">tmux</a>
+      <a href="tmux-repository-windows.html">tmux repo windows</a>
+      <a href="neovim.html">Neovim</a>
+      <a href="git.html">Git</a>
+      <a href="lazygit.html">lazygit</a>
+      <a href="data.html">Data &amp; storage</a>
+      <a href="editors-ai.html">Editors &amp; AI</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Daily workflow</h2>
+      <a href="workflow.html">Everyday workflow</a>
+      <a href="repo-navigation.html">Repo navigation</a>
+      <a href="new-project.html">Starting a project</a>
+      <a href="knowledge.html">Knowledge base</a>
+      <a href="dependencies.html">Dependencies</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Directing agents</h2>
+      <a href="agents.html">AI agents &amp; rules</a>
+      <a href="worktrees.html">Worktrees &amp; parallel agents</a>
+      <a href="specs.html">Specs &amp; targets</a>
+      <a href="skills-playbooks.html">Skills &amp; playbooks</a>
+      <a href="ai-budget.html">Know your AI budget</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">AI tools</h2>
+      <a href="claude.html">Claude &amp; Claude Code</a>
+      <a href="codex.html">Codex UI &amp; CLI</a>
+      <a href="gpt.html">GPT &amp; ChatGPT</a>
+      <a href="glm.html">GLM &amp; open models</a>
+      <a href="grok.html">Grok &amp; Grok Build</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Interest tracks</h2>
+      <a href="game-dev.html">FPS &middot; Browser</a>
+      <a href="game-dev-unity.html">FPS &middot; Unity</a>
+      <a href="game-dev-learn.html">FPS &middot; Learn dev</a>
+      <a href="web-dev.html">Web &amp; sites</a>
+      <a href="app-dev.html">Apps</a>
+      <a href="gen-media.html">Image &amp; video</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Mac desktop</h2>
+      <a href="macos.html">macOS desktop</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a href="apps.html" class="active">Apps &amp; browsers</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Reference</h2>
+      <a href="cheatsheet.html">Cheat sheet</a>
+      <a href="commands.html">Command catalog</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="resources.html">Resource library</a>
+      <a href="troubleshooting.html">Troubleshooting</a>
+    </section>
+    </nav>
+    <button class="icon-btn theme-toggle" data-theme-toggle><span data-theme-label>◑ Latte</span></button>
+  <p class="sidebar-meta">Built by <a href="https://www.linkedin.com/in/jasondockery/" target="_blank" rel="noopener">Jason Dockery</a></p>
+  </aside>
+
+  <main id="main" class="main">
+    <div class="content">
+      <p class="eyebrow">Graphical apps</p>
+      <h1>The apps around the terminal — browsers, a launcher, notes.</h1>
+      <p class="lead">Not everything happens in a terminal. On a Mac, Groundwork installs a small desktop layer around the agent workflow: the browser you inspect with, a launcher that keeps context one keystroke away, a durable link library, display controls, and notes. Linux/headless profiles skip this layer; the point is to support the work, not make every app mandatory.</p>
+
+      <div class="trigger"><b>When you'll want this</b> Switching between browsers, notes, launchers, and references is breaking your development flow.</div>
+
+      <h2 id="configuration-boundary"><span class="hash" aria-hidden="true">#</span>What Groundwork can configure</h2>
+      <p>Groundwork should only automate settings that live in stable files, templates, or documented macOS defaults. Many Mac apps keep their real state in app databases, account sync, Keychain, iCloud, or per-device stores; those should stay in the app that owns them.</p>
+      <table class="keytable">
+        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, the profile-selected Chrome channel, Chrome password-manager policy, browser/Raycast extension checklists, and Obsidian vault/plugin seed files.</td></tr>
+        <tr><td><strong>Use app sync/export</strong></td><td>Raycast aliases, hotkeys, snippets, Quicklinks, and extensions belong in Raycast Cloud Sync if available on your plan, or Raycast export/import. Anybox links, folders, tags, Smart Lists, Quick Links, snippets, and Anydock profiles sync through iCloud. Chrome Sync is optional and owned by your Google account.</td></tr>
+        <tr><td><strong>Manual by design</strong></td><td>App Store purchases, sign-in, password-manager unlock, API keys, SSH-agent approval, default-browser confirmation, macOS privacy prompts, display presets, and app-level hotkeys that depend on your hands, monitors, and existing shortcuts.</td></tr>
+      </table>
+      <div class="callout note">
+        <span class="label">Why not write app databases?</span>
+        <p>It would look automated for a moment and then drift. Raycast, Anybox, BetterDisplay, and password managers are allowed to change their private storage, encrypt it, sync it, or rewrite it on launch. Groundwork keeps those steps short and repeatable instead of reverse-engineering state that the app owns.</p>
+      </div>
+
+      <h2 id="link-workflow"><span class="hash" aria-hidden="true">#</span>One link workflow</h2>
+      <p>You can choose another capable browser, launcher, or bookmark manager. If you use the installed Chrome, Raycast, and Anybox stack, give each tool one clear job instead of maintaining three competing libraries.</p>
+      <div class="callout key">
+        <span class="label">One owner for each job</span>
+        <p><strong>Chrome is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.</strong> A tiny Chrome bookmarks bar and a few Raycast Quicklinks may duplicate important destinations for speed; Anybox remains the source of truth for everything worth keeping.</p>
+      </div>
+      <table class="keytable">
+        <tr><td><strong>Chrome · hot cache</strong></td><td>Keep roughly six to ten links you need at a glance, plus an optional <strong>Daily</strong> folder. This is a visual working set, not the archive.</td></tr>
+        <tr><td><strong>Raycast · front door</strong></td><td>Open exact frequent destinations with a small set of native Quicklinks. Use <code>ab</code> for Anybox Search Links and <code>as</code> for Anybox Save Current Tab.</td></tr>
+        <tr><td><strong>Anybox · durable library</strong></td><td>Keep all saved links here. Start with <strong>Daily</strong>, <strong>Work/&lt;project&gt;</strong>, <strong>Personal</strong>, and <strong>Reference</strong> folders; use tags for themes that cross those folders.</td></tr>
+      </table>
+      <p>The daily loop is short: save a page to Anybox with <code>as</code> or the browser extension, leave it in Unsorted when you are busy, and retrieve it with <code>ab</code>. Once a week, empty Unsorted, remove dead or duplicated links, and demote anything that no longer deserves space in Chrome or a Raycast Quicklink.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Browsers</h2>
+      <table class="keytable">
+        <tr><td><strong>Chrome stable</strong></td><td>The managed default for Personal Current and Work Managed. Preview profiles retain it as a compatibility fallback.</td></tr>
+        <tr><td><strong>Chrome Beta</strong></td><td>The managed primary browser for Personal Preview and Disposable Experimental on a desktop Mac. It installs beside stable Chrome.</td></tr>
+      </table>
+      <div class="callout note">
+        <span class="label">Installed is not the same as default</span>
+        <p>Groundwork installs the Chrome channel selected by your release posture. It never changes the macOS default-browser association: that confirmation remains your decision. Organization and device policy outrank the profile on managed machines.</p>
+      </div>
+      <div class="callout note">
+        <span class="label">Chrome Sync is optional</span>
+        <p>Use Chrome without signing in, or sign in if you want Google to sync bookmarks, history, saved passwords, settings, and open tabs. Groundwork does not sign in, enable sync, or put account data into dotfiles. Any browser Groundwork no longer manages remains installed with its data untouched until you decide what to do with it.</p>
+      </div>
+      <h3>Browser extensions</h3>
+      <p>Groundwork keeps the extension source of truth in <code>~/.local/share/groundwork/browser-extensions.tsv</code>. Run <code>browser-extensions</code> to list the vetted links, or <code>browser-extensions --open</code> on macOS to open them in Chrome through the Chrome Web Store.</p>
+      <table class="keytable">
+        <tr><td><strong>Core</strong></td><td>Password manager, uBlock Origin Lite, Anybox Browser Extension, and Obsidian Web Clipper.</td></tr>
+        <tr><td><strong>Privacy</strong></td><td>Privacy.com is included as the official virtual-card service link. I could not verify a current official browser extension, so it is not treated as an extension install.</td></tr>
+        <tr><td><strong>Optional privacy</strong></td><td>Privacy Badger is available, but keep the extension set small unless you need it; every extension is another trusted code path.</td></tr>
+        <tr><td><strong>Frontend dev</strong></td><td>React Developer Tools, Redux DevTools, Vue.js devtools, Angular DevTools for Chromium, and axe DevTools for accessibility.</td></tr>
+      </table>
+      <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">browser extension helper</span></div><pre><code><span class="prompt">$ </span>browser-extensions
+<span class="prompt">$ </span>browser-extensions --browser chrome --tier core --open
+<span class="prompt">$ </span>browser-extensions --browser chrome --tier dev --open</code></pre></div>
+
+      <h3>Password manager and autofill</h3>
+      <p>Groundwork installs Bitwarden or 1Password based on the setup choice, but sign-in, autofill provider selection, and SSH-agent approval are intentionally manual. Password managers protect the keys and credentials agents should never see in prompts or dotfiles.</p>
+      <table class="keytable">
+        <tr><td><strong>SSH agent</strong></td><td>Sign in to the desktop app, then enable its SSH agent. Bitwarden: Settings → enable SSH agent. 1Password: Settings → Developer → Use the SSH agent. If commits stop signing, unlock the app and retry. See <a href="git.html">Git</a> for the signing flow.</td></tr>
+        <tr><td><strong>macOS + Safari</strong></td><td>System Settings → General → AutoFill &amp; Passwords: turn on Bitwarden and turn off Passwords/iCloud Keychain if Bitwarden is the source of truth.</td></tr>
+        <tr><td><strong>Chrome</strong></td><td>Install the Bitwarden extension, sign in, and pin it. Groundwork disables Chrome's built-in password manager by policy.</td></tr>
+        <tr><td><strong>iOS / iPadOS</strong></td><td>Install Bitwarden, sign in, then Settings → General → AutoFill &amp; Passwords: enable Bitwarden and disable Passwords if you want the same source of truth on mobile.</td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Raycast — the launcher</h2>
+      <p>Raycast is the single biggest quality-of-life app here. One keystroke opens a search box that launches apps, does math, manages windows, remembers your clipboard, and runs little commands — so your hands stay off the mouse. It's meant to take over <span class="keys"><kbd>⌘</kbd><kbd>Space</kbd></span> from Spotlight.</p>
+      <p>From a shell, <code>open -a &lt;App&gt;</code> is the direct macOS path when the app name is already known. Raycast remains the better path when you want to search rather than remember the exact name.</p>
+      <table class="keytable">
+        <tr><td>Launch &amp; search</td><td>Hit the hotkey, type an app or file name, <kbd>Enter</kbd></td></tr>
+        <tr><td>Clipboard history</td><td>Everything you've copied, searchable — no more losing what you copied two things ago</td></tr>
+        <tr><td>Window management</td><td>Optional commands searched inside the launcher; no global window hotkeys</td></tr>
+        <tr><td>Quicklinks</td><td>Save a keyword that jumps straight to a site or search you use daily</td></tr>
+        <tr><td>Extensions</td><td>A store of add-ons — GitHub, Homebrew, and more</td></tr>
+      </table>
+      <h3 id="shortcut-conventions">Aliases, Quicklinks, and hotkeys</h3>
+      <p>There are two kinds of Raycast shortcuts, and mixing them up is where people create conflicts. <strong>Typed aliases</strong> are words you type after Raycast is open. <strong>Global hotkeys</strong> are key chords that work everywhere. Use lots of aliases, but keep global hotkeys rare and consistent. Anybox Quick Links are a separate optional global text-detection feature, described below.</p>
+      <table class="keytable">
+        <tr><td><strong>Typed aliases</strong></td><td>Use short, memorable lowercase triggers such as <code>gh</code> for GitHub, <code>cal</code> for calendar, <code>docs</code> for your docs site, <code>ab</code> for Anybox Search Links, and <code>as</code> for Anybox Save Current Tab. They run after you open Raycast, so they do not collide with macOS shortcuts like <kbd>⌘</kbd><kbd>Tab</kbd>.</td></tr>
+        <tr><td><strong>Good keywords</strong></td><td>Prefer two to five characters, tied to the thing you want, and easy to type with one hand. Avoid single letters, full app names, and words you already search for often; those create noisy search results instead of speed.</td></tr>
+        <tr><td><strong>Global hotkeys</strong></td><td>Keep only Cmd+Space for the launcher. Clear extension, clipboard, and window-management hotkeys in Settings → Shortcuts; older versions expose command hotkeys under Extensions. Typed aliases stay inside the launcher.</td></tr>
+        <tr><td><strong>Reserved habits</strong></td><td>Do not override core macOS/browser muscle memory unless you mean to: <kbd>⌘</kbd><kbd>Space</kbd> for Raycast, <kbd>⌘</kbd><kbd>Tab</kbd>, <kbd>⌘</kbd><kbd>Q</kbd>, <kbd>⌘</kbd><kbd>W</kbd>, <kbd>⌘</kbd><kbd>H</kbd>, browser tab keys, and Mission Control keys.</td></tr>
+      </table>
+      <div class="callout tip">
+        <span class="label">Make it your ⌘Space</span>
+        <p>Raycast, not Anybox, should replace Spotlight. In System Settings &rarr; Keyboard &rarr; Keyboard Shortcuts &rarr; Spotlight, change or uncheck "Show Spotlight search," then set Raycast's hotkey to <span class="keys"><kbd>⌘</kbd><kbd>Space</kbd></span> (its onboarding offers to do this for you). chezmoi installs Raycast, but this hotkey lives in Raycast/macOS settings, so use Raycast Cloud Sync if it is available on your plan, or export/import a Raycast config to reproduce it.</p>
+      </div>
+      <div class="callout note">
+        <span class="label">Raycast extensions are not browser add-ons</span>
+        <p>Browser add-ons live in Chrome. Raycast extensions live inside the Raycast app and come from the Raycast Store. Groundwork cannot silently install or configure Raycast's internal extension database, but it does install a helper on Mac profiles: run <code>raycast-extensions</code> to list the recommended Store entries, or <code>raycast-extensions --open</code> to open them.</p>
+      </div>
+      <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">raycast extension helper</span></div><pre><code><span class="prompt">$ </span>raycast-extensions
+<span class="prompt">$ </span>raycast-extensions --open
+<span class="prompt">$ </span>raycast-extensions --tier tabs --open
+<span class="prompt">$ </span>raycast-extensions --tier ai --open</code></pre></div>
+      <h3>Using it day to day</h3>
+      <p>The loop is always the same: tap the hotkey, start typing, press <kbd>Enter</kbd>. What you type can be an app name, a math expression (<code>128*1.2</code>), a unit or currency conversion, or part of a filename — Raycast surfaces the best match. A few habits make it sing:</p>
+      <table class="keytable">
+        <tr><td><strong>Clipboard history</strong></td><td>Search Clipboard History inside the launcher; leave its global hotkey empty</td></tr>
+        <tr><td><strong>Window management</strong></td><td>Search a window command inside Raycast if needed; leave global hotkeys empty</td></tr>
+        <tr><td><strong>Quicklinks</strong></td><td>Keep roughly five to ten exact destinations or parameterized searches you open constantly. Add a <code>daily</code> tag and choose <strong>Open With → the Chrome channel selected by your Groundwork profile</strong>, either Google Chrome or Google Chrome Beta. In <strong>Raycast Settings → Quicklinks</strong>, enable the global <strong>Prefer Existing Tabs</strong> setting to reuse matching open tabs instead of creating duplicates.</td></tr>
+        <tr><td><strong>Aliases &amp; hotkeys</strong></td><td>Use typed aliases inside the launcher. Keep its only global hotkey on Cmd+Space</td></tr>
+        <tr><td><strong>Extensions</strong></td><td>Add from the Store — Browser Bookmarks, Browser Tabs, GitHub, Homebrew, Anybox, the VS Code project opener — and search them right from the bar</td></tr>
+      </table>
+      <p>Reproducing your Raycast setup on another Mac isn't something chezmoi can do because Raycast keeps aliases, hotkeys, extensions, and Quicklinks internally. Use Raycast Cloud Sync if it is available on your plan; otherwise use Settings → Advanced → <strong>Export</strong> to a <code>.rayconfig</code> file and <strong>Import</strong> it on the other machine. Keep full exports out of Git: they are private, not reviewable like text config, and may include settings you did not mean to publish. Keep only the launcher&apos;s <span class="keys"><kbd>⌘</kbd><kbd>Space</kbd></span> global shortcut. Clear other global shortcuts after importing or syncing settings.</p>
+
+      <h3>Bookmarks, tabs, and links in Raycast</h3>
+      <table class="keytable">
+        <tr><td><strong>Raycast Quicklink</strong></td><td>A launcher entry for one exact frequent destination or parameterized search. It is intentionally a small speed layer, not the durable library.</td></tr>
+        <tr><td><strong>Anybox Quick Find</strong></td><td>Anybox's search window for the durable library; it can search everything or be scoped to a tag or Smart List. The Raycast Anybox extension exposes the library through Search Links.</td></tr>
+        <tr><td><strong>Anybox Quick Link</strong></td><td>An optional global typed-keyword expansion. It is not a Raycast alias or Quicklink and it requires extra system permission.</td></tr>
+        <tr><td><strong>Chrome bookmark</strong></td><td>A visible link in the small browser hot cache. Keep only the destinations that earn permanent space in the current working surface.</td></tr>
+        <tr><td><strong>Browser Bookmarks extension</strong></td><td>A compatibility bridge for bookmarks that already live in Chrome or Safari. It is useful during migration or when another browser must retain its own library, but it is not the Groundwork source of truth.</td></tr>
+        <tr><td><strong>Browser Tabs</strong></td><td>Use for live open tabs in browsers Raycast can read through macOS automation, especially Safari and Chromium-family browsers.</td></tr>
+        <tr><td><strong>Browser add-ons</strong></td><td>Install the Anybox and Obsidian Web Clipper add-ons in Chrome with <code>browser-extensions --tier core --open</code>. They are for capturing pages, not for making Raycast itself work.</td></tr>
+      </table>
+
+      <h3>Asking Claude, GPT, or Grok from Raycast</h3>
+      <p>There are two good paths. <strong>Raycast Pro</strong> is the cleanest: use Quick AI from the root Raycast search, AI Chat for longer conversations, AI Commands on selected text, and the model picker when you want Claude, OpenAI, or Grok. No per-model extension setup; Raycast owns the subscription and routing.</p>
+      <p>The no-subscription path is <strong>bring your own keys</strong>: install separate ChatGPT, Claude, and Grok extensions from the Store and configure each with its provider API key. It is more fiddly, but it lets you pay providers directly. Run <code>raycast-extensions --tier ai --open</code> to open the relevant Store searches and Raycast AI docs.</p>
+      <div class="callout note">
+        <span class="label">Anybox in Raycast</span>
+        <p>If Raycast Settings only shows Anybox under <strong>Applications</strong>, the Raycast extension is not installed yet. Install the <a href="https://www.raycast.com/anybox/anybox" target="_blank" rel="noopener">Anybox Raycast extension</a> from the Raycast Store, or run <code>open 'raycast://extensions/anybox/anybox?source=webstore'</code>. Its Save Current Tab commands work through Anybox, and its Search Links command has its own required API Key preference. Copy the key from the <strong>Anybox app</strong> &rarr; Preferences &rarr; General, then select the <strong>Search Links</strong> command row in Raycast Settings and paste it there. Add Raycast aliases <code>ab</code> for Search Links and <code>as</code> for Save Current Tab; these are fast, memorable, and do not compete with global macOS shortcuts.</p>
+      </div>
+      <table class="keytable">
+        <tr><td><strong>Search Tags</strong></td><td>On — tags should be searchable from Raycast.</td></tr>
+        <tr><td><strong>Search Folders</strong></td><td>On — folders matter once Anybox becomes the shared project/client/teaching link library.</td></tr>
+        <tr><td><strong>Show Tags</strong></td><td>On — useful context while scanning results.</td></tr>
+        <tr><td><strong>Show Folders</strong></td><td>On — useful context while scanning results.</td></tr>
+        <tr><td><strong>As Icons</strong></td><td>Off — list view is faster to scan from Raycast.</td></tr>
+        <tr><td><strong>Prefer Link Icons in Icons view</strong></td><td>Off — only matters if icon view is enabled.</td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Anybox — bookmarks</h2>
+      <p>Anybox is the durable source of truth for saved links. It supports nested folders, nested tags, Smart Lists, Quick Find, and iCloud sync, so the library stays useful without depending on one browser's bookmark database.</p>
+      <h3>Using it day to day</h3>
+      <p>Three motions cover it: <strong>save</strong>, <strong>organize</strong>, <strong>recall</strong>.</p>
+      <table class="keytable">
+        <tr><td><strong>Save a link</strong></td><td>Use Raycast's <code>as</code> alias, the Anybox browser extension, Anybox's capture hotkey, or the macOS share sheet. Leave the link in Unsorted when speed matters.</td></tr>
+        <tr><td><strong>Organize</strong></td><td>Move links into folders such as <strong>Daily</strong>, <strong>Work/&lt;project&gt;</strong>, <strong>Personal</strong>, and <strong>Reference</strong>. Add tags for cross-cutting topics instead of creating a second folder tree.</td></tr>
+        <tr><td><strong>Recall</strong></td><td>Open Anybox Quick Find or use the Raycast <code>ab</code> alias for Search Links. Both search the durable library.</td></tr>
+      </table>
+      <div class="callout note">
+        <span class="label">Quick Links are an advanced global feature</span>
+        <p>An Anybox Quick Link is detected when its keyword is typed anywhere outside Anybox. The keyword must be at least two characters, and Anybox requires macOS Accessibility access to observe it. Groundwork's ordinary path is Raycast aliases and native Quicklinks; enable Anybox Quick Links only when you intentionally want system-wide text detection, and choose uncommon keywords that will not expand during normal typing.</p>
+      </div>
+      <p><strong>Profiles belong to Anydock</strong>, Anybox's favorite-link dock. Use them only when you want different Anydock layouts for work and personal contexts; use folders and tags to organize the actual library.</p>
+      <p>Run it as a <strong>menu-bar</strong> app so it's always a keystroke away, and it syncs everything through iCloud to your other devices. Pro removes the small free-library cap, which makes Anybox a real shared bookmark layer for work, home, teaching, and client links.</p>
+      <div class="callout note">
+        <span class="label">Sync, not dotfiles</span>
+        <p>Anybox links, folders, tags, Smart Lists, Quick Links, snippets, Anydock profiles, and menu-bar behavior are app-owned state. Set them once in Anybox and let iCloud carry them to your other Apple devices. The Anybox API key also stays out of the repo: paste it into the Raycast Anybox command preference by hand so it remains a local secret.</p>
+      </div>
+      <div class="callout note">
+        <span class="label">It's a paid App Store app</span>
+        <p>Anybox is bought once from the App Store — the setup can't purchase it for you. Buy and sign in there first; after that it updates and syncs on its own. There is no AI switch you need for this workflow; Anybox is the link library, not the AI layer.</p>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>BetterDisplay — resolutions and monitors</h2>
+      <p>BetterDisplay owns the display layer: menu-bar resolution changes, favorite display modes, refresh rates, brightness/DDC controls for supported monitors, and protection against layouts drifting when displays reconnect. Raycast launches commands; BetterDisplay changes the screens those windows live on.</p>
+      <table class="keytable">
+        <tr><td><strong>Resolution menu</strong></td><td>Switch between favorite scaled resolutions without digging through System Settings</td></tr>
+        <tr><td><strong>External monitor controls</strong></td><td>Adjust brightness, volume, inputs, and color modes on many supported displays</td></tr>
+        <tr><td><strong>Layout protection</strong></td><td>Keep laptop and external monitor arrangements stable after sleep, docks, and reconnects</td></tr>
+        <tr><td><code>betterdisplaycli</code></td><td>Use BetterDisplay&apos;s CLI, URL schemes, Shortcuts, or Raycast commands for repeatable display setups after the app configuration is stable</td></tr>
+      </table>
+      <p>Groundwork does not seed BetterDisplay presets or hotkeys. Those depend on the exact laptop, dock, monitor IDs, refresh rates, and licensing state in front of you. Pick favorites in the app first, then automate with BetterDisplay's supported CLI, Shortcuts, URL schemes, or Raycast only after you know the display setup is stable.</p>
+      <div class="callout warn">
+        <span class="label">License note</span>
+        <p>BetterDisplay has a free tier and a paid Pro license. For work or contract teams, check the license before relying on Pro features.</p>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Vorssaint on Apple Silicon</h2>
+      <p>On an Apple Silicon Mac running macOS 14 or newer, Groundwork installs <a href="https://github.com/vorssaint/vorssaint-utils" target="_blank" rel="noopener">Vorssaint</a> from the Homebrew cask <code>vorssaint</code>. One menu-bar icon holds the utilities you turn on, such as a system monitor, per-app volume, keep-awake, and clipboard history. Intel Macs, Linux, WSL, and headless machines skip it. The cask supports Apple Silicon only.</p>
+      <p>Omarchy does not install Vorssaint. Omarchy 4 draws its own top bar inside the Omarchy shell. Keep that bar, its plugins, and <code>omarchy bar</code> for an Omarchy machine.</p>
+      <p>Groundwork does not turn Vorssaint features on, set its shortcuts, or grant macOS permissions. Open the app once, install only the features you want, and approve the prompts those features show. Raycast stays the launcher. If you already use Raycast clipboard history, leave Vorssaint's clipboard feature off.</p>
+      <p>Remove it with <code>brew uninstall --cask vorssaint</code>. Add <code>--zap</code> only when you also want its preferences and caches removed.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Obsidian — notes</h2>
+      <p>Obsidian is a notes app where every note is a plain markdown file you own. Notes link to each other with <code>[[double brackets]]</code>, building a web of ideas you can navigate visually. The setup points it at an iCloud vault so your notes follow you to every Mac and the mobile app.</p>
+      <div class="callout note">
+        <span class="label">Vim mode is on</span>
+        <p>Groundwork enables Obsidian's Vim mode in managed vault defaults. That keeps notes consistent with Neovim muscle memory: <kbd>Esc</kbd> returns to Normal mode, <kbd>j</kbd>/<kbd>k</kbd> move by line, and editing uses familiar Vim motions.</p>
+      </div>
+      <div class="callout note">
+        <span class="label">It pairs with your knowledge base</span>
+        <p>The wiki from the <a href="knowledge.html">Knowledge base</a> page is just a folder of markdown — open it as an Obsidian vault and you get the same notes with a visual graph and link-following on top.</p>
+      </div>
+      <h3>Obsidian AI helpers</h3>
+      <p>Obsidian is useful before adding AI. If you do use AI over notes, keep the data flow explicit: local files stay in the vault, plugins get only the keys or local endpoints they need, and agents work from a project folder you can inspect.</p>
+      <table class="keytable">
+        <tr><td><strong>Keep files local</strong></td><td>Your vault lives at <code>iCloud Drive/Obsidian/&lt;name&gt;</code>. Right-click the folder and choose Keep Downloaded, or turn off Optimize Mac Storage, so notes are available to editors and agents.</td></tr>
+        <tr><td><strong>Plugin first run</strong></td><td>After first launch, restart Obsidian once so Groundwork's auto-installed plugins load before you configure them.</td></tr>
+        <tr><td><strong>Smart Connections</strong></td><td>Add your Claude API key or local Ollama URL, then choose the embedding model you want. For a local path, start Ollama so it serves <code>http://localhost:11434</code>, then run <code>ollama pull nomic-embed-text</code>.</td></tr>
+        <tr><td><strong>Whisper</strong></td><td>Use it for speech-to-text notes. Point it at a local endpoint if you want speech fully offline.</td></tr>
+        <tr><td><strong>Claude Code over notes</strong></td><td>For AI chat over a vault, point Claude Code at the vault or the generated knowledge-wiki folder so changes happen through files you can review.</td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>The terminal window: Ghostty</h2>
+      <p>Everything in the rest of this guide — the shell, tmux, Neovim — runs inside <strong>Ghostty</strong>, a fast, modern terminal app themed to match the rest of the setup. It's the window; <a href="tmux.html">tmux</a> does the splitting inside it. Worth knowing: <span class="keys"><kbd>⌘</kbd><kbd>K</kbd></span> clears the screen.</p>
+      <div class="callout note">
+        <span class="label">Font choice</span>
+        <p>Groundwork installs <code>font-jetbrains-mono-nerd-font</code> and sets Ghostty to <strong>JetBrainsMono Nerd Font</strong> at size <code>14</code>. The goal is practical readability: code should make <code>1</code>, <code>l</code>, <code>I</code>, <code>0</code>, <code>O</code>, and similar shapes easy to tell apart, and the Nerd Font symbols keep prompt and tmux icons from turning into boxes.</p>
+      </div>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">check the live Ghostty font</span></div>
+        <pre><code><span class="prompt">$ </span>ghostty +show-config | grep -i font-family
+font-family = JetBrainsMono Nerd Font</code></pre>
+      </div>
+      <div class="callout note">
+        <span class="label">Fresh starts in home</span>
+        <p>A fresh Ghostty launch opens in your home folder (<code>~</code>). New tabs, windows, and splits inherit the folder you are already working in, so quick side shells stay near the task. tmux owns project persistence and restoration; Ghostty stays a clean window around it.</p>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Communication</h2>
+      <p>Rounding out the set, installed and ready to sign into:</p>
+      <table class="keytable">
+        <tr><td><strong>Slack</strong> &middot; <strong>Zoom</strong></td><td>Team chat and calls</td></tr>
+        <tr><td><strong>Discord</strong></td><td>Communities and dev servers</td></tr>
+        <tr><td><strong>WhatsApp</strong></td><td>Personal messaging</td></tr>
+      </table>
+
+      <h2 id="uninstalling-apps"><span class="hash" aria-hidden="true">#</span>Uninstalling apps without leaving a mess</h2>
+      <p>Groundwork installs AppCleaner on personal Macs, but it is the fallback, not the universal first step. The installer that owns an app usually knows more about its login items, extensions, privileged helpers, and shared data than a generic cleaner can infer.</p>
+      <ol>
+        <li><strong>Vendor uninstaller first.</strong> If the app includes an uninstall command or removal app, use it.</li>
+        <li><strong>Homebrew next.</strong> For an app managed by the Brewfile, run <code>brew uninstall --cask NAME</code>. Add <code>--zap</code> only after inspecting the cask because zap can remove preferences, caches, and shared resources.</li>
+        <li><strong>AppCleaner for a plain app.</strong> Drag an app that was installed from a DMG or ZIP into AppCleaner, review every related path it proposes, then remove the checked items.</li>
+        <li><strong>Personal files stay a separate decision.</strong> Projects, documents, media libraries, cloud files, and exported data are not app leftovers. Archive or delete those deliberately.</li>
+      </ol>
+      <p>Use <code>largest ~</code> before and after cleanup when you want evidence that the space changed. Apple’s Storage settings remain the safest overview for user files and system recommendations.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>First-time setup</h2>
+      <div class="drill">
+        <div class="num">1</div>
+        <div class="body">
+          <h3>Hand ⌘Space to Raycast</h3>
+          <p>Free up Spotlight's shortcut (settings above), then set Raycast to <span class="keys"><kbd>⌘</kbd><kbd>Space</kbd></span>. Open it, launch an app, then press it again and try the clipboard history. This is the habit that changes your day.</p>
+        </div>
+      </div>
+      <div class="drill">
+        <div class="num">2</div>
+        <div class="body">
+          <h3>Confirm the managed Chrome channel</h3>
+          <p>Run <code>groundwork-profile show</code>. Current and Work Managed use Chrome stable; preview profiles use Chrome Beta and retain stable as a fallback. If you want to change the macOS default browser, run <code>defaultbrowser</code> and make that separate choice yourself.</p>
+        </div>
+      </div>
+      <div class="drill">
+        <div class="num">3</div>
+        <div class="body">
+          <h3>Connect the link workflow</h3>
+          <p>Buy and sign into Anybox from the App Store, enable its menu-bar mode, create the starter folders above, and install its Raycast extension. Paste the Anybox API key into Search Links, assign <code>ab</code> and <code>as</code>, then save and reopen one page. Keep Anybox Quick Links off unless you intentionally want global typed-keyword detection.</p>
+        </div>
+      </div>
+      <div class="drill">
+        <div class="num">4</div>
+        <div class="body">
+          <h3>Choose your display presets</h3>
+          <p>Open BetterDisplay, mark the resolutions you actually use as favorites, and make sure the menu bar icon is visible. If you use an external display, test brightness and input control.</p>
+        </div>
+      </div>
+      <div class="drill">
+        <div class="num">5</div>
+        <div class="body">
+          <h3>Open your notes</h3>
+          <p>Launch Obsidian, open the iCloud vault, and make a note. Type <code>[[</code> and watch it offer to link to other notes — that's the whole idea.</p>
+        </div>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Going deeper</h2>
+      <ul>
+        <li><a href="https://support.google.com/chrome/" target="_blank" rel="noopener">Chrome help</a> &middot; <a href="https://manual.raycast.com" target="_blank" rel="noopener">Raycast manual</a> &middot; <a href="macos.html">macOS desktop</a></li>
+        <li><a href="https://anybox.app/getting-started" target="_blank" rel="noopener">Anybox Getting Started</a> &middot; <a href="https://manual.raycast.com/quicklinks" target="_blank" rel="noopener">Raycast Quicklinks</a> &middot; <a href="https://betterdisplay.pro/" target="_blank" rel="noopener">BetterDisplay</a> &middot; <a href="https://help.obsidian.md" target="_blank" rel="noopener">Obsidian help</a></li>
+        <li><a href="https://support.apple.com/en-us/102610" target="_blank" rel="noopener">Apple: uninstall apps</a> &middot; <a href="https://support.apple.com/guide/mac-help/optimize-storage-space-syspf5a64aa6/mac" target="_blank" rel="noopener">Apple: optimize storage</a> &middot; <a href="https://docs.brew.sh/Cask-Cookbook#stanza-zap" target="_blank" rel="noopener">Homebrew cask zap</a> &middot; <a href="https://freemacsoft.net/appcleaner/" target="_blank" rel="noopener">AppCleaner</a></li>
+      </ul>
+
+      <div class="pagenav">
+        <a href="development.html"><span class="dir">← Prev</span>Development</a>
+        <a href="macos.html"><span class="dir">Next →</span>macOS desktop</a>
+      </div>
+      <footer class="site">The terminal does the work; these make the day around it smooth. · <a class="gw-version" href="https://github.com/jasondockery/groundwork/releases" target="_blank" rel="noopener">dev</a></footer>
+    </div>
+  </main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

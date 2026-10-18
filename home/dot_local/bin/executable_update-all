@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stable launcher. A running script keeps executing the copy it opened, so this
+# file stays a boring two-step trampoline: synchronize Groundwork, then hand
+# this same invocation to the freshly applied runner. Update stages live in
+# groundwork-update-run so a fix delivered by the sync governs the rest of the
+# run; keep substantive logic out of this file.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+usage() {
+  cat <<'EOF'
+Synchronize Groundwork, upgrade managed tools, and run safe routine maintenance.
+
+Usage:
+  update-all                    run the complete refresh and maintenance contract
+  update-all --skip-maintenance exceptional fast refresh; skip package-manager
+                                and Docker scratch maintenance
+  update-all --no-app-quit      keep a running app open instead of letting
+                                Homebrew quit it for cask replacement, for
+                                this invocation only
+  update-all -h|--help          show this help
+
+The normal command applies current Groundwork configuration, upgrades the safe
+managed-tool lane, runs Homebrew and npm maintenance, prunes resolved pnpm
+stores when due, and removes only aged Docker resources that explicitly opted
+in through Groundwork's labels and scratch-only tags. If the selected macOS
+Docker backend is stopped, an interactive run may offer to start it only for
+that tidy and then restore its stopped state; the default is no, and a run
+without a terminal never starts it. On macOS, the final
+health check offers a verified Karabiner restart when the Core Service has an
+unusually large footprint or its version changed during the update. The prompt
+defaults to no; without a terminal it prints the manual command and never
+restarts. It never removes project caches, whole pnpm store generations,
+unlabeled or legacy tagged Docker images, daemon-wide Docker cache, volumes,
+Xcode data, or application/user data.
+
+The final receipt separates current, updated, skipped, owner-review, warning,
+failed, and pending-repair outcomes. Exact known Homebrew no-change warnings
+are summarized as current; unfamiliar warnings remain visible and the complete
+raw Homebrew stream stays under ~/.local/state/groundwork/logs/.
+
+Homebrew's normal quit-and-replace behavior applies by default, matching
+Homebrew's own upgrade command run directly: a cask that declares a safe quit
+action may be closed and reopened as part of its own upgrade. --no-app-quit
+keeps every running app open instead, deferring its upgrade, for this
+invocation only.
+EOF
+}
+
+# Validate the complete invocation before source sync, apply, network access,
+# or any package operation. The freshly installed runner parses again because
+# it is also a directly invocable entry point.
+forward_args=("$@")
+while (($#)); do
+  case "$1" in
+    --skip-maintenance | --no-app-quit) ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "update-all: unknown option: $1" >&2
+      echo "Run 'update-all --help' for usage." >&2
+      exit 64
+      ;;
+    *)
+      echo "update-all: unexpected argument: $1 (this command takes no positional arguments)" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+# One color decision for the whole refresh, made here while the user's
+# terminal is still what stdout points at. Every stage and hook script keys
+# on this signal instead of probing its own stdout, so a tee or capture
+# INSIDE the pipeline (the brew-bundle log, a summary stage) can no longer
+# strip color the terminal supports — while redirecting the WHOLE command
+# to a file still disables it. Standard overrides win: NO_COLOR forces off,
+# FORCE_COLOR (non-zero) forces on, and a caller-provided GROUNDWORK_COLOR
+# is respected as-is.
+if [[ -z "${GROUNDWORK_COLOR:-}" ]]; then
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    GROUNDWORK_COLOR=0
+  elif [[ -n "${FORCE_COLOR:-}" && "${FORCE_COLOR}" != "0" ]]; then
+    GROUNDWORK_COLOR=1
+  elif [[ -t 1 ]]; then
+    GROUNDWORK_COLOR=1
+  else
+    GROUNDWORK_COLOR=0
+  fi
+fi
+export GROUNDWORK_COLOR
+
+command -v chezmoi >/dev/null 2>&1 || {
+  echo "Groundwork: chezmoi is not on PATH." >&2
+  exit 1
+}
+
+# Gate the platform BEFORE syncing: `chezmoi update` runs the install hooks
+# (Homebrew bootstrap, brew bundle, every run_ script), so an unsupported
+# platform must be refused here, not after the machine has been mutated. The
+# runner re-checks, which covers a direct runner invocation.
+platform="$("$HOME/.local/bin/groundwork-platform" 2>/dev/null || echo unknown)"
+case "$platform" in
+  darwin | linux | wsl2) ;;
+  wsl1)
+    echo "Groundwork requires WSL2; WSL1 is unsupported. From PowerShell: \`wsl --list --verbose\` to check versions, \`wsl --set-version <DistributionName> 2\` to convert." >&2
+    exit 1
+    ;;
+  wsl-unknown)
+    echo "Groundwork detected WSL but could not verify WSL2. From PowerShell, run \`wsl --list --verbose\`; convert with \`wsl --set-version <DistributionName> 2\` if needed." >&2
+    exit 1
+    ;;
+  unknown)
+    # Do NOT suggest a bare `chezmoi apply` here: that runs the very install
+    # hooks this gate exists to withhold until the platform is known. Restore
+    # just the detector.
+    echo "Groundwork: the platform helper is missing or failed: $HOME/.local/bin/groundwork-platform" >&2
+    echo "Restore it from the source you already have (this cannot fetch an upstream fix):" >&2
+    echo "  chezmoi apply --exclude=scripts ~/.local/bin/groundwork-platform" >&2
+    exit 1
+    ;;
+  *)
+    echo "Groundwork does not support this platform: $platform" >&2
+    exit 1
+    ;;
+esac
+
+# Serialize source synchronization, apply, upgrades, and maintenance. The
+# freshly exec'd runner inherits and verifies this exact lock token.
+lock_lib="$HOME/.local/lib/groundwork/update-lock.sh"
+if [[ ! -r "$lock_lib" ]]; then
+  echo "Groundwork: the update lock helper is missing: $lock_lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$lock_lib"
+groundwork_lock_acquire "update-all" || exit $?
+update_all_exit() {
+  local status=$?
+  groundwork_lock_release || true
+  exit "$status"
+}
+trap update_all_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Preflight the SOURCE branch before `chezmoi update` runs git pull: a local
+# development branch with no upstream (or a detached HEAD) gets Groundwork's
+# two-lane guidance instead of a raw git error. The branch-state model lives in
+# the stable helper (installed like groundwork-platform); the launcher stays a
+# trampoline. Skip only when the helper is not yet present (a first install,
+# where the source is a fresh tracked clone anyway). The helper never mutates.
+gw_preflight="$HOME/.local/bin/groundwork-source-preflight"
+if [[ -x "$gw_preflight" ]]; then
+  "$gw_preflight" || exit $?
+fi
+
+# Snapshot the managed config so the discoverability nudge fires only when
+# regeneration actually changed it. Groundwork always uses chezmoi's default
+# config path.
+gw_config="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
+gw_config_before=""
+[[ -f "$gw_config" ]] && gw_config_before="$(cksum <"$gw_config" 2>/dev/null || true)"
+
+# --init regenerates the config when .chezmoi.toml.tmpl changed; all prompts
+# are *Once, so existing answers are reused without asking again. Pull WITHOUT
+# applying: the drift preflight below inspects status first, and the full apply
+# runs inside the freshly installed runner so long installs happen in a phase
+# the new implementation owns.
+# Pull first, then rebuild the config exactly once from the synchronized
+# template. Passing --init to update initializes before the pull, so a changed
+# config template can be rediscovered and warned about by later commands.
+chezmoi update --apply=false
+chezmoi init
+
+gw_config_after=""
+[[ -f "$gw_config" ]] && gw_config_after="$(cksum <"$gw_config" 2>/dev/null || true)"
+gw_regenerated=0
+[[ "$gw_config_before" != "$gw_config_after" ]] && gw_regenerated=1
+
+# The preflight must succeed before anything is applied: a status failure
+# means chezmoi cannot render this source against this machine, and applying
+# anyway would run install hooks against a state nobody inspected.
+if ! status_output="$(chezmoi status)"; then
+  echo "Groundwork: could not inspect managed-file drift (chezmoi status failed above); nothing was applied." >&2
+  exit 1
+fi
+
+# A file is MM when it changed on disk since chezmoi last wrote it AND this
+# update also changes it — exactly the files the apply will stop and ask
+# about. Name them and explain the choices before any question appears.
+drift="$(printf '%s\n' "$status_output" | sed -n 's/^MM //p')"
+if [[ -n "$drift" ]]; then
+  echo "Groundwork: these managed files changed on this machine since Groundwork last wrote them,"
+  echo "and this update also changes them, so chezmoi will ask about each one:"
+  while IFS= read -r drift_path; do
+    printf '  ~/%s\n' "$drift_path"
+  done <<<"$drift"
+  echo "Answer y to take Groundwork's version, n to keep your local change this time,"
+  echo "or d to see the diff first. Nothing is overwritten without your answer."
+  # The overwrite question needs a person. With no usable terminal (an agent,
+  # cron, redirected stdin with no controlling tty), stop BEFORE the apply
+  # instead of leaving chezmoi to hang or fail mid-run. Exit 2 = review
+  # required. A controlling terminal elsewhere in the process is not enough:
+  # the actual input and error streams for this invocation must be interactive.
+  if [[ ! -t 0 || ! -t 2 ]]; then
+    echo "Groundwork: no interactive terminal to answer on — stopping before the apply." >&2
+    echo "Nothing was overwritten. Review each file with 'chezmoi diff <file>', resolve it," >&2
+    echo "then run update-all again from a terminal." >&2
+    exit 2
+  fi
+fi
+
+runner="$HOME/.local/bin/groundwork-update-run"
+
+# Install and verify both pieces of the post-sync updater before exec. A
+# targeted apply runs no hook scripts; the full configuration and its install
+# hooks still run inside the runner. Applying the lock library too means a
+# source update to transaction semantics governs this same invocation.
+chezmoi apply "$lock_lib" "$runner"
+if ! chezmoi verify "$lock_lib" "$runner"; then
+  echo "Groundwork: the update runner or lock helper does not match the synchronized source (a kept local edit?)." >&2
+  echo "Refusing to run a stale updater. Review with:" >&2
+  echo "  chezmoi diff ~/.local/lib/groundwork/update-lock.sh ~/.local/bin/groundwork-update-run" >&2
+  exit 1
+fi
+if [[ ! -r "$lock_lib" ]]; then
+  echo "Groundwork: chezmoi finished, but the update lock helper is missing: $lock_lib" >&2
+  exit 1
+fi
+if [[ ! -x "$runner" ]]; then
+  echo "Groundwork: chezmoi finished, but the update runner is missing or not executable: $runner" >&2
+  exit 1
+fi
+
+# Discoverability nudge: emitted only after the launcher transaction succeeded
+# (source synced, config regenerated, runner verified) and only when the config
+# actually changed. A checksum change means the TEMPLATE regenerated the config;
+# it is not a claim about which stored answers changed. Never a prompt — an
+# update finishes the update.
+if [[ "$gw_regenerated" == 1 ]]; then
+  echo
+  echo "Groundwork configuration was regenerated from the current template."
+  echo "To review or change a setting: groundwork-configure"
+fi
+
+if [[ "${#forward_args[@]}" -gt 0 ]]; then
+  exec "$runner" "${forward_args[@]}"
+fi
+exec "$runner"

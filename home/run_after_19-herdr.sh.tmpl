@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Homebrew owns Herdr on normal hosts. Headless images skip Homebrew, so fill
+# only a missing command through Herdr's checksum-verifying stable installer.
+for brew_bin in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
+  [[ -x "$brew_bin" ]] && eval "$("$brew_bin" shellenv)" && break
+done
+unset brew_bin
+export PATH="$HOME/.local/bin:$PATH"
+existing_herdr="$(command -v herdr || true)"
+if [[ -n "$existing_herdr" && -f "$existing_herdr" && -x "$existing_herdr" ]]; then
+  exit 0
+fi
+installed_herdr="$HOME/.local/bin/herdr"
+if [[ -e "$installed_herdr" || -L "$installed_herdr" ]]; then
+  echo "Preserving unusable $installed_herdr; inspect its ownership and permissions before retrying." >&2
+  exit 1
+fi
+deadline=timeout
+[[ "$(uname -s)" != Darwin ]] || deadline=gtimeout
+command -v "$deadline" >/dev/null || {
+  echo "GNU timeout is required for the Herdr installer; apply the Brewfile first." >&2
+  exit 1
+}
+installer="$(mktemp)"
+trap 'rm -f "$installer"' EXIT
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+  -fsSL https://herdr.dev/install.sh -o "$installer"
+echo "Installing Herdr stable (five-minute deadline; installer output follows)."
+HERDR_INSTALL_DIR="$HOME/.local/bin" "$deadline" --kill-after=5s 300 sh "$installer"
+hash -r
+[[ -x "$installed_herdr" ]] || { echo "The official installer did not create $installed_herdr." >&2; exit 1; }
+"$deadline" --kill-after=5s 15 "$installed_herdr" --version

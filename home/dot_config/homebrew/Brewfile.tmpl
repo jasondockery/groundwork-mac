@@ -1,0 +1,160 @@
+{{- $work := false -}}
+{{- if hasKey . "work" }}{{- $work = .work -}}{{- end -}}
+{{- $headless := false -}}
+{{- if hasKey . "headless" }}{{- $headless = .headless -}}{{- end -}}
+{{- $gameDev := false -}}
+{{- if hasKey . "game_dev" }}{{- $gameDev = .game_dev -}}{{- end -}}
+{{- $xcode := false -}}
+{{- if hasKey . "xcode" }}{{- $xcode = .xcode -}}{{- end -}}
+{{- $beta := false -}}
+{{- if hasKey . "beta" }}{{- $beta = .beta -}}{{- end -}}
+{{- $pwManager := "none" -}}
+{{- if hasKey . "password_manager" }}{{- $pwManager = .password_manager -}}{{- end -}}
+{{- $terminalMultiplexer := includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim -}}
+# Core
+brew "git"
+brew "gh"
+brew "chezmoi"
+brew "jq"
+brew "yq"
+brew "wget"
+brew "age"
+
+# Shell UX
+# Groundwork owns the interactive shell runtime, not just its config: the same
+# zsh family on macOS, Linux, and WSL2, upgraded by update-all like everything
+# else it manages. The OS shell stays untouched as a recovery fallback; run
+# groundwork-shell-adopt to make this zsh your login shell.
+brew "zsh"
+brew "starship"
+brew "antidote"
+brew "fzf"
+brew "zoxide"
+brew "atuin"
+
+# Modern Unix replacements
+brew "ripgrep"
+brew "fd"
+brew "bat"
+brew "eza"
+brew "git-delta"
+brew "dust"
+brew "duf"
+brew "btop"
+brew "hyperfine"
+brew "tokei"
+brew "yazi"                    # visual file browser (the `y` function) over fd/rg/fzf/bat; previews the folder landscape so you stay in the terminal
+
+# Dev workflow
+# Keep Herdr available even when tmux is selected; selection controls the
+# launcher, not whether the alternate multiplexer is installed.
+brew "herdr"
+{{ if or (eq $terminalMultiplexer "tmux") (eq $terminalMultiplexer "both") -}}
+brew "tmux"
+brew "sesh"
+brew "tmuxp"
+{{- end }}
+brew "lazygit"
+brew "neovim"
+brew "vim"
+brew "mise"
+brew "uv"
+brew "direnv"
+brew "shellcheck"
+brew "go"
+brew "rustup"
+
+# Security / auth
+{{ if and (eq .chezmoi.os "darwin") (not $headless) -}}
+brew "mas"
+{{- end }}
+{{ if eq $pwManager "1password" -}}
+brew "1password-cli"
+{{- else if eq $pwManager "bitwarden" -}}
+brew "bitwarden-cli"
+{{- end }}
+
+{{ if eq .chezmoi.os "darwin" -}}
+# GNU timeout bounds official CLI installers on desktop and headless Macs.
+brew "coreutils"
+{{- end }}
+{{ if and (eq .chezmoi.os "darwin") $headless -}}
+# A headless Mac cannot approve the menu-bar app. This formula conflicts with the desktop cask.
+brew "tailscale"
+{{- end }}
+{{ if eq .chezmoi.os "linux" -}}
+brew "tailscale"
+{{- end }}
+
+{{ if and (eq .chezmoi.os "darwin") (not $headless) -}}
+# macOS desktop apps, fonts, browsers, launchers, and App Store apps
+cask "gitup-app"            # GitUp: fast native GUI for visualizing git history
+cask "ghostty"
+cask "font-jetbrains-mono-nerd-font"
+{{ if eq $pwManager "1password" -}}
+cask "1password"
+{{- else if eq $pwManager "bitwarden" -}}
+cask "bitwarden"
+{{- end }}
+cask "karabiner-elements"
+cask "tailscale-app"          # standalone app owns its service and MagicDNS integration
+brew "defaultbrowser"
+# Chrome is selected by release posture in Brewfile.browser. Both official
+# Google casks ship `sha256 :no_check`, so the main Brewfile stays entirely
+# checksummed and the browser manifest is handled by the explicit exception
+# lane in run_onchange_after_10-brew-bundle.sh.
+cask "zoom"
+cask "slack"
+cask "raycast"                # keyboard-first launcher; Quicklinks jump to daily links
+mas "Anybox", id: 1593408455  # native bookmarks: menu-bar mode + Anydock profiles (paid; buy in App Store first)
+{{ if $xcode -}}
+mas "Xcode", id: 497799835    # optional native Apple/iOS development; requires App Store sign-in/ownership
+{{- end }}
+{{ if and $xcode $beta -}}
+brew "xcodes"                 # install/switch Xcode betas from the Apple Developer portal; App Store ships release only. You sign in and pick the version.
+{{- end }}
+cask "betterdisplay"          # display resolution presets, DDC brightness, layout protection, CLI/Shortcuts integration
+{{ if eq .chezmoi.arch "arm64" -}}
+cask "vorssaint"              # Apple Silicon menu-bar toolkit. macOS 14 or newer. Omarchy keeps its own bar.
+{{- end }}
+
+# Docker. Desktop needs a PAID license for orgs >250 staff or >$10M revenue, so:
+#   personal -> Docker Desktop (app + CLI + daemon); work -> Colima + CLI (free, no GUI).
+{{ if $work -}}
+brew "colima"
+brew "docker"
+brew "docker-compose"
+brew "docker-buildx"
+{{- else -}}
+cask "docker-desktop"
+{{- end }}
+
+cask "t3-code@nightly"       # selected T3 Code train; provider sign-in remains local
+{{ if not $work -}}
+# Personal machines only: AI agents + editors + personal apps
+# Claude Code CLI on the vendor's faster release channel. This is a normal
+# versioned, checksummed cask — NOT Homebrew's `version :latest` (which would
+# force `sha256 :no_check`). So it carries no release-age floor, but its
+# artifact is still verified, and `brew upgrade --require-sha` in update-all
+# keeps it that way.
+cask "claude-code@latest"
+cask "claude"                # Claude desktop app (chat, files, supervise Claude Code sessions)
+cask "codex"                 # Codex CLI
+cask "chatgpt"               # OpenAI ChatGPT desktop app
+cask "grok-build"            # Grok Build CLI (SpaceXAI coding agent; installs the `grok` binary)
+brew "opencode"              # OpenCode CLI
+cask "visual-studio-code"    # hosts the anthropic.claude-code extension (vscode-extensions.txt)
+cask "cursor"
+cask "opencode-desktop"      # OpenCode UI
+cask "zed"
+cask "obsidian"
+cask "ollama-app"            # local LLM runtime; serves localhost:11434 for Smart Connections embeddings + Whisper
+cask "discord"               # communities / gaming / dev servers
+cask "whatsapp"              # messaging
+cask "iina"                  # modern media player (mpv-backed); plays what QuickTime won't
+cask "appcleaner"            # remove plain dragged-in apps and their related files after checking the vendor/Homebrew path first
+{{ if $gameDev -}}
+cask "unity-hub"             # optional game-dev track: installs Unity Hub; install Unity 6 LTS inside Hub
+{{- end }}
+{{- end }}
+{{- end }}

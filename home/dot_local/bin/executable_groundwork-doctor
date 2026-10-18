@@ -1,0 +1,1324 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Read-only machine health report for a Groundwork setup.
+
+Usage:
+  groundwork-doctor [options]
+
+Options:
+  --shell       run only the shell runtime section
+  --runtimes    run only the runtime release-age section
+  --node-toolchain  run only the Node/pnpm ownership section
+  --browser     run only the managed-browser section
+  --karabiner   run only the Karabiner compatibility and process section
+  --always-on-apps  run only the always-on-app relaunch section
+  --docker      run only the Docker section
+  --storage     run the storage report (opt-in: du over large trees can be
+                slow, so the default run skips it)
+  -h, --help    show this help
+
+Sections (all run by default):
+  Shell runtime whether Groundwork's managed zsh is installed and owned by
+                Homebrew, registered in /etc/shells, selected as your account's
+                login shell, and actually running in this terminal — plus that
+                the shell you had before adopting still exists, so --revert has
+                somewhere to go.
+  Runtime age   whether any mise-managed runtime was adopted inside the release
+                floor update-all enforces. A cooldown filters what you acquire;
+                it never rolls back what is already installed, so a version taken
+                before the floor existed stays until something says so.
+  Node toolchain
+                whether mise owns Node, Corepack owns repository-pinned pnpm,
+                and a pnpm global-tool directory is bypassing Groundwork's
+                project-local or mise-managed CLI lanes.
+  Browser       selected Chrome channel versus the installed official Homebrew
+                casks. Preview requires Chrome Beta and keeps stable Chrome as
+                a compatibility fallback; device policy remains authoritative.
+  Karabiner     installed version, macOS support, and root Core Service PID,
+                owner, elapsed time, RSS, memory footprint, and compressed
+                memory when macOS exposes them. One snapshot never becomes a
+                made-up growth rate.
+  Always-on apps
+                whether Karabiner-Elements, Raycast, BetterDisplay, and Anybox
+                are running. update-all reports the same finding but never
+                relaunches them itself; this is where you'd notice it between
+                runs and where the actual relaunch command is named.
+  Docker        daemon reachability, engine hygiene (log rotation, image
+                store), disk usage, and leftovers: containers, dangling
+                images, volumes, and the labeled-ephemeral scratch images —
+                judged by the same shared scanner groundwork-docker-tidy
+                acts on, with tidy-eligible, in-grace, protected, and
+                unverified counts reported separately (a fresh in-grace
+                image is not a leftover). Each finding is paired with the
+                owner-scoped cleanup command, never a blanket prune. Old
+                unlabeled groundwork:* validation tags are reported for
+                manual review and never deleted automatically.
+  Storage       (--storage only, never in the default run) sizes of the known
+                large developer-storage areas — Homebrew cache, pnpm store
+                generations, npm cache, Xcode device support and simulators,
+                a legacy ~/.nvm, Parallels VMs — each classified (rebuildable,
+                application-managed, user data) and paired with the command
+                or app surface that owns cleaning it. A curated report, not a
+                full disk scan; du over large trees can take a while.
+
+The doctor only reports. It never installs, deletes, prunes, or changes
+settings; every fix stays your decision.
+
+More help:
+  groundwork-help doctor
+  https://jasondockery.github.io/groundwork/platforms.html
+EOF
+}
+
+heading() { printf '\n== %s ==\n' "$1"; }
+ok() { printf '  ok    %s\n' "$1"; }
+warn() { printf '  warn  %s\n' "$1"; }
+note() { printf '  note  %s\n' "$1"; }
+
+karabiner_section() {
+  heading "Karabiner"
+
+  if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" ]]; then
+    note "Karabiner-Elements is macOS-only; no compatibility or process state is claimed here."
+    return 0
+  fi
+
+  local karabiner_lib="$HOME/.local/share/groundwork/lib/karabiner.sh"
+  if [[ ! -r "$karabiner_lib" ]]; then
+    warn "Groundwork's Karabiner probe is missing: $karabiner_lib"
+    note "Restore it (this runs no install hooks): chezmoi apply --exclude=scripts ~/.local/share/groundwork"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  . "$karabiner_lib"
+
+  local version version_status macos_version macos_status rows count=0
+  local top_row footprint compressed memory_status
+  if version="$(gw_karabiner_version 2>/dev/null)" && [[ -n "$version" ]]; then
+    if gw_karabiner_version_at_least "$version" "$GW_KARABINER_MINIMUM_VERSION"; then
+      ok "Karabiner-Elements $version meets the $GW_KARABINER_MINIMUM_VERSION compatibility floor"
+    else
+      version_status=$?
+      if [[ "$version_status" -eq 1 ]]; then
+        warn "Karabiner-Elements $version is below the $GW_KARABINER_MINIMUM_VERSION compatibility floor; run update-all or brew upgrade --cask karabiner-elements."
+      else
+        warn "Karabiner-Elements reported an unreadable version '$version'; compatibility is unknown."
+      fi
+    fi
+  else
+    note "Karabiner-Elements CLI not found; the app is not installed in its standard location."
+  fi
+
+  if macos_version="$(gw_karabiner_macos_version 2>/dev/null)" && [[ -n "$macos_version" ]]; then
+    if gw_karabiner_macos_supported "$macos_version"; then
+      ok "macOS $macos_version is in the supported set documented for current Karabiner-Elements"
+    else
+      macos_status=$?
+      if [[ "$macos_status" -eq 1 ]]; then
+        warn "macOS $macos_version is not in the currently documented supported set ($GW_KARABINER_SUPPORTED_MACOS_MAJORS); verify upstream support before relying on remapping."
+      else
+        warn "macOS reported an unreadable version '$macos_version'; Karabiner support is unknown."
+      fi
+    fi
+  else
+    warn "macOS version unavailable; Karabiner support is unknown."
+  fi
+
+  if ! rows="$(gw_karabiner_root_core_rows)"; then
+    warn "Root Core Service process list unavailable; PID, owner, elapsed time, and RSS are unknown."
+  elif [[ -z "$rows" ]]; then
+    warn "Karabiner root Core Service is not running."
+  else
+    count="$(printf '%s\n' "$rows" | /usr/bin/awk 'NF { count++ } END { print count + 0 }')"
+    if [[ "$count" -ne 1 ]]; then
+      warn "$count Karabiner root Core Service processes found; expected exactly one."
+    fi
+    while IFS=$'\t' read -r pid owner elapsed rss_kib; do
+      [[ -n "$pid" ]] || continue
+      if [[ "$owner" == "root" ]]; then
+        ok "Root Core Service PID $pid, owner $owner, elapsed $elapsed, RSS $(gw_karabiner_rss_mib "$rss_kib") MiB"
+      else
+        warn "Root Core Service PID $pid, owner $owner (expected root), elapsed $elapsed, RSS $(gw_karabiner_rss_mib "$rss_kib") MiB"
+      fi
+      if top_row="$(gw_karabiner_top_snapshot "$pid" 2>/dev/null)" && [[ -n "$top_row" ]]; then
+        IFS=$'\t' read -r footprint compressed <<<"$top_row"
+        note "Activity Monitor footprint $footprint; compressed memory $compressed"
+        if [[ "$count" -eq 1 ]] && gw_karabiner_memory_repair_recommended "$footprint" "$compressed"; then
+          warn "Karabiner Core Service memory meets Groundwork's ${GW_KARABINER_MEMORY_RESTART_THRESHOLD_MIB} MiB review threshold."
+          note "Action recommended: groundwork-karabiner-restart"
+        else
+          memory_status=$?
+          if [[ "$count" -eq 1 && "$memory_status" -eq 2 ]]; then
+            note "The memory snapshot could not be classified; no repair recommendation is inferred."
+          fi
+        fi
+      else
+        note "Activity Monitor footprint and compressed memory unavailable; ps RSS above is the observation that succeeded."
+      fi
+    done <<<"$rows"
+  fi
+
+  note "One snapshot cannot establish a growth rate; the review threshold is an operational restart cue, not a diagnosis."
+  note "Compare the same fields after repeated sleep/wake cycles."
+  note "Official support source: https://karabiner-elements.pqrs.org/"
+  note "Long-run sleep/wake memory growth has been reported upstream; a matching snapshot is evidence to investigate, not proof of that defect: https://github.com/pqrs-org/Karabiner-Elements/issues/4432"
+  note "Logs: /var/log/karabiner/core_service.log, /var/log/karabiner/virtual_hid_device_service.log, and ~/.local/share/karabiner/log/"
+}
+
+always_on_apps_section() {
+  heading "Always-on apps"
+
+  if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" ]]; then
+    note "Groundwork's always-on-app relaunch guard is macOS-only; no process state is claimed here."
+    return 0
+  fi
+
+  local always_on_apps_lib="$HOME/.local/share/groundwork/lib/always-on-apps.sh"
+  if [[ ! -r "$always_on_apps_lib" ]]; then
+    warn "Groundwork's always-on-app probe is missing: $always_on_apps_lib"
+    note "Restore it (this runs no install hooks): chezmoi apply --exclude=scripts ~/.local/share/groundwork"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  . "$always_on_apps_lib"
+
+  local app_name reason found=0
+  while IFS=$'\t' read -r app_name reason; do
+    [[ -n "$app_name" ]] || continue
+    found=1
+    warn "$app_name is installed but not running; $reason won't work until it reopens."
+  done < <(gw_always_on_apps_not_running)
+  if [[ "$found" -eq 1 ]]; then
+    note "Reopen them now: groundwork-apps-start"
+  else
+    ok "Every installed always-on app (Karabiner-Elements, Raycast, BetterDisplay, Anybox) is running"
+  fi
+}
+
+browser_section() {
+  heading "Managed browser"
+
+  if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" ]]; then
+    note "Groundwork manages a GUI browser on macOS only; no Linux browser path is claimed."
+    return 0
+  fi
+  if ! command -v chezmoi >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    warn "chezmoi and jq are required to read the selected browser profile; status is unknown."
+    return 0
+  fi
+
+  local data headless posture role xcode beta
+  if ! data="$(chezmoi data --format=json 2>/dev/null)" \
+    || ! printf '%s' "$data" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    warn "Groundwork could not read the chezmoi profile; browser status is unknown."
+    return 0
+  fi
+  headless="$(printf '%s' "$data" | jq -r '.headless // false')"
+  posture="$(printf '%s' "$data" | jq -r '.release_posture // "current"')"
+  role="$(printf '%s' "$data" | jq -r '.environment_role // (if .work then "managed" else "personal" end)')"
+  xcode="$(printf '%s' "$data" | jq -r '.xcode // false')"
+  beta="$(printf '%s' "$data" | jq -r '.beta // false')"
+
+  local posture_valid=true
+  if [[ "$posture" != "current" && "$posture" != "preview" ]]; then
+    warn "release_posture is '$posture'; no managed browser claim can be made."
+    posture_valid=false
+  fi
+  if [[ "$posture" == "current" ]]; then
+    ok "Current release posture: stable"
+  elif [[ "$posture" == "preview" ]]; then
+    ok "Current release posture: preview"
+  fi
+  if [[ "$xcode" == "true" ]]; then
+    ok "Xcode: enabled"
+    if [[ "$beta" == "true" ]]; then
+      ok "Xcode beta channel: enabled"
+    else
+      ok "Xcode beta channel: disabled"
+    fi
+  else
+    ok "Xcode: disabled"
+    if [[ "$beta" == "true" ]]; then
+      warn "Xcode beta is enabled while Xcode is disabled; run groundwork-configure to normalize this inactive preference."
+    else
+      ok "Xcode beta channel: disabled"
+    fi
+  fi
+  [[ "$posture_valid" == "true" ]] || return 0
+  if [[ "$headless" == "true" ]]; then
+    ok "headless profile selects no GUI browser"
+    return 0
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    warn "Homebrew is not available, so the selected Chrome casks cannot be verified."
+    return 0
+  fi
+
+  if brew list --cask google-chrome >/dev/null 2>&1; then
+    ok "Google Chrome stable is installed"
+  else
+    warn "Google Chrome stable is selected but not installed; rerun update-all."
+  fi
+  if [[ "$posture" == "preview" ]]; then
+    if brew list --cask google-chrome@beta >/dev/null 2>&1; then
+      ok "Google Chrome Beta is installed as the primary preview browser"
+    else
+      warn "Google Chrome Beta is selected but not installed; rerun update-all."
+    fi
+    note "stable Chrome remains installed as the compatibility fallback"
+  elif brew list --cask google-chrome@beta >/dev/null 2>&1; then
+    note "Chrome Beta is still installed but is no longer Groundwork-managed; no app or browser data is removed automatically."
+  fi
+  if [[ "$role" == "managed" ]]; then
+    note "organization and device policy outrank this selection; Groundwork never bypasses them."
+  fi
+  note "Groundwork installs the selected channel but does not change the macOS default-browser association."
+}
+
+docker_section() {
+  heading "Docker"
+
+  local docker_lib="$HOME/.local/share/groundwork/lib/docker-scan.sh" docker_executable
+  if [[ ! -r "$docker_lib" ]]; then
+    warn "Groundwork's docker-scan probe is missing: $docker_lib — Docker checks skipped."
+    note "Restore it (this runs no install hooks): chezmoi apply --exclude=scripts ~/.local/share/groundwork"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  . "$docker_lib"
+  docker_executable="$(gw_docker_resolve_trusted_executable docker 2>/dev/null || true)"
+  if [[ -z "$docker_executable" ]]; then
+    note "trusted docker CLI not found; skipping. Personal Mac: Docker Desktop. Work Mac: Colima + Docker CLI (both ship with Groundwork)."
+    return 0
+  fi
+  GW_DOCKER_JQ="$(gw_docker_resolve_trusted_executable jq 2>/dev/null || true)"
+  [[ -n "$GW_DOCKER_JQ" ]] || GW_DOCKER_JQ="/groundwork/unavailable/jq"
+  docker() { "$docker_executable" "$@"; }
+  if ! docker info >/dev/null 2>&1; then
+    note "Docker daemon not reachable; skipping Docker checks. Start Docker Desktop, or run 'colima start' on a work Mac, then rerun groundwork-doctor."
+    return 0
+  fi
+  ok "Docker daemon is reachable"
+
+  local driver log_driver settings_hint=false
+  log_driver="$(docker info --format '{{.LoggingDriver}}' 2>/dev/null || echo unknown)"
+  if [[ "$log_driver" == "local" ]]; then
+    ok "container logs rotate automatically (log-driver: local)"
+  else
+    warn "log-driver is '$log_driver'; the default json-file never rotates, so a chatty container grows its log forever. Set \"log-driver\": \"local\" in the engine settings."
+    settings_hint=true
+  fi
+
+  driver="$(docker info --format '{{.Driver}}' 2>/dev/null || echo unknown)"
+  if [[ "$driver" == "overlayfs" ]]; then
+    ok "containerd image store is enabled (multi-platform builds work locally)"
+  else
+    note "storage driver is '$driver'; the containerd image store (shows as 'overlayfs') is what multi-platform builds expect. Older installs may still have it off."
+    settings_hint=true
+  fi
+
+  printf '\n  Disk usage (docker system df):\n'
+  docker system df 2>/dev/null | sed 's/^/    /' || note "could not read docker system df"
+
+  # Leftover facts come from the same shared scanner groundwork-docker-tidy
+  # acts on (lib/docker-scan.sh), so the doctor's counts and the tidy's
+  # decisions can never disagree. A count of "unknown" means the query
+  # failed — a different fact from zero, and reported as such.
+  {
+    local max_age
+    if ! max_age="$(gw_docker_max_age_hours)"; then
+      warn "invalid GROUNDWORK_DOCKER_TIDY_MAX_AGE_HOURS='${GROUNDWORK_DOCKER_TIDY_MAX_AGE_HOURS:-}' — reporting with the ${max_age}h default (groundwork-docker-tidy refuses to act until it is fixed)."
+    fi
+
+    local stopped dangling_images dangling_volumes
+    stopped="$(gw_docker_count ps -aq --filter status=exited)"
+    dangling_images="$(gw_docker_count images -q --filter dangling=true)"
+    dangling_volumes="$(gw_docker_count volume ls -q --filter dangling=true)"
+
+    local scan n_eligible n_retained n_protected n_unverified scan_ok=true
+    if ! scan="$(gw_docker_scan "$max_age")"; then
+      warn "could not complete the labeled Docker image scan; counts are unknown."
+      scan=""
+      scan_ok=false
+    fi
+    if [[ "$scan_ok" == true ]]; then
+      n_eligible="$(printf '%s\n' "$scan" | awk -F'\t' '$2 == "eligible" { n++ } END { print n + 0 }')"
+      n_retained="$(printf '%s\n' "$scan" | awk -F'\t' '$2 == "retained" { n++ } END { print n + 0 }')"
+      n_protected="$(printf '%s\n' "$scan" | awk -F'\t' '$2 == "protected" { n++ } END { print n + 0 }')"
+      n_unverified="$(printf '%s\n' "$scan" | awk -F'\t' '$2 == "unverified" { n++ } END { print n + 0 }')"
+    else
+      n_eligible=unknown
+      n_retained=unknown
+      n_protected=unknown
+      n_unverified=unknown
+    fi
+
+    printf '\n  Leftovers (unknown = the query failed, not zero):\n'
+    printf '    stopped containers: %s\n' "$stopped"
+    printf '    dangling images:    %s\n' "$dangling_images"
+    printf '    dangling volumes:   %s\n' "$dangling_volumes"
+    printf '    ephemeral scratch images (label dev.roost.ephemeral=true, %sh grace):\n' "$max_age"
+    printf '      tidy-eligible (past grace):     %s\n' "$n_eligible"
+    printf '      in grace (fresh, not leftover): %s\n' "$n_retained"
+    printf '      protected (tag/container ref):  %s\n' "$n_protected"
+    printf '      unverified (retained):          %s\n' "$n_unverified"
+
+    local legacy_scan legacy_tag legacy_age legacy_size legacy_id legacy_count=0
+    if legacy_scan="$(gw_docker_legacy_validation_images "$max_age")"; then
+      if [[ -n "$legacy_scan" ]]; then
+        printf '\n  Legacy tagged validation images (manual review; never automatic):\n'
+        while IFS=$'\t' read -r legacy_tag legacy_age legacy_size legacy_id; do
+          [[ -n "$legacy_tag" ]] || continue
+          printf '    %-32s %6sh  %8s  %s\n' \
+            "$legacy_tag" "$legacy_age" "$legacy_size" "$legacy_id"
+          legacy_count=$((legacy_count + 1))
+        done <<<"$legacy_scan"
+        printf '    These tags bypassed the scratch lifecycle. After confirming each is disposable:\n'
+        while IFS=$'\t' read -r legacy_tag _ _ _; do
+          [[ -n "$legacy_tag" ]] || continue
+          printf '      docker image rm %s\n' "$legacy_tag"
+        done <<<"$legacy_scan"
+      fi
+    else
+      warn "could not enumerate legacy Groundwork validation tags; reported as unknown, not zero."
+    fi
+
+    # A fresh in-grace image is NOT a leftover — it never triggers guidance.
+    if [[ "$stopped" != 0 || "$dangling_images" != 0 || "$dangling_volumes" != 0 ||
+      "$n_eligible" == unknown || "$n_protected" == unknown || "$n_unverified" == unknown ]] \
+      || ((n_eligible + n_protected + n_unverified + legacy_count > 0)); then
+      cat <<'EOF'
+
+  Cleanup guidance (review first; the doctor never deletes):
+    Prefer the owning repo's clean commands — well-run projects ship
+    repo-scoped cleanup that targets only their own labeled resources.
+    To inspect what's behind the counts:
+      docker ps -a --filter status=exited
+      docker images --filter dangling=true
+      docker volume ls --filter dangling=true
+    Ephemeral scratch images opted in to cleanup with their label:
+    groundwork-docker-tidy previews the tidy (dry run by default), and
+    groundwork-docker-tidy --yes removes only the tidy-eligible ones —
+    enumerated, re-checked, deleted by image ID; never volumes, never
+    unlabeled images, never dangling images or builder cache.
+    Stopped containers, dangling images, and builder cache are DAEMON-WIDE
+    (every project on this machine): that cleanup is the separate, owner-run
+    groundwork-docker-cache-tidy.
+    A dangling volume can still be the only copy of a database. Check the
+    volume name and owner before removing anything, and avoid blanket
+    'docker system prune' — it reaches into every project's state at once.
+EOF
+    fi
+  }
+
+  if [[ "$settings_hint" == true ]]; then
+    note "engine settings live in Docker Desktop -> Settings -> Docker Engine (work Macs: the managed Colima template already sets them). See the Platforms page for the exact JSON."
+  fi
+}
+
+# The release floor Groundwork enforces in update-all. Keep this in step with
+# groundwork-update-run; the validator asserts they agree.
+GROUNDWORK_RELEASE_FLOOR="${GROUNDWORK_RELEASE_FLOOR:-5d}"
+
+# Every pnpm on PATH, in resolution order. Raw candidates: callers collapse
+# them to distinct OWNERS via pnpm_resolve. A PATH scan rather than
+# `command -v -a` (zsh-only) or `type -a` (output format varies). Always returns
+# 0: under `set -e`, a scan whose final test is false would otherwise abort the
+# caller's assignment and silently skip the rest of the section.
+pnpm_candidates() {
+  local dir
+  printf '%s' "${PATH:-}" | tr ':' '\n' | while IFS= read -r dir; do
+    if [ -n "$dir" ] && [ -x "$dir/pnpm" ]; then
+      printf '%s\n' "$dir/pnpm"
+    fi
+  done
+  return 0
+}
+
+# Resolve what a pnpm on PATH ACTUALLY dispatches to.
+#
+# A mise shim is not an owner — it is a dispatcher to the currently active tool
+# binary, and `which` shows only the shim (mise says to use `mise which`). Once
+# Corepack has placed pnpm beside the managed Node and `mise reshim` has run, the
+# healthy chain is: mise shim -> node/bin/pnpm -> Corepack -> repo-pinned pnpm.
+# Treating that shim as a competing owner would flag a correct setup as broken.
+pnpm_resolve() {
+  local candidate="$1"
+  local resolved="$candidate"
+  case "$candidate" in
+    */mise/shims/*)
+      resolved="$(mise which pnpm 2>/dev/null || true)"
+      [ -n "$resolved" ] || resolved="$candidate"
+      ;;
+  esac
+  # Canonicalize fully, not one symlink level. mise exposes installs/node/lts as
+  # a symlink to the concrete version, so the SAME Corepack shim is reachable as
+  # both .../node/lts/... and .../node/24.18.0/... — comparing those literally
+  # reports one healthy owner as two competing ones on every managed machine.
+  if command -v readlink >/dev/null 2>&1; then
+    local canonical
+    canonical="$(readlink -f "$resolved" 2>/dev/null || true)"
+    [ -n "$canonical" ] && resolved="$canonical"
+  fi
+  printf '%s\n' "$resolved"
+}
+
+# Classify by what it resolves to, never by the path the user happened to type.
+#
+# Order matters. A standalone pnpm is a compiled binary that CONTAINS the string
+# "corepack" in its embedded JavaScript, so a content grep alone reports it as
+# Corepack-backed — the exact opposite of the truth. Structural path facts are
+# checked first, and content is only inspected for text shims.
+pnpm_provider() {
+  local candidate="$1" resolved
+  resolved="$(pnpm_resolve "$candidate")"
+
+  # Structural, definitive: a tool installed by mise under its own installs tree.
+  case "$resolved" in
+    */mise/installs/pnpm/*)
+      printf 'mise-standalone\n'
+      return 0
+      ;;
+  esac
+  # Corepack's own dist, however it was reached.
+  case "$resolved" in
+    */corepack/dist/* | */corepack/*)
+      printf 'corepack\n'
+      return 0
+      ;;
+  esac
+  # A TEXT shim naming corepack (never a binary — see the note above).
+  if [ -f "$resolved" ] && [ -r "$resolved" ] \
+    && file "$resolved" 2>/dev/null | grep -qiE 'text|script' \
+    && grep -qs corepack "$resolved" 2>/dev/null; then
+    printf 'corepack\n'
+    return 0
+  fi
+  case "$resolved" in
+    */homebrew/* | */Cellar/*) printf 'homebrew\n' ;;
+    */lib/node_modules/* | */npm-global/*) printf 'npm-global\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# `packageManager` may carry Corepack's recommended integrity hash
+# ("pnpm@11.10.0+sha512.…"). Comparing the whole string to `pnpm --version`
+# would report a false mismatch, so strip at the '+'.
+package_manager_pin() {
+  local manifest="$1"
+  node -e '
+    try {
+      const pkg = require(process.argv[1])
+      const match = /^pnpm@([^+]+)/.exec(pkg.packageManager || "")
+      process.stdout.write(match ? match[1] : "")
+    } catch {}
+  ' "$manifest" 2>/dev/null || true
+}
+
+# Emits "<kind>\t<value>" where kind is exact | range | none. A shell glob
+# cannot do this: `[0-9]*.[0-9]*.[0-9]*` also matches "24.18.0 || 26.0.0" and
+# "24.18.0-beta", so an anchored regex in the Node helper is the honest place.
+engines_node_pin() {
+  local manifest="$1"
+  node -e '
+    try {
+      const pkg = require(process.argv[1])
+      const value = ((pkg.engines && pkg.engines.node) || "").trim()
+      const kind = !value ? "none" : /^\d+\.\d+\.\d+$/.test(value) ? "exact" : "range"
+      process.stdout.write(kind + "\t" + value)
+    } catch {
+      process.stdout.write("none\t")
+    }
+  ' "$manifest" 2>/dev/null || printf 'none\t'
+}
+
+# ── #14: Corepack resolves the NEAREST ancestor manifest, so a doctor run from a
+# monorepo subdirectory must not report "not inside a Node project" while bare
+# pnpm is governed by a package.json two levels up.
+nearest_manifest() {
+  local want_pin="${1:-}" dir fallback=""
+  dir="$(pwd)"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if [ -f "$dir/package.json" ]; then
+      [ -n "$fallback" ] || fallback="$dir/package.json"
+      if [ -z "$want_pin" ] || grep -qs '"packageManager"' "$dir/package.json"; then
+        printf '%s\n' "$dir/package.json"
+        return 0
+      fi
+    fi
+    dir="$(dirname "$dir")"
+  done
+  printf '%s\n' "$fallback"
+  return 0
+}
+
+nearest_mise_pnpm() {
+  local dir
+  dir="$(pwd)"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if [ -r "$dir/mise.toml" ] && awk '
+      /^[[:space:]]*\[/ { tools = ($0 ~ /^[[:space:]]*\[tools\][[:space:]]*(#.*)?$/) }
+      tools && /^[[:space:]]*pnpm[[:space:]]*=/ { found = 1 }
+      END { exit(found ? 0 : 1) }
+    ' "$dir/mise.toml"; then
+      printf '%s\n' "$dir/mise.toml"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+expand_pnpm_global_bin() {
+  local value="$1"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  case "$value" in
+    \~/*) printf '%s/%s\n' "$HOME" "${value#\~/}" ;;
+    \$HOME/*) printf '%s/%s\n' "$HOME" "${value#\$HOME/}" ;;
+    /*) printf '%s\n' "$value" ;;
+    *) return 1 ;;
+  esac
+}
+
+configured_pnpm_global_bin() {
+  if [[ -n "${PNPM_HOME:-}" ]]; then
+    expand_pnpm_global_bin "$PNPM_HOME"
+    return
+  fi
+
+  local config value
+  for config in \
+    "$HOME/.npmrc" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/pnpm/rc" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/pnpm/config.yaml"; do
+    [[ -r "$config" ]] || continue
+    value="$(awk '
+      /^[[:space:]]*global-bin-dir[[:space:]]*[:=]/ {
+        sub(/^[^:=]*[:=][[:space:]]*/, "")
+        sub(/[[:space:]]+$/, "")
+        print
+        exit
+      }
+    ' "$config")"
+    if [[ -n "$value" ]]; then
+      expand_pnpm_global_bin "$value"
+      return
+    fi
+  done
+
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin)
+      [[ -d "$HOME/Library/pnpm" ]] && printf '%s\n' "$HOME/Library/pnpm/bin"
+      ;;
+    Linux)
+      local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+      [[ -d "$data_home/pnpm" ]] && printf '%s\n' "$data_home/pnpm"
+      ;;
+  esac
+}
+
+path_contains_directory() {
+  local wanted="$1" entry wanted_real entry_real
+  case ":${PATH:-}:" in
+    *":$wanted:"*) return 0 ;;
+  esac
+  [[ -d "$wanted" ]] || return 1
+  wanted_real="$(cd -P -- "$wanted" 2>/dev/null && pwd -P)" || return 1
+  while IFS= read -r entry; do
+    [[ -n "$entry" && -d "$entry" ]] || continue
+    entry_real="$(cd -P -- "$entry" 2>/dev/null && pwd -P)" || continue
+    [[ "$entry_real" == "$wanted_real" ]] && return 0
+  done < <(printf '%s' "${PATH:-}" | tr ':' '\n')
+  return 1
+}
+
+node_toolchain_section() {
+  heading "Node toolchain (mise owns Node; Corepack owns pnpm)"
+
+  # The failure this catches is invisible without it: two pnpm authorities, and
+  # PATH order picks the winner. A newer global pnpm meeting an older
+  # `packageManager` pin self-manages a download, nested Turbo/package-script
+  # children re-resolve bare `pnpm` from PATH and land back on the global one,
+  # and a standalone pnpm build carries its OWN Node that can trip a repository's
+  # engines.node even when the right Node is on PATH.
+
+  # Read-only means read-only: Corepack fetches a repository's pinned pnpm on
+  # demand, and the download PROMPT variable does not stop it — only this does.
+  # An uncached pin is therefore reported as unverifiable rather than fetched.
+  export COREPACK_ENABLE_NETWORK=0
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+  local node_path node_version managed_node
+  node_path="$(command -v node 2>/dev/null || true)"
+  if [ -z "$node_path" ]; then
+    warn "node is not on PATH — install it with: mise install"
+    return 0
+  fi
+  node_version="$(node --version 2>/dev/null || echo unknown)"
+
+  # "mise owns Node" is a claim this section must actually test, not assume.
+  managed_node="$(mise which node 2>/dev/null || true)"
+  # Same symlink trap as Corepack: installs/node/lts points at the concrete
+  # version, so a literal compare calls the managed Node "not mise's".
+  local node_real managed_real
+  node_real="$(readlink -f "$node_path" 2>/dev/null || printf '%s' "$node_path")"
+  managed_real="$(readlink -f "${managed_node:-}" 2>/dev/null || printf '%s' "${managed_node:-}")"
+  if [ -z "$managed_node" ]; then
+    warn "node $node_version ($node_path) is not managed by mise — Groundwork's model expects mise to own Node."
+  elif [ "$node_real" = "$managed_real" ]; then
+    ok "node $node_version ($node_path, mise-managed)"
+  else
+    warn "the node on PATH ($node_path) is NOT mise's ($managed_node) — a different Node wins resolution, so pins and Corepack may not be the ones you expect."
+  fi
+
+  local expected_corepack
+  [ -n "$managed_node" ] && expected_corepack="$(dirname "$managed_node")/corepack"
+  if command -v corepack >/dev/null 2>&1; then
+    local visible_corepack
+    visible_corepack="$(command -v corepack)"
+    # mise exposes installs/node/lts as a symlink to the concrete version, so
+    # compare resolved targets or every managed setup reports a false conflict.
+    local visible_real expected_real
+    visible_real="$(readlink -f "$visible_corepack" 2>/dev/null || printf '%s' "$visible_corepack")"
+    expected_real="$(readlink -f "${expected_corepack:-}" 2>/dev/null || printf '%s' "${expected_corepack:-}")"
+    if [ -n "${expected_corepack:-}" ] && [ "$visible_real" != "$expected_real" ]; then
+      warn "corepack on PATH ($visible_corepack) is not the one beside the managed Node ($expected_corepack) — it may enable shims for a different Node."
+    else
+      ok "corepack $(corepack --version 2>/dev/null || echo '?') beside the managed Node"
+    fi
+  else
+    local major
+    major="${node_version#v}"
+    major="${major%%.*}"
+    if [ -n "$major" ] && [ "$major" -ge 25 ] 2>/dev/null; then
+      warn "Node $major does not bundle Corepack and none is installed — pnpm has no owner. Run 'chezmoi apply' to install the pinned one."
+    else
+      warn "corepack not found — pnpm has no owner. Run: corepack enable pnpm"
+    fi
+    return 0
+  fi
+
+  local pnpm_path
+  pnpm_path="$(command -v pnpm 2>/dev/null || true)"
+  if [ -z "$pnpm_path" ]; then
+    note "pnpm is not on PATH. Corepack provides it on demand: corepack enable pnpm"
+    return 0
+  fi
+
+  local provider resolved pnpm_version
+  provider="$(pnpm_provider "$pnpm_path")"
+  resolved="$(pnpm_resolve "$pnpm_path")"
+  pnpm_version="$(pnpm --version 2>/dev/null || echo unknown)"
+
+  if [ "$provider" = "corepack" ]; then
+    if [ "$resolved" = "$pnpm_path" ]; then
+      ok "pnpm $pnpm_version via corepack ($pnpm_path)"
+    else
+      # A mise shim dispatching to Corepack is healthy, not a competing owner.
+      ok "pnpm $pnpm_version via corepack ($pnpm_path -> $resolved)"
+    fi
+  else
+    warn "pnpm $pnpm_version comes from '$provider' ($resolved), not Corepack — it overrides a repository's packageManager pin, and nested Turbo/package-script children resolve it too."
+    case "$provider" in
+      mise-standalone)
+        warn "remove the competing install: mise uninstall --all pnpm && mise reshim, then rerun 'chezmoi apply'"
+        ;;
+      *)
+        warn "remove it or reorder PATH so Corepack wins, then: corepack enable pnpm"
+        ;;
+    esac
+  fi
+
+  # Competing OWNERS, not competing paths: a shim and the binary it dispatches
+  # to are one authority, so candidates collapse by what they resolve to.
+  local owners count
+  owners="$(
+    pnpm_candidates | while IFS= read -r candidate; do
+      [ -n "$candidate" ] && pnpm_resolve "$candidate"
+    done | sort -u
+  )"
+  count="$(printf '%s' "$owners" | grep -c . || true)"
+  if [ "${count:-0}" -gt 1 ]; then
+    warn "$count distinct pnpm owners on PATH — the first wins, which is why shells can disagree:"
+    printf '%s\n' "$owners" | while IFS= read -r owner; do
+      [ -n "$owner" ] && note "  $owner"
+    done
+  fi
+
+  local pnpm_global_bin
+  pnpm_global_bin="$(configured_pnpm_global_bin || true)"
+  if [[ -n "$pnpm_global_bin" ]]; then
+    if path_contains_directory "$pnpm_global_bin"; then
+      warn "pnpm's global executable directory is on PATH: $pnpm_global_bin — those tools bypass Groundwork's mise inventory."
+    else
+      warn "pnpm's global executable directory is outside PATH: $pnpm_global_bin"
+    fi
+    note "Do not run 'pnpm setup'; it edits shell configuration that Groundwork owns."
+  fi
+  note "Node CLI ownership: add project tools with 'pnpm add -D <package>' and run them with 'pnpm exec <command>'."
+  note "For a personal cross-project CLI: mise use --minimum-release-age 5d --path \"$HOME/.config/mise/conf.d/90-personal-tools.toml\" npm:<package>@latest"
+  note "TypeScript's package is 'typescript'; its compiler command is 'tsc'."
+
+  local competing_mise
+  competing_mise="$(nearest_mise_pnpm || true)"
+  if [ -n "$competing_mise" ]; then
+    warn "$competing_mise declares tools.pnpm — remove it; package.json#packageManager is this repository's pnpm authority and Corepack is the owner."
+  fi
+
+  local manifest pinned node_pin node_pin_kind node_pin_value
+  manifest="$(nearest_manifest pin)"
+  local local_manifest
+  local_manifest="$(nearest_manifest)"
+  if [ -z "$local_manifest" ]; then
+    note "no package.json in this directory or any ancestor — repository pin checks skipped."
+    return 0
+  fi
+  [ -n "$manifest" ] || manifest="$local_manifest"
+  [ "$manifest" = "$(pwd)/package.json" ] || note "packageManager comes from $manifest (Corepack walks up to the nearest manifest declaring one)"
+
+  pinned="$(package_manager_pin "$manifest")"
+  if [ -z "$pinned" ]; then
+    note "this repository declares no packageManager pin; Corepack has nothing to select."
+  elif [ "$pnpm_version" = "$pinned" ]; then
+    ok "pnpm matches this repository's packageManager pin ($pinned)"
+  else
+    warn "this repository pins pnpm $pinned but the resolved pnpm is $pnpm_version"
+  fi
+
+  node_pin="$(engines_node_pin "$local_manifest")"
+  node_pin_kind="${node_pin%%	*}"
+  node_pin_value="${node_pin#*	}"
+  case "$node_pin_kind" in
+    none) note "this repository declares no engines.node policy." ;;
+    exact)
+      # An exact pin must match exactly. A RANGE is reported, not judged —
+      # reimplementing semver here would only add a new place to be wrong.
+      if [ "${node_version#v}" = "$node_pin_value" ]; then
+        ok "node matches this repository's exact engines.node pin ($node_pin_value)"
+      else
+        warn "this repository pins engines.node $node_pin_value but the active node is $node_version"
+      fi
+      ;;
+    range)
+      note "engines.node is a range ($node_pin_value); active node is $node_version — ranges are not evaluated here."
+      ;;
+  esac
+
+  # Parent vs a pnpm-spawned child — the failure the whole model exists to stop.
+  # A top-level pnpm can be correct while a child re-resolves bare `pnpm` from
+  # PATH and gets a different one. (The package-script shape that Turbo tasks
+  # actually use is proven in scripts/validate-groundwork; this is the cheap
+  # in-place approximation.)
+  if [ -n "$pinned" ]; then
+    local child_pnpm child_node
+    child_pnpm="$(COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm exec pnpm --version 2>/dev/null || echo unknown)"
+    child_node="$(COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm exec node --version 2>/dev/null || echo unknown)"
+    if [ "$child_pnpm" = "$pnpm_version" ] && [ "$child_node" = "$node_version" ]; then
+      ok "nested processes resolve the same toolchain (pnpm $child_pnpm, node $child_node)"
+    else
+      warn "a pnpm-spawned child resolves a DIFFERENT toolchain (pnpm $child_pnpm, node $child_node) than the parent (pnpm $pnpm_version, node $node_version) — Turbo tasks and package scripts will not agree with your shell."
+    fi
+  fi
+}
+
+runtimes_section() {
+  heading "Runtime release age"
+
+  if ! command -v mise >/dev/null 2>&1; then
+    note "mise is not installed; skipping runtime checks."
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    note "jq is not installed; skipping runtime release-age checks."
+    return 0
+  fi
+  if ! mise upgrade --help 2>/dev/null | grep -q -- '--minimum-release-age'; then
+    warn "this mise cannot enforce a release floor (--minimum-release-age is missing) — update-all skips runtime upgrades entirely until it can. Upgrade mise: brew upgrade mise"
+    return 0
+  fi
+
+  # A cooldown only filters what you ACQUIRE. It never retires a version already
+  # on disk, so a runtime taken before the floor existed — or during a window
+  # when it was not enforced — stays put and silently violates the policy.
+  # Nothing else surfaces that, which is why this section exists.
+  #
+  # The release date is read from the tool's own backend, NOT from mise's
+  # upgrade warning: that warning only appears when mise's remote-version cache
+  # happens to be cold, so a check built on it would pass or fail by luck.
+  local floor_days
+  floor_days="${GROUNDWORK_RELEASE_FLOOR%d}"
+  [[ "$floor_days" =~ ^[0-9]+$ ]] || floor_days=5
+
+  local tools_json
+  tools_json="$(mise ls --current --json 2>/dev/null || true)"
+  if [[ -z "$tools_json" ]]; then
+    note "mise reported no active tools."
+    return 0
+  fi
+
+  local flagged=0 checked=0
+  local tool version released age_days
+  while IFS=$'\t' read -r tool version; do
+    [[ -n "$tool" && -n "$version" ]] || continue
+    released=""
+    case "$tool" in
+      node)
+        released="$(curl -fsS --max-time 10 https://nodejs.org/dist/index.json 2>/dev/null \
+          | jq -r --arg v "v$version" '.[] | select(.version == $v) | .date' 2>/dev/null | head -n 1)"
+        ;;
+      pnpm | npm:*)
+        local pkg="${tool#npm:}"
+        released="$(curl -fsS --max-time 10 "https://registry.npmjs.org/$pkg" 2>/dev/null \
+          | jq -r --arg v "$version" '.time[$v] // empty' 2>/dev/null | head -n 1)"
+        ;;
+    esac
+
+    if [[ -z "$released" ]]; then
+      # Say so plainly rather than implying a clean bill of health.
+      note "$tool $version: release date unavailable (no date source for this backend, or offline) — age not verified."
+      continue
+    fi
+
+    # Both real formats must parse: nodejs.org gives a bare date, npm gives an
+    # ISO timestamp with fractional seconds. fromdateiso8601 accepts neither
+    # as-is.
+    age_days="$(jq -rn --arg d "$released" '
+      ($d
+        | if test("T") then . else . + "T00:00:00Z" end
+        | sub("\\.[0-9]+"; "")
+        | if test("Z$") then . else . + "Z" end
+        | fromdateiso8601) as $t
+      | ((now - $t) / 86400 | floor)' 2>/dev/null || true)"
+    if ! [[ "$age_days" =~ ^-?[0-9]+$ ]]; then
+      note "$tool $version: could not parse its release date ($released) — age not verified."
+      continue
+    fi
+    checked=$((checked + 1))
+
+    if ((age_days < floor_days)); then
+      warn "$tool $version is only ${age_days}d old — younger than the ${floor_days}d release floor update-all enforces."
+      note "  It was adopted before the floor applied. A cooldown filters what you acquire; it never rolls back what you already have."
+      note "  Pin a vetted version now:   mise use -g $tool@<older-version>   (mise ls-remote $tool lists them)"
+      note "  Or wait it out: in $((floor_days - age_days))d this version clears the floor and update-all keeps it."
+      flagged=$((flagged + 1))
+    else
+      ok "$tool $version is ${age_days}d old — past the ${floor_days}d floor"
+    fi
+  done < <(printf '%s' "$tools_json" \
+    | jq -r 'to_entries[] | .key as $t | .value[] | select(.active) | "\($t)\t\(.version)"' 2>/dev/null || true)
+
+  if ((checked == 0 && flagged == 0)); then
+    note "no runtime release dates could be verified (offline, or no date source for these backends)."
+  fi
+}
+
+shell_section() {
+  heading "Shell runtime"
+
+  # The shared probe is sourced HERE, not at file scope: a diagnostic must not
+  # lose its unrelated Docker checks because one component is missing. See
+  # lib/shell-runtime.sh — it never executes the candidate zsh, because ownership
+  # is proven from Homebrew metadata and the filesystem first.
+  local lib="${GROUNDWORK_SHELL_LIB:-$HOME/.local/share/groundwork/lib/shell-runtime.sh}"
+  if [[ ! -r "$lib" ]]; then
+    warn "Groundwork's shell-runtime probe is missing: $lib"
+    note "Restore it (this runs no install hooks): chezmoi apply --exclude=scripts ~/.local/share/groundwork"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  . "$lib"
+
+  # A diagnostic must survive a damaged machine: nothing below returns early, so
+  # a broken Homebrew is reported rather than suppressing unrelated facts.
+  gw_shell_probe
+
+  case "$GW_LOGIN_STATE" in
+    ok) note "login shell (account): $GW_LOGIN_SHELL" ;;
+    *) warn "login shell (account): UNREADABLE — restore the account lookup (directory service / getent / /etc/passwd); Groundwork will not change a shell it cannot verify." ;;
+  esac
+  note "\$SHELL (session value): ${GW_SESSION_SHELL:-unset}"
+  case "$GW_PARENT_STATE" in
+    path) note "invoking process: $GW_PARENT_EXE" ;;
+    name-only) note "invoking process: $GW_PARENT_EXE (executable path could not be verified)" ;;
+    *) note "invoking process: unknown" ;;
+  esac
+
+  # --- Homebrew and OWNERSHIP: no green "managed" claim before it is proven ---
+  case "$GW_BREW_STATE" in
+    missing)
+      warn "Homebrew is not on PATH, so Groundwork's managed zsh cannot be checked or upgraded."
+      note "Recovery does not need Homebrew: groundwork-shell-adopt --revert"
+      ;;
+    broken)
+      warn "'brew --prefix' failed or returned nothing — the Homebrew installation looks damaged. Try 'brew doctor'."
+      note "Recovery does not need Homebrew: groundwork-shell-adopt --revert"
+      ;;
+  esac
+  case "$GW_OWNERSHIP" in
+    owned)
+      ok "managed zsh: Homebrew owns it — $GW_MANAGED_ZSH ($(gw_managed_zsh_version)) -> $GW_RESOLVED_ZSH"
+      ;;
+    unowned)
+      # Neutral language, and NOT executed: path equality is not ownership, and
+      # this is exactly the binary a diagnostic must not run to identify.
+      warn "zsh candidate at $GW_MANAGED_ZSH does NOT resolve into Homebrew's zsh formula (resolves to ${GW_RESOLVED_ZSH:-unknown}) — ownership is not established. Reinstall with 'brew reinstall zsh'."
+      ;;
+    absent)
+      warn "managed zsh absent: $GW_MANAGED_ZSH — run 'chezmoi apply' (installs the Brewfile) or 'brew install zsh'."
+      ;;
+  esac
+
+  # --- registration ---
+  if [[ "$GW_OWNERSHIP" != "unknown" ]]; then
+    case "$GW_SHELLS_STATE" in
+      registered) note "registered in $GW_SHELLS_FILE" ;;
+      not-registered) warn "not in $GW_SHELLS_FILE — chsh will refuse it. Run 'groundwork-shell-adopt'." ;;
+      *) warn "$GW_SHELLS_FILE is unreadable, so registration is UNKNOWN (not the same as unregistered)." ;;
+    esac
+  fi
+
+  # --- login shell, gated on ownership: pointing at the expected path is not
+  # the same as that path being a verified Homebrew zsh. ---
+  if [[ -n "$GW_MANAGED_ZSH" && "$GW_LOGIN_SHELL" == "$GW_MANAGED_ZSH" ]]; then
+    if [[ "$GW_OWNERSHIP" == "owned" ]]; then
+      ok "login shell is the managed zsh"
+    else
+      warn "login shell points at $GW_MANAGED_ZSH, but that path is not currently a verified Homebrew zsh — your login shell is an unverified binary."
+    fi
+  elif [[ -n "$GW_LOGIN_SHELL" && ! -x "$GW_LOGIN_SHELL" ]]; then
+    warn "login shell points at a missing binary: $GW_LOGIN_SHELL — run 'groundwork-shell-adopt', or 'groundwork-shell-adopt --revert' to restore your previous shell."
+  elif [[ "$GW_LOGIN_STATE" == "ok" && "$GW_OWNERSHIP" != "unknown" ]]; then
+    warn "login shell is $GW_LOGIN_SHELL, not the managed zsh — run 'groundwork-shell-adopt' to adopt it."
+  fi
+
+  # --- is THIS terminal running it? (a login-shell change only affects new
+  # terminals — the thing everyone trips over). Also gated on ownership. ---
+  if [[ "$GW_OWNERSHIP" == "owned" && "$GW_LOGIN_SHELL" == "$GW_MANAGED_ZSH" && -n "$GW_PARENT_EXE" ]]; then
+    local parent_canonical
+    parent_canonical="$(gw_canonical_path "$GW_PARENT_EXE" 2>/dev/null || printf '%s' "$GW_PARENT_EXE")"
+    if [[ "$GW_PARENT_EXE" == "$GW_MANAGED_ZSH" || "$parent_canonical" == "$GW_RESOLVED_ZSH" ]]; then
+      ok "this terminal is running the managed zsh"
+    elif [[ "$GW_PARENT_STATE" == "path" ]]; then
+      note "this terminal is running $GW_PARENT_EXE, not the managed zsh; new terminals use it (or run: exec \"$GW_MANAGED_ZSH\" -l)."
+    else
+      note "this terminal reports '$GW_PARENT_EXE', but its executable path could not be verified; new terminals use the managed zsh."
+    fi
+  fi
+
+  # --- recovery path: what --revert would restore ---
+  case "$GW_PREV_STATE" in
+    recorded) ok "recovery shell intact: $GW_PREV_SHELL" ;;
+    missing-binary) warn "the recorded previous shell is missing: $GW_PREV_SHELL — pick one explicitly with 'groundwork-shell-adopt --revert-to <shell>'." ;;
+    *)
+      if [[ -n "$GW_MANAGED_ZSH" && "$GW_LOGIN_SHELL" == "$GW_MANAGED_ZSH" ]]; then
+        warn "no previous login shell recorded, so --revert has nothing to restore; use 'groundwork-shell-adopt --revert-to <shell>'."
+      fi
+      ;;
+  esac
+
+  # --- config and plugin manager: knowable with or without Homebrew ---
+  if [[ -r "$HOME/.zshrc" ]]; then
+    ok "Groundwork zsh config present: $HOME/.zshrc"
+  else
+    warn "$HOME/.zshrc is missing — run 'chezmoi apply'."
+  fi
+  # antidote is sourced, not a PATH binary. Include the Linuxbrew prefix and the
+  # non-Homebrew fallback so a broken brew does not hide a working plugin layer.
+  local antidote_found="" candidate
+  for candidate in "${GW_BREW_PREFIX:+$GW_BREW_PREFIX/share/antidote/antidote.zsh}" \
+    /opt/homebrew/share/antidote/antidote.zsh \
+    /usr/local/share/antidote/antidote.zsh \
+    /home/linuxbrew/.linuxbrew/share/antidote/antidote.zsh \
+    "$HOME/.local/share/antidote/antidote.zsh"; do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    antidote_found="$candidate"
+    break
+  done
+  if [[ -n "$antidote_found" ]]; then
+    ok "plugin manager available: antidote ($antidote_found)"
+  else
+    warn "antidote (plugin manager) not found — run 'chezmoi apply' to install the Brewfile."
+  fi
+}
+
+storage_section() {
+  heading "Storage"
+  note "curated read-only report of known developer-storage areas, not a full disk scan (use \`largest ~\` for discovery). Sizes are du measurements and can take a while on large directories."
+
+  # Warning thresholds are product policy, not incidental constants: named
+  # here, overridable for tests and local tuning, documented in
+  # specs/storage-hygiene.md.
+  local brew_warn_gib="${GROUNDWORK_STORAGE_BREW_WARN_GIB:-2}"
+  local pnpm_warn_gib="${GROUNDWORK_STORAGE_PNPM_WARN_GIB:-10}"
+  local npm_warn_gib="${GROUNDWORK_STORAGE_NPM_WARN_GIB:-5}"
+  [[ "$brew_warn_gib" =~ ^[0-9]+$ ]] || brew_warn_gib=2
+  [[ "$pnpm_warn_gib" =~ ^[0-9]+$ ]] || pnpm_warn_gib=10
+  [[ "$npm_warn_gib" =~ ^[0-9]+$ ]] || npm_warn_gib=5
+
+  # Bytes under a directory, or nothing when the observation fails — an
+  # unmeasurable size is reported as unavailable, never as empty. -H sizes a
+  # symlink argument's target (a generation reached through one) while never
+  # following symlinks inside the tree.
+  storage_dir_bytes() {
+    local blocks
+    [[ -d "$1" ]] || {
+      printf '0\n'
+      return 0
+    }
+    blocks="$(du -skH "$1" 2>/dev/null | awk 'NR == 1 {print $1}')"
+    [[ "$blocks" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$((blocks * 1024))"
+  }
+  storage_format_bytes() {
+    if [[ -z "$1" ]]; then
+      printf 'unavailable\n'
+      return 0
+    fi
+    awk -v bytes="$1" 'BEGIN {
+      split("B KiB MiB GiB TiB", unit, " ")
+      index_ = 1
+      while (bytes >= 1024 && index_ < 5) { bytes /= 1024; index_++ }
+      if (index_ == 1) printf "%d %s\n", bytes, unit[index_]
+      else printf "%.1f %s\n", bytes, unit[index_]
+    }'
+  }
+
+  local gib=$((1024 * 1024 * 1024))
+
+  # Homebrew download cache: rebuildable. update-all already ends every
+  # successful Homebrew phase with brew cleanup --prune=all, so a large cache
+  # here usually means the refresh has not run (or could not finish).
+  if command -v brew >/dev/null 2>&1; then
+    local brew_cache brew_bytes
+    brew_cache="$(brew --cache 2>/dev/null)" || brew_cache=""
+    if [[ -n "$brew_cache" ]]; then
+      brew_bytes="$(storage_dir_bytes "$brew_cache" || true)"
+      if [[ -z "$brew_bytes" ]]; then
+        # An unavailable measurement is never healthy: unknown is not small.
+        note "Homebrew cache: size unavailable (the measurement failed); threshold not evaluated."
+      elif [[ "$brew_bytes" -gt $((brew_warn_gib * gib)) ]]; then
+        warn "Homebrew cache: $(storage_format_bytes "$brew_bytes") (rebuildable; above the ${brew_warn_gib} GiB threshold) — cleanup recommended: run update-all, whose Homebrew phase ends with brew cleanup --prune=all."
+      else
+        ok "Homebrew cache: $(storage_format_bytes "$brew_bytes") (rebuildable; update-all keeps this pruned)"
+      fi
+    else
+      note "brew --cache failed; Homebrew cache size unknown — unknown is not the same as empty."
+    fi
+  else
+    note "Homebrew not installed; skipping its cache."
+  fi
+
+  # pnpm store generations: rebuildable. update-all prunes offline-resolved
+  # selected stores on an occasional cadence; whole-generation retirement
+  # remains owner-confirmed.
+  #
+  # Discovery and selection are separate questions. Discovery walks the known
+  # store roots WITHOUT executing pnpm, so 40 GiB of old stores is still found
+  # when the selected pnpm is uncached offline — or when pnpm was removed and
+  # its stores outlived it. Selection labeling then uses a network-disabled
+  # query when it can: Corepack selects pnpm PER REPOSITORY, so "selected"
+  # depends on the directory this doctor runs from, and a read-only doctor
+  # must never download a package manager as a side effect.
+  local pnpm_store="" pnpm_roots="" pnpm_root generation gen_canon gen_bytes
+  local pnpm_total=0 pnpm_unknown=0 pnpm_found=0 pnpm_seen=$'\n'
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm_store="$(COREPACK_ENABLE_NETWORK=0 pnpm store path 2>/dev/null)" || pnpm_store=""
+    if [[ -z "$pnpm_store" ]]; then
+      note "selected-for-this-directory store: unavailable (the selected pnpm is not cached offline, or the query failed); known store roots are still sized below."
+    fi
+  else
+    note "pnpm not installed; known store roots are still sized — old stores can outlive the tool."
+  fi
+  if [[ -n "$pnpm_store" ]]; then
+    # Canonicalize before comparing: an aliased or symlinked store path must
+    # not make the selected generation report as a second, unselected one.
+    pnpm_store="$(cd "$pnpm_store" 2>/dev/null && pwd -P || printf '%s' "$pnpm_store")"
+    note "working directory $PWD selects: $pnpm_store (a packageManager pin via Corepack when one applies, otherwise the launcher's pnpm; other generations may be selected by other repositories)."
+    if [[ -e "$pnpm_store" ]]; then
+      gen_bytes="$(storage_dir_bytes "$pnpm_store" || true)"
+      if [[ -z "$gen_bytes" ]]; then
+        pnpm_unknown=1
+        note "pnpm store $(basename "$pnpm_store") (selected here): size unavailable (the measurement failed)."
+      else
+        pnpm_total=$((pnpm_total + gen_bytes))
+        note "pnpm store $(basename "$pnpm_store") (selected here): $(storage_format_bytes "$gen_bytes")"
+      fi
+      pnpm_found=1
+    else
+      note "pnpm store $(basename "$pnpm_store") (selected here): not created yet."
+    fi
+    pnpm_seen="$pnpm_seen$pnpm_store"$'\n'
+  fi
+  # Known store roots: the selected store's parent only when the selected
+  # store follows the recognized v* generation layout (a custom store-dir
+  # must not make v* globbing misclassify unrelated sibling directories),
+  # plus the documented default locations.
+  pnpm_roots=$'\n'
+  if [[ -n "$pnpm_store" && "$(basename "$pnpm_store")" =~ ^v[0-9]+$ ]]; then
+    pnpm_roots="$pnpm_roots$(dirname "$pnpm_store")"$'\n'
+  fi
+  for pnpm_root in ${PNPM_HOME:+"$PNPM_HOME/store"} \
+    "$HOME/Library/pnpm/store" "$HOME/.local/share/pnpm/store"; do
+    [[ -d "$pnpm_root" ]] || continue
+    pnpm_root="$(cd "$pnpm_root" 2>/dev/null && pwd -P || printf '%s' "$pnpm_root")"
+    case "$pnpm_roots" in *$'\n'"$pnpm_root"$'\n'*) continue ;; esac
+    pnpm_roots="$pnpm_roots$pnpm_root"$'\n'
+  done
+  # Generations under each root, deduplicated by canonical path: an alias of
+  # an already-counted store is skipped; a symlink to a DISTINCT store is a
+  # real generation and is reported — skip duplicate targets, never symlinks
+  # as such.
+  while IFS= read -r pnpm_root; do
+    [[ -n "$pnpm_root" ]] || continue
+    for generation in "$pnpm_root"/v*; do
+      [[ -d "$generation" ]] || continue
+      gen_canon="$(cd "$generation" 2>/dev/null && pwd -P || printf '%s' "$generation")"
+      case "$pnpm_seen" in *$'\n'"$gen_canon"$'\n'*) continue ;; esac
+      pnpm_seen="$pnpm_seen$gen_canon"$'\n'
+      gen_bytes="$(storage_dir_bytes "$generation" || true)"
+      if [[ -z "$gen_bytes" ]]; then
+        pnpm_unknown=1
+        note "pnpm store $(basename "$generation"): size unavailable (the measurement failed)."
+        continue
+      fi
+      pnpm_found=1
+      pnpm_total=$((pnpm_total + gen_bytes))
+      note "pnpm store $(basename "$generation") (other generation): $(storage_format_bytes "$gen_bytes") — may be selected by another repository's packageManager; retire only after checking."
+    done
+  done <<<"$pnpm_roots"
+  if [[ "$pnpm_unknown" -eq 1 ]]; then
+    note "pnpm store total incomplete (a measurement failed); threshold not evaluated."
+  elif [[ "$pnpm_found" -eq 1 ]]; then
+    if [[ "$pnpm_total" -gt $((pnpm_warn_gib * gib)) ]]; then
+      warn "pnpm stores total $(storage_format_bytes "$pnpm_total") (rebuildable; above the ${pnpm_warn_gib} GiB threshold) — review cadence and unmatched generations with groundwork-cleanup."
+    else
+      ok "pnpm stores total $(storage_format_bytes "$pnpm_total") (rebuildable; update-all prunes resolved stores when due; review with groundwork-cleanup)"
+    fi
+  fi
+
+  # npm cache: self-healing per npm's own docs. update-all runs `npm cache
+  # verify` (validates and garbage-collects); a full `npm cache clean --force`
+  # is an explicit owner action. npm resolves EXACTLY as update-all resolves
+  # it — mise-managed npm first, PATH npm second, from $HOME — so this report
+  # sizes the same cache the refresh maintains, and names which provider
+  # answered. A failed path query stays unknown: a guessed ~/.npm must not be
+  # relabeled as the configured cache.
+  local npm_cache="" npm_provider="" npm_bytes
+  if command -v mise >/dev/null 2>&1 && (cd "$HOME" && mise which npm >/dev/null 2>&1); then
+    npm_provider="mise-managed npm"
+    npm_cache="$(cd "$HOME" && mise exec -- npm config get cache 2>/dev/null)" || npm_cache=""
+  elif command -v npm >/dev/null 2>&1; then
+    npm_provider="PATH npm ($(command -v npm))"
+    npm_cache="$(cd "$HOME" && npm config get cache 2>/dev/null)" || npm_cache=""
+  fi
+  if [[ -n "$npm_provider" ]]; then
+    if [[ -z "$npm_cache" ]]; then
+      note "npm cache path unavailable (npm config get cache failed via $npm_provider); threshold not evaluated."
+      if [[ -d "$HOME/.npm" ]]; then
+        note "the default ~/.npm exists at $(storage_format_bytes "$(storage_dir_bytes "$HOME/.npm" || true)") but was NOT verified as the active cache."
+      fi
+    elif [[ -d "$npm_cache" ]]; then
+      npm_bytes="$(storage_dir_bytes "$npm_cache" || true)"
+      if [[ -z "$npm_bytes" ]]; then
+        note "npm cache via $npm_provider ($npm_cache): size unavailable (the measurement failed); threshold not evaluated."
+      elif [[ "$npm_bytes" -gt $((npm_warn_gib * gib)) ]]; then
+        warn "npm cache via $npm_provider ($npm_cache): $(storage_format_bytes "$npm_bytes") (rebuildable; above the ${npm_warn_gib} GiB threshold) — update-all runs npm cache verify; for immediate full reclamation, npm cache clean --force clears npm's configured cache, deliberately."
+      else
+        ok "npm cache via $npm_provider ($npm_cache): $(storage_format_bytes "$npm_bytes") (rebuildable; update-all runs npm cache verify)"
+      fi
+    else
+      # A configured path that does not exist yet is a valid zero-state,
+      # distinct from a failed query — say so instead of dropping the line.
+      note "npm cache via $npm_provider ($npm_cache): not created yet."
+    fi
+  elif [[ -d "$HOME/.npm" ]]; then
+    note "no npm found; ~/.npm exists at $(storage_format_bytes "$(storage_dir_bytes "$HOME/.npm" || true)") but was not verified as an active cache."
+  fi
+
+  # Xcode support data: application-managed. Remove runtimes in Xcode
+  # Settings > Components; delete unavailable simulators via simctl. Old
+  # device-support symbols can still matter for debugging an older device,
+  # so this stays owner-confirmed — never delete ~/Library/Developer blindly.
+  local device_support="$HOME/Library/Developer/Xcode/iOS DeviceSupport"
+  local simulators="$HOME/Library/Developer/CoreSimulator"
+  if [[ -d "$device_support" ]]; then
+    note "Xcode iOS DeviceSupport: $(storage_format_bytes "$(storage_dir_bytes "$device_support" || true)") (application-managed) — review old versions in Finder; keep symbols for devices you still debug."
+  fi
+  if [[ -d "$simulators" ]]; then
+    note "Xcode simulators: $(storage_format_bytes "$(storage_dir_bytes "$simulators" || true)") (application-managed) — remove runtimes in Xcode Settings > Components; xcrun simctl delete unavailable"
+  fi
+
+  # A legacy nvm install: installed runtimes, not cache. Groundwork intends
+  # mise to own Node, but this section does not verify which manager the
+  # current shell actually resolves — that is --node-toolchain's job — so it
+  # names the intent without asserting the live state.
+  if [[ -d "$HOME/.nvm" ]]; then
+    warn "legacy runtime manager: ~/.nvm holds $(storage_format_bytes "$(storage_dir_bytes "$HOME/.nvm" || true)") of installed Node versions. Groundwork's intended Node owner: mise — confirm what actually owns Node here with groundwork-doctor --node-toolchain, then retire nvm only after checking shell init files and repos for nvm use."
+  fi
+
+  # Parallels VMs: user data, never Groundwork's to touch. Parallels ships
+  # its own supported reclaim workflow.
+  local parallels="$HOME/Parallels"
+  if [[ -d "$parallels" ]]; then
+    note "Parallels VMs: $(storage_format_bytes "$(storage_dir_bytes "$parallels" || true)") (user data) — shut the VM down, review snapshots, then use Parallels' Free Up Disk Space / Reclaim. Groundwork never touches VM files."
+  fi
+
+  note "project caches (.turbo, node_modules, dist, target) belong to each repository's own clean command; Docker has its own section and tidy commands."
+}
+
+section=""
+
+while (($#)); do
+  case "$1" in
+    --browser) section="browser" ;;
+    --docker) section="docker" ;;
+    --shell) section="shell" ;;
+    --runtimes) section="runtimes" ;;
+    --node-toolchain) section="node-toolchain" ;;
+    --karabiner) section="karabiner" ;;
+    --always-on-apps) section="always-on-apps" ;;
+    --storage) section="storage" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "groundwork-doctor: unknown option: $1" >&2
+      echo "Run 'groundwork-doctor --help' for usage." >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+echo "groundwork-doctor: read-only report; nothing is changed or deleted."
+
+case "$section" in
+  "")
+    # Storage is deliberately NOT part of the default run: its du measurements
+    # over VM bundles, simulator trees, and package stores can take minutes,
+    # and a routine health check must stay quick. Opt in with --storage.
+    shell_section
+    runtimes_section
+    node_toolchain_section
+    browser_section
+    karabiner_section
+    always_on_apps_section
+    docker_section
+    printf '\nRun groundwork-doctor --storage for the (slower) curated disk-usage report.\n'
+    ;;
+  shell) shell_section ;;
+  runtimes) runtimes_section ;;
+  node-toolchain) node_toolchain_section ;;
+  browser) browser_section ;;
+  karabiner) karabiner_section ;;
+  always-on-apps) always_on_apps_section ;;
+  docker) docker_section ;;
+  storage) storage_section ;;
+esac

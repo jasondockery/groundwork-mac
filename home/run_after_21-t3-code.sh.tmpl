@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# T3 Code publishes a checksum-verifying installer for macOS Apple Silicon and
+# Linux x86_64/ARM64. Intel macOS has a desktop app but no published CLI build.
+# Keep this in run_after so a transient network failure retries on apply.
+for brew_bin in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
+  [[ -x "$brew_bin" ]] && eval "$("$brew_bin" shellenv)" && break
+done
+unset brew_bin
+export PATH="$HOME/.local/bin:$PATH"
+if [[ "$(uname -s)" == Darwin && "$(uname -m)" == x86_64 ]]; then
+  exit 0
+fi
+# The desktop cask owns the app, but does not link or update a standalone CLI.
+# Reconcile that CLI on desktop Macs too, including earlier Stable installs.
+installer="$(mktemp)"
+trap 'rm -f "$installer"' EXIT
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+  -fsSL https://t3.codes/install.sh -o "$installer"
+deadline=timeout
+[[ "$(uname -s)" != Darwin ]] || deadline=gtimeout
+command -v "$deadline" >/dev/null || {
+  echo "GNU timeout is required for the T3 Code installer; apply the Brewfile first." >&2
+  exit 1
+}
+echo "Installing T3 Code Nightly (five-minute deadline; installer output follows)."
+env -u T3CODE_VERSION T3CODE_CHANNEL=nightly "$deadline" --kill-after=5s 300 sh "$installer"
+installed_t3="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}/t3"
+[[ -x "$installed_t3" ]] || { echo "The official installer did not create $installed_t3." >&2; exit 1; }
+hash -r
+effective_t3="$(command -v t3 || true)"
+if [[ -z "$effective_t3" || ! "$effective_t3" -ef "$installed_t3" ]]; then
+  printf 'T3 command shadowing or missing PATH entry: effective=%s, installed=%s\n' "${effective_t3:-none}" "$installed_t3" >&2
+  printf 'Add %s to the front of PATH in your shell configuration, start a fresh shell, and reapply. Existing separately managed commands were preserved.\n' "$(dirname "$installed_t3")" >&2
+  exit 1
+fi
+t3_version="$("$deadline" --kill-after=5s 15 "$installed_t3" --version)"
+[[ "$t3_version" == *-nightly.* ]] || { echo "Expected T3 Code Nightly, received: $t3_version" >&2; exit 1; }

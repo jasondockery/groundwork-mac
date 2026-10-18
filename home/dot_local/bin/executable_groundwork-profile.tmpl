@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Show and change this environment's release profile.
+#
+# The profile answers "how new should this machine's applications be", and
+# update-all reads it instead of accumulating flags. See
+# specs/environment-profiles-and-release-posture.md.
+#
+# `set` is the narrow power-user shortcut into groundwork-configure's guarded
+# settings transaction. Confirming it applies the selected desired state now;
+# update-all owns later upgrades and maintenance.
+#
+# Arguments are parsed before ANY side effect (skills/safe-mutating-cli): help
+# and invalid input must never reach chezmoi.
+
+usage() {
+  cat <<'EOF'
+groundwork-profile — show or change this environment's release profile.
+
+Usage:
+  groundwork-profile show            Print the active profile and its sources.
+  groundwork-profile set <posture>   Record one release-posture preference
+                                     through groundwork-configure's preview and
+                                     confirmation transaction.
+  groundwork-profile edit            Open the chezmoi config to edit answers.
+  groundwork-profile --help
+
+Postures:
+  current   Latest stable release of each application. The default.
+  preview   Pre-release channel where an application has one (for the managed
+            browser: Chrome Beta, with stable Chrome retained as a fallback).
+            Expect occasional breakage.
+
+Fixed in every profile, and not settable here:
+  - AI tools are kept current with no intentional delay.
+  - Checksum and provenance policy is unchanged by posture.
+  - pnpm, Renovate, and mise release-age floors still apply; they address
+    supply-chain risk, not staleness preference.
+  - Repository version pins always win over machine tools.
+  - The operating system channel is recorded, never changed by Groundwork.
+EOF
+}
+
+command=""
+argument=""
+for value in "$@"; do
+  case "$value" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      printf 'groundwork-profile: unknown option: %s\n' "$value" >&2
+      printf "Run 'groundwork-profile --help' for usage.\n" >&2
+      exit 64
+      ;;
+    *)
+      if [[ -z "$command" ]]; then
+        command="$value"
+      elif [[ -z "$argument" ]]; then
+        argument="$value"
+      else
+        printf 'groundwork-profile: unexpected argument: %s\n' "$value" >&2
+        exit 64
+      fi
+      ;;
+  esac
+done
+
+case "$command" in
+  show | set | edit) ;;
+  "")
+    usage
+    exit 64
+    ;;
+  *)
+    printf 'groundwork-profile: unknown command: %s\n' "$command" >&2
+    printf "Run 'groundwork-profile --help' for usage.\n" >&2
+    exit 64
+    ;;
+esac
+
+if [[ "$command" == "set" ]]; then
+  case "$argument" in
+    current | preview) ;;
+    "")
+      echo "groundwork-profile: set needs a posture: current or preview" >&2
+      exit 64
+      ;;
+    *)
+      printf 'groundwork-profile: unknown posture: %s (expected current or preview)\n' "$argument" >&2
+      exit 64
+      ;;
+  esac
+fi
+
+# Values rendered from the answers chezmoi already holds, so this command never
+# re-derives policy that the template owns.
+# Role is a STORED field, not derived from the work boolean: a bool cannot
+# express personal / managed / disposable. `work` only seeds its default.
+role={{ if hasKey . "environment_role" }}{{ .environment_role | quote }}{{ else if .work }}"managed"{{ else }}"personal"{{ end }}
+preset={{ if hasKey . "profile_preset" }}{{ .profile_preset | quote }}{{ else }}"legacy"{{ end }}
+posture={{ if hasKey . "release_posture" }}{{ .release_posture | quote }}{{ else }}"current"{{ end }}
+multiplexer={{ includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim | quote }}
+headless={{ if .headless }}true{{ else }}false{{ end }}
+xcode={{ if and (hasKey . "xcode") .xcode }}true{{ else }}false{{ end }}
+stored_beta={{ if and (hasKey . "beta") .beta }}true{{ else }}false{{ end }}
+browser="Google Chrome stable"
+browser_fallback="none"
+if [[ "$headless" == "true" ]]; then
+  browser="none (headless)"
+elif [[ "$posture" == "preview" ]]; then
+  browser="Google Chrome Beta"
+  browser_fallback="Google Chrome stable"
+fi
+
+# The system channel is DETECTED and reported, never set. A deliberate OS beta
+# should not look like accidental drift, and Groundwork must never enroll a
+# machine in one.
+detect_system_channel() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "not-applicable"
+    return
+  fi
+  local product build
+  product="$(sw_vers -productVersion 2>/dev/null || echo unknown)"
+  build="$(sw_vers -buildVersion 2>/dev/null || echo unknown)"
+  # Apple's prerelease builds carry a lowercase letter suffix after the build
+  # train (for example 25A5279m); shipping builds do not.
+  if [[ "$build" =~ [a-z]$ ]]; then
+    printf 'prerelease (%s, build %s)\n' "$product" "$build"
+  else
+    printf 'release (%s, build %s)\n' "$product" "$build"
+  fi
+}
+
+case "$command" in
+  show)
+    echo "Groundwork environment profile"
+    echo
+    printf '  Bootstrap seed    %s\n' "$preset"
+    printf '  Role              %s\n' "$role"
+    printf '  Release posture   %s\n' "$posture"
+    printf '  Multiplexer       %s\n' "$multiplexer"
+    printf '  Xcode             %s\n' "$([[ "$xcode" == "true" ]] && echo enabled || echo disabled)"
+    if [[ "$xcode" == "true" && "$stored_beta" == "true" ]]; then
+      printf '  Xcode beta        enabled\n'
+    elif [[ "$xcode" != "true" && "$stored_beta" == "true" ]]; then
+      printf '  Xcode beta        inactive (stored enabled)\n'
+    else
+      printf '  Xcode beta        disabled\n'
+    fi
+    printf '  Desktop apps      %s\n' "$([[ "$headless" == "true" ]] && echo "no (headless)" || echo yes)"
+    printf '  Managed browser   %s\n' "$browser"
+    [[ "$browser_fallback" == "none" ]] || printf '  Browser fallback  %s\n' "$browser_fallback"
+    printf '  System channel    %s\n' "$(detect_system_channel)"
+    echo
+    echo "Always current, regardless of posture:"
+    echo "  AI tools (no intentional release delay)"
+    if [[ "$role" == "managed" ]]; then
+      echo "  ...subject to device policy, which outranks this profile."
+      echo "  Groundwork reports a blocked update; it never works around policy."
+    fi
+    echo
+    echo "Unchanged by posture:"
+    echo "  checksum and provenance policy"
+    echo "  pnpm, Renovate, and mise release-age floors"
+    echo "  repository version pins"
+    echo
+    if [[ "$headless" == "true" ]]; then
+      echo "This machine has no desktop apps, so posture has no effect here."
+    elif [[ "$posture" == "current" ]]; then
+      echo "Switch with: groundwork-profile set preview"
+    else
+      echo "Switch with: groundwork-profile set current"
+    fi
+    ;;
+
+  set)
+    if [[ "$argument" == "$posture" ]]; then
+      printf 'Release posture is already %s. Nothing to change.\n' "$posture"
+      exit 0
+    fi
+    configure_command="$HOME/.local/bin/groundwork-configure"
+    [[ -x "$configure_command" ]] || {
+      echo "groundwork-profile: managed helper is missing at $configure_command; run 'chezmoi apply' to restore it." >&2
+      exit 1
+    }
+    exec "$configure_command" --release-posture "$argument"
+    ;;
+
+  edit)
+    command -v chezmoi >/dev/null 2>&1 || {
+      echo "groundwork-profile: chezmoi is not on PATH." >&2
+      exit 1
+    }
+    # profile_preset is compatibility/history after bootstrap; it is not a live
+    # master switch for independent role and posture fields.
+    echo "Opening the chezmoi config. Change release_posture or environment_role"
+    echo "independently; profile_preset records the original bootstrap seed."
+    chezmoi edit-config
+    ;;
+esac

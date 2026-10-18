@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Most &quot;it&#x27;s broken&quot; moments after a fresh install are one of a dozen known things — a permission macOS won&#x27;t let a script grant, a step that needs a restart…">
+<title>Troubleshooting · Groundwork</title>
+<meta property="og:site_name" content="Groundwork">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jasondockery.github.io/groundwork/troubleshooting.html">
+<meta property="og:title" content="Troubleshooting · Groundwork">
+<meta property="og:description" content="Most &quot;it&#x27;s broken&quot; moments after a fresh install are one of a dozen known things — a permission macOS won&#x27;t let a script grant, a step that needs a restart…">
+<meta property="og:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Troubleshooting · Groundwork">
+<meta name="twitter:description" content="Most &quot;it&#x27;s broken&quot; moments after a fresh install are one of a dozen known things — a permission macOS won&#x27;t let a script grant, a step that needs a restart…">
+<meta name="twitter:image" content="https://jasondockery.github.io/groundwork/assets/social-card.png">
+<link rel="canonical" href="https://jasondockery.github.io/groundwork/troubleshooting.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("fg-theme");
+    if (!theme && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) theme = "light";
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="topbar">
+  <span class="name">Groundwork</span>
+  <button class="icon-btn" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Open navigation">☰ menu</button>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="layout">
+  <aside id="site-sidebar" class="sidebar">
+    <div class="brand-row">
+      <a class="brand" href="index.html">
+      <span class="mark">AI-native</span>
+      <span class="name">Groundwork</span>
+      </a>
+      <a class="repo-link" href="https://github.com/jasondockery/groundwork" target="_blank" rel="noopener" aria-label="View Groundwork on GitHub">GitHub</a>
+      <button class="icon-btn nav-close" data-nav-toggle aria-controls="site-sidebar" aria-expanded="false" aria-label="Close navigation">close menu</button>
+    </div>
+    <nav class="site-nav" aria-label="Documentation">
+    <section class="nav-group">
+      <h2 class="nav-heading">Start here</h2>
+      <a href="index.html">Overview</a>
+      <a href="why.html">Why Groundwork</a>
+      <a href="path.html">The path</a>
+      <a href="agentic-engineering.html">Vibe &rarr; agentic</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="practice.html">Practice plan</a>
+      <a href="groundwork-twelve.html">Groundwork Twelve</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Set up</h2>
+      <a href="setup.html">Setup &amp; chezmoi</a>
+      <a href="platforms.html">Platforms</a>
+      <a href="customizing.html">Customizing</a>
+      <a href="development.html">Development</a>
+      <a href="installed.html">What&apos;s installed</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Foundations</h2>
+      <a href="command-line.html">Command line &amp; Unix</a>
+      <a href="shell.html">Shell &amp; CLI</a>
+      <a href="herdr.html">Herdr</a>
+      <a href="tmux.html">tmux</a>
+      <a href="tmux-repository-windows.html">tmux repo windows</a>
+      <a href="neovim.html">Neovim</a>
+      <a href="git.html">Git</a>
+      <a href="lazygit.html">lazygit</a>
+      <a href="data.html">Data &amp; storage</a>
+      <a href="editors-ai.html">Editors &amp; AI</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Daily workflow</h2>
+      <a href="workflow.html">Everyday workflow</a>
+      <a href="repo-navigation.html">Repo navigation</a>
+      <a href="new-project.html">Starting a project</a>
+      <a href="knowledge.html">Knowledge base</a>
+      <a href="dependencies.html">Dependencies</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Directing agents</h2>
+      <a href="agents.html">AI agents &amp; rules</a>
+      <a href="worktrees.html">Worktrees &amp; parallel agents</a>
+      <a href="specs.html">Specs &amp; targets</a>
+      <a href="skills-playbooks.html">Skills &amp; playbooks</a>
+      <a href="ai-budget.html">Know your AI budget</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">AI tools</h2>
+      <a href="claude.html">Claude &amp; Claude Code</a>
+      <a href="codex.html">Codex UI &amp; CLI</a>
+      <a href="gpt.html">GPT &amp; ChatGPT</a>
+      <a href="glm.html">GLM &amp; open models</a>
+      <a href="grok.html">Grok &amp; Grok Build</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Interest tracks</h2>
+      <a href="game-dev.html">FPS &middot; Browser</a>
+      <a href="game-dev-unity.html">FPS &middot; Unity</a>
+      <a href="game-dev-learn.html">FPS &middot; Learn dev</a>
+      <a href="web-dev.html">Web &amp; sites</a>
+      <a href="app-dev.html">Apps</a>
+      <a href="gen-media.html">Image &amp; video</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Mac desktop</h2>
+      <a href="macos.html">macOS desktop</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a href="apps.html">Apps &amp; browsers</a>
+    </section>
+    <section class="nav-group">
+      <h2 class="nav-heading">Reference</h2>
+      <a href="cheatsheet.html">Cheat sheet</a>
+      <a href="commands.html">Command catalog</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="resources.html">Resource library</a>
+      <a href="troubleshooting.html" class="active">Troubleshooting</a>
+    </section>
+    </nav>
+    <button class="icon-btn theme-toggle" data-theme-toggle><span data-theme-label>◑ Latte</span></button>
+  <p class="sidebar-meta">Built by <a href="https://www.linkedin.com/in/jasondockery/" target="_blank" rel="noopener">Jason Dockery</a></p>
+  </aside>
+
+  <main id="main" class="main">
+    <div class="content">
+      <p class="eyebrow">When something's not right</p>
+      <h1>Troubleshooting: the calm fixes for the usual snags.</h1>
+      <p class="lead">Most "it's broken" moments after a fresh install are one of a dozen known things — a permission macOS won't let a script grant, a step that needs a restart, a tool that just needs re-applying. Here's the map, roughly in the order you'll hit them.</p>
+      <p>The inclusion rule is a supported-path failure a learner can encounter during bootstrap, <code>chezmoi update</code>, <code>update-all</code>, profile changes, or daily terminal use. Internal maintainer failures belong beside their validation command or in the <a href="https://github.com/jasondockery/groundwork/blob/main/PLAYBOOK.md">playbook</a>; speculative failures are not presented as known fixes.</p>
+      <p class="muted">A few supported-path refusals are deliberately not listed below because the command's own message is the complete, current fix: <code>groundwork-configure</code>'s error paths (missing config, non-interactive terminal, lock contention), the WSL1/unverifiable-WSL refusal (documented on <a href="platforms.html">Platforms</a>), <code>update-all</code>'s non-interactive stop when drift needs answers, and its refusal to run a locally edited runner. Each prints exactly what to run next; duplicating that here would only drift.</p>
+
+      <div class="callout tip">
+        <span class="label">The one move that fixes most things</span>
+        <p>Before anything else: preview and re-apply the setup. <code>chezmoi diff</code> shows what's out of sync, <code>chezmoi apply</code> puts managed files back, and <code>chezmoi update</code> pulls the latest first. The repo is the source of truth for managed files, so start there before hand-editing generated config.</p>
+      </div>
+
+      <div class="callout warn">
+        <span class="label">Want out?</span>
+        <p>The first apply creates a focused backup under <code>~/.local/state/groundwork/backups/latest</code>. Run <code>groundwork-restore</code> to restore the backed-up managed files and macOS defaults. It does not uninstall apps or undo Homebrew upgrades.</p>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Quick triage</h2>
+      <table class="keytable">
+        <tr><td><strong>A command isn't found</strong></td><td>The shell hasn't picked up a newly-installed tool. Run <code>exec zsh</code> (reloads the shell) or open a new tab</td></tr>
+        <tr><td><strong>A config edit did nothing</strong></td><td>You edited the file in your home folder, not the repo. Edit with <code>chezmoi edit</code>, or your change gets overwritten on next apply — see <a href="setup.html">Setup</a></td></tr>
+        <tr><td><strong>Yazi config blocks apply</strong></td><td>Groundwork found an existing custom, changed, redirected, symlinked, or non-regular <code>yazi.toml</code> and left it untouched. Run <code>groundwork-yazi-config status</code>, use <code>groundwork-yazi-config diff</code> and <code>groundwork-yazi-config edit</code> to reconcile wanted settings in the exact source, or move an unowned file aside before applying. <code>groundwork-yazi-config remove --yes</code> removes only exact unchanged Groundwork-owned bytes.</td></tr>
+        <tr><td><strong>Herdr config blocks apply</strong></td><td>Groundwork found an unowned, changed, redirected, symlinked, or non-regular <code>~/.config/herdr/config.toml</code> and left it untouched. Run <code>groundwork-herdr-config status</code> and <code>diff</code>, then merge wanted settings through <code>groundwork-herdr-config edit</code> or move an unowned file aside. Removal deletes only exact receipt-matching Groundwork bytes.</td></tr>
+        <tr><td><strong>Icons show as boxes □</strong></td><td>The terminal font isn't the Nerd Font. Groundwork installs <em>JetBrainsMono Nerd Font</em>; re-run <code>chezmoi apply</code>, restart Ghostty, and check with <code>ghostty +show-config | grep -i font-family</code></td></tr>
+        <tr><td><strong>Ghostty opens in an old project</strong></td><td>A fresh app launch should open in <code>~</code>. This setup disables Ghostty window-state restore and lets tmux own project restoration. Re-run <code>chezmoi apply</code>, quit Ghostty, and launch it again</td></tr>
+        <tr><td><strong>A tool looks unconfigured</strong></td><td>It needs its one-time setup step below (tmux plugins, Neovim sync, Karabiner permission…)</td></tr>
+        <tr><td><strong>Git keeps asking to log in</strong></td><td>An auth issue, not a setup bug — jump to <a href="#git">Git access</a></td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Install &amp; bootstrap</h2>
+      <h3>The local docs look older than the public site</h3>
+      <p>Every Groundwork setup has the complete site locally inside its active source checkout; a <code>file://</code> URL is not a separately installed copy. Run <code>groundwork-docs</code> instead of opening a remembered path. It resolves the checkout chezmoi is actually using, prints its revision, and opens the index on macOS.</p>
+      <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">local-docs</span></div><pre><code><span class="prompt">$ </span>source="$(chezmoi source-path)"
+<span class="prompt">$ </span>if [ "$(basename "$source")" = home ]; then repo="$(dirname "$source")"; else repo="$source"; fi
+<span class="prompt">$ </span>git -C "$repo" status --short --branch
+<span class="prompt">$ </span>git -C "$repo" log -1 --oneline
+<span class="prompt">$ </span>grep -n 'game-dev-learn' "$repo/docs/practice.html"
+<span class="prompt">$ </span>groundwork-docs</code></pre></div>
+      <p>A current checkout contains the <em>FPS · Learn dev</em> link. If <code>grep</code> finds it but the browser does not show it, use <kbd>⌘</kbd><kbd>Shift</kbd><kbd>R</kbd>. If it is absent, the active source did not reach current <code>main</code>; run <code>update-all</code> and read its synchronization error. Do not delete an older <code>~/.local/share/chezmoi</code> checkout until <code>chezmoi source-path</code> proves it is inactive.</p>
+
+      <h3><code>pnpm add -g</code> cannot find a global bin directory</h3>
+      <p>Groundwork intentionally does not use pnpm's global-tool lane. Mise owns Node and personal cross-project Node CLIs; Corepack owns pnpm per repository. Do not run <code>pnpm setup</code>, because it edits shell configuration that Groundwork manages.</p>
+      <p>Inside a project, prefer a reproducible dev dependency: <code>pnpm add -D typescript</code>, then <code>pnpm exec tsc --version</code>. The package is <code>typescript</code>, but the executable is <code>tsc</code>. For a genuine personal cross-project CLI, run <code>mkdir -p "$HOME/.config/mise/conf.d"</code>, then <code>mise use --minimum-release-age 5d --path "$HOME/.config/mise/conf.d/90-personal-tools.toml" npm:typescript@latest</code>. Diagnose ownership without changing it with <code>groundwork-doctor --node-toolchain</code>.</p>
+      <h3>Homebrew says the Xcode license is not accepted</h3>
+      <p>Fix the first error, then re-run <code>bootstrap-mac.sh</code>. If Homebrew stops at the Xcode license check, the later <code>gh: command not found</code> or <code>chezmoi: command not found</code> messages are just follow-on errors because those tools never installed.</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">xcode-license</span></div>
+        <pre><code><span class="prompt">$ </span>sudo xcodebuild -license accept
+<span class="prompt">$ </span>bash ~/code/groundwork-mac/bootstrap-mac.sh</code></pre>
+      </div>
+      <p>Homebrew also requires the current macOS user to be an Administrator. If <code>sudo -v</code> fails, add that user as an admin first or run the install from an admin account.</p>
+
+      <h3>You cannot find Xcode after setup</h3>
+      <p>Groundwork always handles Apple's Command Line Tools, not full Xcode by default. If <code>xcode-select -p</code> prints <code>/Library/Developer/CommandLineTools</code>, the terminal build layer is present. Full Xcode installs only when you answer yes to the Xcode setup prompt, and even then the App Store install can fail if you are not signed in or Xcode has never been obtained on that Apple Account. If you need it, get Xcode from the Mac App Store, open it once, then run <code>sudo xcode-select -s /Applications/Xcode.app/Contents/Developer</code>.</p>
+
+      <h3>Bootstrap URL returns 404</h3>
+      <p>A <code>404</code> from <code>raw.githubusercontent.com</code> usually means the branch name, path, or URL is wrong, or GitHub is temporarily unreachable. <code>jasondockery/groundwork-mac</code> is private, so an anonymous raw URL for this repo will fail. Clone it with SSH after the GitHub account can read the repo, then run <code>bootstrap-mac.sh</code> from that checkout. The older public repository <code>jasondockery/groundwork</code> is the published snapshot, not this maintained tree.</p>
+
+      <h3>Homebrew skipped or failed a package</h3>
+      <p>On a brand-new or beta macOS, Homebrew sometimes has no pre-built bottle for a formula and either builds it slowly from source or skips it. <code>brew bundle</code> deliberately continues past failures, so the install finishes — you just re-run the stragglers:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">brew</span></div>
+        <pre><code><span class="prompt">$ </span>brew bundle --file=~/.config/homebrew/Brewfile   <span class="comment"># retry everything (idempotent)</span>
+<span class="prompt">$ </span>brew install &lt;formula&gt;                            <span class="comment"># or just the one that failed</span>
+<span class="prompt">$ </span>brew doctor                                       <span class="comment"># diagnose a broken install</span></code></pre>
+      </div>
+      <div class="callout note">
+        <span class="label">The setup scripts retry themselves</span>
+        <p>The install scripts are written to be re-run safely: anything that failed (a network blip, a tool that wasn't ready) is picked up on the next <code>chezmoi apply</code>, and steps that already succeeded are skipped. So a clean re-apply is the right first response to a half-finished install.</p>
+      </div>
+
+      <h3>Downloads fail with <code>curl: (92)</code> or the fetch stalls</h3>
+      <p>Repeated <code>HTTP/2 stream was not closed cleanly: PROTOCOL_ERROR</code> failures across several vendors usually point to the connection — a VPN, proxy, travel router, or guest Wi-Fi — though a vendor outage or a local <code>~/.curlrc</code> can look the same; it is rarely a broken setup. When downloads fail, the update re-fetches just the failed ones, one at a time with backoff, and leaves everything that succeeded alone. If a large parallel fetch stalls after a download error, pressing <kbd>Ctrl</kbd><kbd>C</kbd> and re-running <code>update-all</code> is safe in the sense that installed packages stay installed and completed downloads are normally cached — but the rerun repeats the normal update phases rather than resuming mid-fetch, so skim the final output before retrying.</p>
+
+      <h3><code>update-all</code> reports pending package-manager maintenance</h3>
+      <p>A maintenance failure does not roll back upgrades that already completed. Groundwork records every pending stage and keeps the shell reminder active until a later run repairs it. Start with the normal command; use the maintenance-only forms when you are diagnosing or repairing that lane:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">maintenance repair</span></div>
+        <pre><code><span class="prompt">$ </span>update-all                              <span class="comment"># normal retry; pending pnpm overrides cadence</span>
+<span class="prompt">$ </span>groundwork-cleanup                      <span class="comment"># read-only report, including every pending stage</span>
+<span class="prompt">$ </span>groundwork-cleanup --yes                <span class="comment"># run due supported maintenance only</span>
+<span class="prompt">$ </span>groundwork-cleanup --yes --force        <span class="comment"># exceptional override: ignore pnpm cadence</span></code></pre>
+      </div>
+      <p>If Homebrew, npm, pnpm, or the maintenance helper was intentionally removed, an old reminder cannot prove the omitted cleanup completed. Acknowledge that one record explicitly with <code>groundwork-cleanup --yes --clear-pending &lt;homebrew|npm|pnpm|maintenance-helper&gt;</code>. That command clears only Groundwork&apos;s reminder, runs no package-manager operation, and preserves a timestamped note in <code>~/.local/state/groundwork/update-all-pending-cleared.log</code>.</p>
+
+      <h3><code>update-all</code> shows Current, Review, or Warning</h3>
+      <p>The final receipt uses Groundwork&apos;s meaning, not an upstream tool&apos;s choice of severity word. <strong>Current</strong> is a successful no-change result, <strong>Updated</strong> means the run changed managed state, <strong>Deferred</strong> waited for policy such as the five-day maturity floor, <strong>Skipped</strong> names an intentionally unattempted lane, and <strong>Review</strong> is an owner decision such as retiring an unmatched pnpm store generation. <strong>Warning</strong> remains an unexpected non-fatal condition, while <strong>Failed</strong> and <strong>Pending repair</strong> withhold a fresh success timestamp.</p>
+      <p>Homebrew itself prefixes some ordinary no-change messages with <code>Warning:</code>. Groundwork collapses only the exact known <code>already installed</code> and <code>latest version is already installed</code> shapes into the Current count. It never broadly filters warning lines: unfamiliar wording stays in the transcript and is counted in the final Warning section. Detailed streams remain at <code>~/.local/state/groundwork/logs/homebrew-bundle-latest.log</code> and <code>~/.local/state/groundwork/logs/homebrew-upgrade-latest.log</code>; terminal-only color and cursor-control bytes are removed from the saved copy, not from the live terminal.</p>
+
+      <h3>A Homebrew cask upgrade looks quiet or asks for a password</h3>
+      <p><code>chezmoi apply</code> installs missing Brewfile entries but does not request routine upgrades of existing packages; Homebrew may still update a dependency required by a newly installed entry. <code>update-all</code> upgrades ordinary managed casks after inspecting one exact Homebrew metadata snapshot. A self-updating cask, or one whose replacement removes launchd services or privileged helper files, is reported as <strong>Review</strong> with an owner-run command instead of entering that replacement automatically. Docker Desktop is currently in both categories.</p>
+      <p>For an owner-run cask upgrade, Groundwork gives Homebrew a real terminal instead of replaying its output through an ordinary pipe. Cursor updates stay aligned and password prompts remain visible. Quit the named app first, run the exact command from the Review output, and keep the terminal available for a password or macOS dialog.</p>
+      <p>If an older Groundwork run is already quiet inside a cask replacement, press <kbd>Ctrl</kbd>+<kbd>C</kbd> once. The incomplete transaction stays pending and does not replace the previous success timestamp. Inspect from a second terminal before retrying:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">inspect a quiet cask replacement</span></div>
+        <pre><code><span class="prompt">$ </span>ps -axo pid,ppid,%cpu,etime,state,command | rg 'chezmoi|brew|docker|hdiutil|installer|osascript|sudo'</code></pre>
+      </div>
+      <p>For Docker Desktop, quit Docker, check the installed cask version with <code>brew list --cask --versions docker-desktop</code>, then use <code>brew upgrade --cask --require-sha docker-desktop</code>. Reopen Docker and run <code>docker version</code> before rerunning <code>update-all</code>. Do not use <code>--zap</code> as a generic recovery step; it may remove application data or preferences.</p>
+
+      <h3>A Mac App Store update asks for a password or runs for a long time</h3>
+      <p><code>mas update</code> requires root privileges. Groundwork accepts the reviewed <code>mas</code> 7.x JSON-object stream and uses <code>outdated --json --inaccurate</code> so every reported candidate remains bound to its exact App Store ID and installed version even when its name contains parentheses. Groundwork does not use the side-effecting accurate probe for inventory; the receipt claims only what the safe query reported. In a real interactive <code>update-all</code> terminal, Groundwork names the exact app and ID, runs a visible foreground <code>sudo -v</code> authorization step under a separate bounded watchdog, and only then starts the non-prompting update under its own process group. Large apps such as Xcode may legitimately run for many minutes, so the 30-minute per-app deadline is a safety backstop rather than a progress estimate; elapsed notices continue to name the app. <kbd>Ctrl</kbd>+<kbd>C</kbd> cancels the owned update tree. A redirected, CI, or cron-style run never asks for a password: it records the app as action-required, preserves the prior complete-update timestamp, continues safe independent lanes, and prints the exact interactive command.</p>
+      <p>Every invocation preserves an immutable maintenance receipt. If the optional post-update ChatGPT action center runs, its separate receipt carries the same invocation ID and the exact filename and SHA-256 of that maintenance receipt. A failed optional action therefore cannot rewrite a successful maintenance result, and a receipt-publication failure is itself explicit.</p>
+
+      <h3>update-all says no Mac App Store apps are installed</h3>
+      <p><code>mas</code> finds installed App Store apps through Spotlight&apos;s index rather than by reading <code>/Applications</code> directly, so an incomplete index looks exactly like an empty App Store library. When <code>mas</code> reports nothing installed, Groundwork says so once and checks no further: there is nothing an outdated list could be compared against, and asking again only repeats the same warnings. <code>mas</code> keeps its own explanation, which names each app it could not resolve, in <code>~/.local/state/groundwork/logs/mac-app-store-latest.log</code>. If you do have App Store apps, index them and run <code>update-all</code> again.</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">index installed apps for mas</span></div>
+        <pre><code><span class="prompt">$ </span>mdimport /Applications
+<span class="prompt">$ </span>mas list
+<span class="prompt">$ </span>update-all</code></pre>
+      </div>
+      <p>Indexing runs in the background and can take a few minutes on a large <code>/Applications</code>. Until it finishes, Groundwork reports the Mac App Store lane as <code>no-items-observed</code> rather than claiming your App Store apps are current.</p>
+
+      <h3>Homebrew finds an existing app inside the Caskroom</h3>
+      <p>An interrupted cask operation can leave an old app inside Homebrew&apos;s Caskroom. If the upgrade prints <code>Error: ... already an App at .../Caskroom/...</code> and then purges the new version, Groundwork reports the failed cask separately from warnings, keeps the update pending, and exits nonzero. It does not remove or reinstall the app automatically. Run the cask-specific commands Groundwork prints after reviewing the name:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">repair a half-installed cask</span></div>
+        <pre><code><span class="prompt">$ </span>brew remove --force --cask &lt;cask&gt;
+<span class="prompt">$ </span>brew install --cask &lt;cask&gt;
+<span class="prompt">$ </span>brew list --cask --versions &lt;cask&gt;
+<span class="prompt">$ </span>update-all</code></pre>
+      </div>
+      <p>This recovery does not use <code>--zap</code>; application data and preferences remain outside Groundwork&apos;s repair scope.</p>
+
+      <h3>Homebrew warns: "The following taps are not trusted"</h3>
+      <p>Homebrew now requires you to explicitly trust third-party taps before it will use their formulae and casks — a supply-chain protection, and the taps it lists are almost always ones <em>you</em> (or a tool you ran) added. Groundwork adds exactly one, <code>bjarneo/cliamp</code>, on personal machines only, for the cliamp terminal music player that ships nowhere else; the Brewfile names it and states the tradeoff, and validation rejects any other tap. Everything else Groundwork installs comes from Homebrew core and cask. Ignore the warning and those taps stay inert. To keep using something from one, prefer trusting just the formulae you actually use over whole-tap trust, which also covers everything the tap publishes in the future:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">tap trust</span></div>
+        <pre><code><span class="prompt">$ </span>brew trust --formula hashicorp/tap/terraform   <span class="comment"># narrow: one formula</span>
+<span class="prompt">$ </span>brew untap someuser/sometap                     <span class="comment"># or drop a tap you no longer use</span></code></pre>
+      </div>
+
+      <h3>An optional package fails: "Your Xcode is too outdated"</h3>
+      <p>You may see <code>Your Xcode (26.6) at /Applications/Xcode.app is too outdated. Please update to Xcode 27.0 (or delete it)</code> while cliamp installs. <strong>This does not fail your update.</strong> cliamp lives in <code>Brewfile.optional</code>, which runs only after every required package has installed and whose failures are reported rather than fatal. Groundwork retries it on the next apply, so it installs by itself once the cause clears and you need do nothing.</p>
+      <p>Almost everything Groundwork installs arrives as a prebuilt bottle, which needs no compiler. cliamp's tap publishes none, so Homebrew treats it as a source build even though its install step only copies a released binary — and a macOS source build requires developer tools Homebrew accepts for the macOS you are running. This is not specific to cliamp or to a beta macOS: any formula without a bottle hits it whenever your installed Xcode is older than the minimum for your macOS version, which is common right after a major macOS upgrade.</p>
+      <p>Check what Homebrew actually sees before changing anything:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">developer tools</span></div>
+        <pre><code><span class="prompt">$ </span>brew config | grep -E 'macOS|CLT|Xcode'</code></pre>
+      </div>
+      <p>Two separate toolchains appear there. Command Line Tools are enough to build on their own, but Homebrew still checks an installed <code>Xcode.app</code> and refuses when it is too old — even when <code>xcode-select -p</code> points at Command Line Tools instead. So if your <code>CLT</code> line already matches your macOS version and only <code>Xcode</code> lags, updating Xcode is what unblocks it. Groundwork installs <code>xcodes</code> when you opt into the Xcode track:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">update xcode</span></div>
+        <pre><code><span class="prompt">$ </span>xcodes install --latest</code></pre>
+      </div>
+      <p>Worth knowing before you settle in: because that tap ships no bottle, <strong>every</strong> cliamp release rebuilds from source, and it publishes often. If you would rather not carry that, cliamp is a music player and nothing depends on it — remove it with <code>chezmoi edit --apply ~/.config/homebrew/Brewfile.optional</code>. Leaving it costs you a failed optional line on each apply and nothing more.</p>
+
+      <h3>A Python tool tries to build SciPy or asks for gfortran</h3>
+      <p>Global Python tools intentionally use a proven Python version, not the newest Python release. Heavy dependencies such as NumPy and SciPy need mature wheel coverage; when a tool runs on a too-new Python, <code>uv</code> can fall back to a slow source build and fail on a normal Mac because no Fortran compiler is installed. Keep the global tool Python on the Groundwork-managed version, and choose newer Python versions per project with <code>mise use python@...</code> only when that project needs them.</p>
+
+      <h3>Aider crashes with <code>audioop</code> or <code>pyaudioop</code></h3>
+      <p>That means Aider was installed into a too-new Python tool environment. Groundwork keeps Aider's isolated <code>uv</code> runtime on Python 3.12 for now, because Python 3.13 removed <code>audioop</code> and Aider's voice dependency path can still import it on startup. The global mise Python remains 3.13; mise also provisions 3.12 so this tool pin is declared. Repair it with:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">repair aider</span></div>
+        <pre><code><span class="prompt">$ </span>uv tool install --python 3.12 --reinstall aider-chat
+<span class="prompt">$ </span>aider --version</code></pre>
+      </div>
+
+      <h3>"command not found" right after install</h3>
+      <p>Your current shell started before the tool existed. Reload it — <code>exec zsh</code> — or open a new terminal tab. Still missing? Confirm Homebrew actually installed it with <code>brew list &lt;name&gt;</code>, and that Homebrew is on your path with <code>which brew</code> (should be <code>/opt/homebrew/bin/brew</code>).</p>
+
+      <h3>Restore the pre-Groundwork snapshot</h3>
+      <p>Use this when the setup applied successfully but the person decides they do not like the opinionated defaults. The helper runs the latest first-run backup&apos;s restore script and asks for confirmation.</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">restore</span></div>
+        <pre><code><span class="prompt">$ </span>groundwork-restore
+<span class="comment"># or inspect the backup first:</span>
+<span class="prompt">$ </span>open ~/.local/state/groundwork/backups/latest</code></pre>
+      </div>
+      <p>The restore is intentionally limited to the files and macOS defaults this repo snapshots. It does not uninstall software, remove Homebrew packages, undo app permissions, or replace a full system backup.</p>
+
+      <h3>Old configs are competing with the setup</h3>
+      <p>On a Mac that has been configured by hand for years, old editor, tmux, shell completion, or plugin state can compete with this setup. During <code>chezmoi init</code>, answer <strong>yes</strong> to the reset prompt for a clean start. The reset moves known conflict zones to <code>~/.local/state/groundwork/reset/latest</code> before applying Groundwork.</p>
+      <table class="keytable">
+        <tr><td><strong>Moved aside</strong></td><td>Neovim config/state/cache, tmux legacy config/plugin/restore state, and <code>.zcompdump*</code> completion caches</td></tr>
+        <tr><td><strong>Not moved</strong></td><td>Raycast&apos;s internal database, app permissions, browser profiles, arbitrary project folders, and unrelated dotfiles</td></tr>
+        <tr><td><strong>Run later</strong></td><td>Edit <code>~/.config/chezmoi/chezmoi.toml</code>, set <code>reset_existing_configs = true</code>, remove <code>~/.local/state/groundwork/reset/.reset-existing-configs-done</code> if present, then run <code>chezmoi apply</code></td></tr>
+      </table>
+
+      <h3>chezmoi warns: "config file template has changed, run chezmoi init"</h3>
+      <p>This appears after a bare <code>chezmoi update</code> when Groundwork&apos;s setup template changed. Running <code>chezmoi init</code> again is not starting over: every answer you already gave is kept (the questions are ask-once), so it regenerates the config from your existing answers. If no new question was added, it <strong>returns silently</strong> — that is success, not a no-op: the config was rebuilt with your saved answers and nothing was reinstalled. <code>update-all</code> pulls first and then runs one supported <code>chezmoi init</code> boundary, preventing later status/apply checks from repeating the same warning. The manual equivalent is:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">re-init</span></div>
+        <pre><code><span class="prompt">$ </span>chezmoi init     <span class="comment"># regenerate from existing answers (silent = success)</span>
+<span class="prompt">$ </span>chezmoi apply    <span class="comment"># apply with the refreshed config</span></code></pre>
+      </div>
+      <p><strong>To change a setting</strong> (not just regenerate), use <code>groundwork-configure</code>: it shows your current answers, changes only the one you pick, previews the diff, and applies after you confirm. Plain <code>chezmoi init</code> never asks what to change, and <code>chezmoi init --prompt</code> replays the <em>entire</em> interview using template defaults — which can silently reset answers — so it is an advanced/debugging path, not the way to tweak one setting.</p>
+
+      <h3>Windows &amp; WSL: scripts fail with <code>bad interpreter: ^M</code></h3>
+      <p>That <code>^M</code> is a Windows carriage return: the clone was made with Git for Windows converting files to CRLF line endings, which breaks shell scripts and chezmoi templates the moment WSL runs them. Groundwork ships a <code>.gitattributes</code> that forces LF, so a fresh clone made <em>inside WSL</em> checks out correctly. If you hit this, re-clone from a WSL terminal, and tell Git to never introduce CRLF again:</p>
+      <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">inside WSL</span></div><pre><code><span class="prompt">$ </span>git config --global core.autocrlf input
+<span class="prompt">$ </span>git clone --recurse-submodules git@github.com:jasondockery/groundwork-mac.git</code></pre>
+      </div>
+      <p>A clone made before the fix stays broken even after <code>git pull</code>, because Git only rewrites the files a pull touches; everything else keeps its CRLF endings, including the chezmoi <code>.tmpl</code> files. Instead of re-cloning you can renormalize in place. <strong>This discards uncommitted local changes</strong>, so commit or stash first:</p>
+      <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">fix an existing clone</span></div><pre><code><span class="prompt">$ </span>git rm --cached -r .
+<span class="prompt">$ </span>git reset --hard</code></pre>
+      </div>
+
+      <h2><span class="hash" aria-hidden="true">#</span>tmux</h2>
+      <table class="keytable">
+        <tr><td><strong>Plugins missing on first run</strong></td><td>Groundwork runs TPM's installer during <code>chezmoi apply</code>. If a network hiccup skipped it, re-run <code>chezmoi apply</code>, or press <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>Shift</kbd><kbd>I</kbd></span> inside tmux to repair manually</td></tr>
+        <tr><td><strong>TPM update pane looks frozen</strong></td><td><span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>Shift</kbd><kbd>U</kbd></span> is TPM's plugin update binding, not a built-in tmux command. If its pane does not repaint, wait a few seconds, then press <kbd>Esc</kbd> or <kbd>Enter</kbd> to reveal or dismiss the summary. To watch normal output instead, run <code>~/.config/tmux/plugins/tpm/bin/update_plugins all</code> from a shell.</td></tr>
+        <tr><td><strong>Config edits not applying</strong></td><td>Reload with <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>r</kbd></span>, or fully restart: <code>tmux kill-server</code> then reopen. Because continuum restore is on, panes may come back from the saved snapshot</td></tr>
+        <tr><td><strong>Panes look frozen during apply</strong></td><td>Running <code>chezmoi apply</code> inside tmux is okay. First check whether a long install is still running, especially <code>uv</code>, <code>mise</code>, Homebrew, or Aider. If nothing is running and output is frozen, press <kbd>Ctrl</kbd><kbd>Q</kbd>; use <kbd>Ctrl</kbd><kbd>C</kbd> only for a truly stuck command. For the fuller tmux-specific flow, see <a href="tmux.html">tmux</a>.</td></tr>
+        <tr><td><strong>Status bar looks plain / broken</strong></td><td>The Catppuccin theme didn't load, tmux/plugin files changed under a live server, or TPM plugins are missing. Literal placeholders like <code>#{cpu_percentage}</code> mean <code>tmux-cpu</code> or <code>tmux-battery</code> has not loaded. Re-run <code>chezmoi apply</code>, reload with <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>q</kbd></span>, or restart tmux from a fresh shell. See <a href="tmux.html">tmux</a> for the plugin details.</td></tr>
+        <tr><td><strong>sesh still lists projects after kill-server</strong></td><td>The <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>T</kbd></span> picker shows live sessions plus zoxide directory candidates. Those folder rows are places to start a session, not proof that tmux sessions survived. Run <code>tmux ls</code> to see only live sessions.</td></tr>
+        <tr><td><strong>Sessions didn't come back</strong></td><td>Auto-restore (continuum) only fires on a fresh tmux <em>server</em> start, only restores the latest saved snapshot, and is intentionally off in the CI and agent container profile. <code>tmux kill-server</code> does not save first. Check <code>~/.local/share/tmux/resurrect/</code>, or restore by hand with <span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd> <span class="then">then</span> <kbd>Ctrl</kbd><kbd>r</kbd></span>.</td></tr>
+        <tr><td><strong>Sessions came back after kill-server</strong></td><td>That is continuum restoring the last saved snapshot, not live sessions surviving the kill. For a clean start, detach or open a fresh Ghostty tab and run <code>tmux-fresh</code>.</td></tr>
+      </table>
+      <p>See the <a href="tmux.html">tmux page</a> for what each plugin does and how saving/restoring works.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Neovim</h2>
+      <p>The first time you open <code>nvim</code>, LazyVim downloads and compiles its plugins — let it finish before judging anything. After that, two commands diagnose almost everything:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">nvim — in command mode</span></div>
+        <pre><code>:Lazy            <span class="comment"># plugin manager — press U to update, X to clean</span>
+:checkhealth     <span class="comment"># reports missing tools (node, rg, fd…) and how to fix</span></code></pre>
+      </div>
+      <p>If <code>:checkhealth</code> flags a missing command-line tool, install it with <code>brew install &lt;tool&gt;</code> — Neovim's extras lean on the same CLI tools from the <a href="shell.html">Shell page</a> (ripgrep, fd). If the editor ever gets truly wedged, it's safe to wipe its state and let it rebuild: <code>rm -rf ~/.local/share/nvim ~/.local/state/nvim</code>, then reopen.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Shell &amp; prompt</h2>
+      <table class="keytable">
+        <tr><td><strong>Pasted command sits above a blank line</strong></td><td>zsh's bracketed-paste protection kept the trailing newline in the editable buffer instead of executing it. Review the command, then press <kbd>Enter</kbd> once to run it or <kbd>Ctrl</kbd>+<kbd>C</kbd> to discard it. A command that is still editable has no running child process; check from another terminal before interrupting work if the state is unclear.</td></tr>
+        <tr><td><strong>No grey autosuggestions / no colors</strong></td><td>The plugins didn't load. Run <code>exec zsh</code>; if it persists, check <code>~/.zsh_plugins.txt</code> exists and that antidote is installed (<code>brew list antidote</code>)</td></tr>
+        <tr><td><strong>Prompt shows boxes or wrong glyphs</strong></td><td>Terminal font isn't a Nerd Font — Groundwork sets Ghostty to <em>JetBrainsMono Nerd Font</em>. Re-run <code>chezmoi apply</code>, restart Ghostty, then verify with <code>ghostty +show-config | grep -i font-family</code></td></tr>
+        <tr><td><strong>Tab completion feels broken</strong></td><td>The completion cache went stale. Rebuild it: <code>rm -f ~/.zcompdump*</code> then <code>exec zsh</code></td></tr>
+        <tr><td><strong>Slow shell startup</strong></td><td>Time it with <code>hyperfine 'zsh -i -c exit'</code>; a recently-added plugin is the usual cause</td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Claude Code</h2>
+      <table class="keytable">
+        <tr><td><strong>Esc doesn't cancel in the chat</strong></td><td>Deliberate. Terminal and vim fingers hit <kbd>Esc</kbd> reflexively, so Groundwork ships <code>~/.claude/keybindings.json</code> with the Chat-context Esc cancel binding removed. Stop running work deliberately with <kbd>Ctrl</kbd><kbd>C</kbd> (the hardcoded interrupt — can't be rebound or lost); undo a wrong turn with <code>/rewind</code>. Want stock behavior back? Remove the <code>"escape": null</code> line with <code>chezmoi edit --apply ~/.claude/keybindings.json</code></td></tr>
+        <tr><td><strong>Keybinding edits keep reverting</strong></td><td>The file is chezmoi-managed, and Claude Code's <code>/keybindings</code> shortcut opens the applied copy — edits there are overwritten on the next apply. Make changes with <code>chezmoi edit --apply ~/.claude/keybindings.json</code> instead</td></tr>
+        <tr><td><strong>Keybindings file seems ignored</strong></td><td>Custom keybindings need Claude Code v2.1.18 or later — check with <code>claude --version</code>. On a current version, run <code>/doctor</code> inside Claude Code — it has a section that validates <code>~/.claude/keybindings.json</code> and names the exact problem</td></tr>
+      </table>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Docker</h2>
+      <table class="keytable">
+        <tr><td><strong>Desktop says "unable to find docker zsh completion in your fpath"</strong></td><td>Groundwork generates completions into <code>~/.docker/completions</code> on every apply, and <code>.zshrc</code> adds that folder to <code>fpath</code> when it exists. In a <em>new</em> terminal, verify: <code>ls ~/.docker/completions/_docker</code>, then type <code>docker con</code> and press the <kbd>Tab</kbd> key (don't paste "&lt;Tab&gt;" — zsh reads it as a redirect and throws a parse error). If the file is missing, check <code>command -v docker</code> and re-run <code>chezmoi apply</code>. If completion works, the banner is cosmetic — Desktop greps <code>~/.zshrc</code> for its own snippet. <strong>Don't click its Install button:</strong> it edits <code>~/.zshrc</code> directly, chezmoi reverts that on the next apply, and the warning comes back. Restart Docker Desktop after the first apply and it usually clears</td></tr>
+        <tr><td><strong>Orange "this can prevent Docker from starting" banner on the Docker Engine page</strong></td><td>A standing caution above the JSON editor, not an error — it warns that bad JSON here stops the daemon. The builder-GC config shown is Docker Desktop's stock default; Groundwork doesn't manage Desktop's <code>daemon.json</code> (work machines get equivalent disk-growth caps through the Colima template instead)</td></tr>
+        <tr><td><strong>Docker Desktop badged "Personal" on a work machine</strong></td><td>Worth fixing: Desktop needs a paid license in orgs over 250 staff or $10M revenue, which is why Groundwork's work profile installs Colima + the CLI instead. Either get a licensed seat through your employer, or re-run <code>chezmoi init</code> answering "work machine: yes", apply, and use <code>colima start</code> — the CLI workflow is identical</td></tr>
+      </table>
+
+      <h2 id="karabiner"><span class="hash" aria-hidden="true">#</span>Karabiner (keyboard)</h2>
+      <p>Caps&nbsp;Lock&nbsp;→&nbsp;Esc/Ctrl won't work until macOS trusts Karabiner. Current Karabiner needs settings that only you can approve:</p>
+      <div class="callout warn">
+        <span class="label">Use the settings Karabiner itself documents</span>
+        <p>Keep its background services enabled under System Settings → General → Login Items, approve <strong>Accessibility</strong> under Privacy &amp; Security, and allow <strong>org.pqrs.Karabiner-DriverKit-VirtualHIDDevice</strong> under Login Items &amp; Extensions → Driver Extensions. <strong>Input Monitoring is normally unnecessary on 16.0.0 and later</strong> because Accessibility covers physical-device input; grant it for 15.9.0 or earlier, or when Karabiner itself says it is required. A script cannot grant these — macOS requires a human click.</p>
+      </div>
+      <p>After Groundwork installs or updates Homebrew casks, it reopens the always-on apps: Karabiner-Elements, Raycast, BetterDisplay, and Anybox. It does this only when an app is installed but not running, because Homebrew can quit an app while replacing it and not relaunch it. For Karabiner that makes the menu-bar icon, driver status, and any macOS permission prompts visible instead of leaving the keyboard rule silently inactive; for the others it keeps the launcher hotkey, display presets, and bookmark shortcuts answering. If macOS shows an "open an app downloaded from the internet" prompt, approve it only when it names one of these apps from your Applications folder.</p>
+      <p>If <code>chezmoi apply</code> mentions <code>.config/karabiner/karabiner.json</code>, the usual cause is Karabiner writing device or profile metadata after Groundwork last touched the file. Current Groundwork merges the Caps Lock rule into Karabiner's existing JSON instead of replacing the whole file, so pull the latest repo and re-run <code>chezmoi apply</code>.</p>
+
+      <h3 id="karabiner-memory">Case study: Core Service memory after sleep and wake</h3>
+      <p>Suppose Activity Monitor shows a large memory value for <strong>Karabiner-Core-Service</strong> after the Mac has crossed many sleep/wake cycles. Start with observations an agent can compare, not a guessed leak rate:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">karabiner evidence</span></div>
+        <pre><code><span class="prompt">$ </span>groundwork-doctor
+<span class="prompt">$ </span>groundwork-karabiner-restart
+<span class="prompt">$ </span>groundwork-doctor --karabiner</code></pre>
+      </div>
+      <p>The default doctor records the installed version, current macOS support, the root Core Service PID and age, <code>ps</code> RSS, and Activity Monitor-style footprint and compressed memory when <code>top</code> exposes them. Those memory columns are different observations: a small resident set can coexist with a large compressed footprint. At or above Groundwork's 1024&nbsp;MiB review threshold, the read-only report prints <code>groundwork-karabiner-restart</code> as the exact recommended action. The threshold is an operational cue, not a diagnosis. One sample cannot establish MB per day; re-run the same report after a known number of sleep/wake cycles and compare like with like.</p>
+      <p>The normal <code>update-all</code> workflow now runs this focused health postflight after updates and maintenance succeed. An unusually large footprint or a Karabiner version change prints the snapshot and offers <code>Restart Karabiner now? [y/N]</code>. Yes invokes the same verified helper; Enter, no, EOF, or a run without a usable terminal changes nothing and prints the manual command. <code>chezmoi update</code>, <code>init</code>, and <code>apply</code> install the helper and configuration but never restart an already-running input service merely because files were applied.</p>
+      <p>The helper uses Karabiner's documented user-domain restart path, waits at most ten seconds, and succeeds only when the root Core Service PID changes. If that proof fails, use Karabiner's menu-bar <strong>Restart Karabiner-Elements</strong> command or Settings → Misc → Restart instead. Groundwork deliberately does not unload or kickstart Karabiner's private root daemons.</p>
+      <p>For deeper evidence, correlate the timestamps in <code>/var/log/karabiner/core_service.log</code>, <code>/var/log/karabiner/virtual_hid_device_service.log</code>, and <code>~/.local/share/karabiner/log/</code> with sleep and wake. <a href="https://github.com/pqrs-org/Karabiner-Elements/issues/4432" target="_blank" rel="noopener">Upstream issue 4432</a> is a reported long-run sleep/wake memory-growth case, not proof that every large snapshot has the same cause. Update through the normal Homebrew cask with <code>update-all</code>; Groundwork keeps the cask on the current channel and checks a 16.1.0 compatibility floor instead of pinning a custom package.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Obsidian</h2>
+      <table class="keytable">
+        <tr><td><strong>No vault to open</strong></td><td>The setup now creates one at <code>iCloud&nbsp;Drive/Obsidian/&lt;name&gt;</code> on apply. If it's missing, re-run <code>chezmoi apply</code>, or make one in-app pointed at that folder</td></tr>
+        <tr><td><strong>Plugins not showing</strong></td><td><strong>Restart Obsidian once</strong> after first launch so the auto-installed community plugins load, then enable them in Settings</td></tr>
+        <tr><td><strong>Notes stuck as cloud placeholders</strong></td><td>Right-click the vault folder in Finder → <strong>Keep Downloaded</strong> so iCloud keeps them local</td></tr>
+      </table>
+
+      <h2 id="github-ssh"><span class="hash" aria-hidden="true">#</span>git pull hangs silently, but the web works</h2>
+      <p>When <code>git pull</code> or <code>chezmoi update</code> sits there printing nothing while browsing is fine, one common cause — when the remote uses SSH (an HTTPS remote is unaffected by this) — is a network (hotel, office, some VPN or router setups) that lets the SSH connection to <code>github.com</code> open but never answers the handshake, so git waits forever instead of erroring. GitHub's documented escape is SSH over the HTTPS port, and Groundwork wraps it in a reversible helper:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">github ssh</span></div>
+        <pre><code><span class="prompt">$ </span>groundwork-github-ssh status      <span class="comment"># bounded probes: is port 22 stalling? does 443 work?</span>
+<span class="prompt">$ </span>groundwork-github-ssh enable-443  <span class="comment"># shows the exact change, asks, backs up, then routes via ssh.github.com:443</span>
+<span class="prompt">$ </span>groundwork-github-ssh revert-443  <span class="comment"># remove Groundwork's override; backups are kept</span></code></pre>
+      </div>
+      <p>It changes only the <code>Host github.com</code> route — other hosts, SSH aliases, and your keys are untouched — and requires GitHub's host keys, fetched over TLS, to match the fingerprints GitHub publishes in the same metadata before trusting them. Two honest caveats: some proxies interfere with SSH over 443 too (so <code>status</code> probes both ports, offering no key, before anything changes), and <code>revert-443</code> removes Groundwork's override only — other configuration of yours that selects port 443 stays in force.</p>
+
+      <h2 id="git"><span class="hash" aria-hidden="true">#</span>Git keeps asking for a login</h2>
+      <p>This is an <em>access</em> problem, not a setup bug. <code>git pull</code> / <code>chezmoi update</code> can't authenticate. The usual culprit is being logged into <code>gh</code> as the wrong account, or using an SSH remote without the matching key/account configured. First, see who you are:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">git auth</span></div>
+        <pre><code><span class="prompt">$ </span>gh auth status                <span class="comment"># is this the right account?</span>
+<span class="prompt">$ </span>gh auth switch                <span class="comment"># choose another already-authenticated account</span>
+<span class="prompt">$ </span>gh auth login --git-protocol https
+<span class="prompt">$ </span>gh auth setup-git --hostname github.com</code></pre>
+      </div>
+      <p>Groundwork itself pulls from a public HTTPS remote by default. The credential helper is still baked into the git config because most developers use GitHub for their own repos, and chezmoi manages <code>~/.gitconfig</code>. SSH is still fine when the Mac's SSH config clearly maps the right key to the right GitHub account.</p>
+
+      <h2><span class="hash" aria-hidden="true">#</span>Still stuck?</h2>
+      <p>Two reliable fallbacks. Re-apply from the source of truth, and if that doesn't do it, ask an agent — it can read the actual error and the config together:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">last resorts</span></div>
+        <pre><code><span class="prompt">$ </span>chezmoi update                <span class="comment"># pull latest config + apply it</span>
+<span class="prompt">$ </span>claude                        <span class="comment"># then paste the error and ask</span></code></pre>
+      </div>
+      <div class="callout note">
+        <span class="label">Nothing here is precious</span>
+        <p>Every managed file can be regenerated from the repo, so you can experiment with fixes freely. Worst case, a fresh <code>chezmoi apply</code> resets the managed files to a known-good state.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="glossary.html"><span class="dir">← Prev</span>Glossary</a>
+        <a href="index.html"><span class="dir">Next →</span>Overview</a>
+      </div>
+      <footer class="site">When in doubt: <code>chezmoi apply</code>. The repo always wins. · <a class="gw-version" href="https://github.com/jasondockery/groundwork/releases" target="_blank" rel="noopener">dev</a></footer>
+    </div>
+  </main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>
