@@ -1,11 +1,11 @@
 # Groundwork Roadmap
 
-Pending release batch: **v2.0.0** aligns terminal shortcuts with Omarchy and
+Released batch: [**v2.0.0**](https://github.com/jasondockery/groundwork-mac/releases/tag/v2.0.0) aligns terminal shortcuts with Omarchy and
 includes T3 Code Nightly plus Herdr across supported profiles. Review the current
 keyboard guide and clear conflicting Raycast global hotkeys before adoption.
 Shared Tailscale guidance and migration preserve existing account/source state.
-Release publication requires the final reviewed main commit's CI and hosted Full Linux
-and macOS receipts; machine adoption remains a separate manual check.
+The release commit passed CI and hosted Full Linux and macOS validation;
+machine adoption remains a separate manual check.
 
 How Groundwork grows from here. `AI_THESIS.md` owns the north star,
 `PLAYBOOK.md` owns operational maintenance, and this file tracks the
@@ -20,17 +20,18 @@ Nightly and Herdr, safe platform entrypoints, and shared operational guidance.
 A fresh history uses the public GitHub noreply identity and updates the Core
 submodule and sanitized Compass projection together.
 
-The breaking keyboard migration is batched for `v2.0.0`. A historical private
-release is not acceptance evidence for this new baseline; its old tags are
-retired as part of the history replacement.
+The breaking keyboard migration shipped as `v2.0.0` at
+`011b74ecbb007f81d8b76e7e0d38e3fa63a34248`. A historical private release is not
+acceptance evidence for this new baseline; its old tags were retired as part
+of the history replacement.
 
 | Boundary | Current evidence and disposition |
 | --- | --- |
-| Release | `v2.0.0` remains pending exact-release-SHA CI and Linux/macOS Full receipts. Local Linux proof and code review do not establish native macOS acceptance. |
+| Release | [`v2.0.0`](https://github.com/jasondockery/groundwork-mac/releases/tag/v2.0.0) is published. Exact-release-SHA [CI 39121925205](https://github.com/jasondockery/groundwork-mac/actions/runs/39121925205) and [Full 39121940079](https://github.com/jasondockery/groundwork-mac/actions/runs/39121940079), both attempt 1, passed. Full includes Linux and macOS receipts plus the Homebrew cask audit; physical machine acceptance remains separate. |
 | Public curriculum | The original `jasondockery/groundwork` remains the curriculum and historical reference during migration. |
 | Pages | The public learning site remains https://jasondockery.github.io/groundwork. This repo's Pages workflow publishes its checked-in reference docs; the original remains the learning curriculum owner. |
 | Compass | The source uses a receipt-bound projection of the sanitized Compass baseline. Existing consumer adoption records remain historical; this is not fresh hosted adoption proof. |
-| History | Publication preparation replaces the private Git history. Retained GitHub logs, artifacts, releases, and PR references require a separate disclosure check. |
+| History | The public repository started in a new GitHub container with a reviewed clean root. Anonymous recursive HTTPS cloning passed. The owner deleted the former private backup container after publication. |
 | Machine acceptance | Physical shortcuts, provider authentication, and two-way Tailscale connections remain local acceptance steps. No installer or chezmoi apply was run on the reference machine during this review. |
 
 The future container/resource-lifecycle tranche may add read-only inventory and

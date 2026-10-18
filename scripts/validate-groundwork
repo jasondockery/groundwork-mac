@@ -16077,12 +16077,16 @@ EOF
 
   check "continuity record: release, field evidence, and owner gates"
   grep -qF 'authorized fresh publication baseline' ROADMAP.md
-  grep -qF 'A historical private' ROADMAP.md
-  grep -qF 'release is not acceptance evidence for this new baseline' ROADMAP.md
-  grep -qF 'pending exact-release-SHA CI and Linux/macOS Full receipts' ROADMAP.md
-  grep -qF 'do not establish native macOS acceptance' ROADMAP.md
+  tr '\n' ' ' <ROADMAP.md | grep -qF 'historical private release is not acceptance evidence for this new baseline'
+  # Bind the published baseline to its recorded proof, not obsolete pending
+  # wording. These references identify the completed release, not live main.
+  grep -qF '011b74ecbb007f81d8b76e7e0d38e3fa63a34248' ROADMAP.md
+  grep -qF 'https://github.com/jasondockery/groundwork-mac/releases/tag/v2.0.0) is published' ROADMAP.md
+  grep -qF '[CI 39121925205](https://github.com/jasondockery/groundwork-mac/actions/runs/39121925205)' ROADMAP.md
+  grep -qF '[Full 39121940079](https://github.com/jasondockery/groundwork-mac/actions/runs/39121940079)' ROADMAP.md
+  grep -qF 'physical machine acceptance remains separate' ROADMAP.md
   grep -qF 'this is not fresh hosted adoption proof' ROADMAP.md
-  grep -qF 'PR references require a separate disclosure check' ROADMAP.md
+  grep -qF 'new GitHub container with a reviewed clean root' ROADMAP.md
   grep -qF 'No installer or chezmoi apply was run on the reference machine' ROADMAP.md
 
   check "workflow timeout checker behaves as specified"
