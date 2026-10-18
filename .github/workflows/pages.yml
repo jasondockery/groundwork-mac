@@ -52,7 +52,9 @@ jobs:
         run: |
           VERSION="$(git describe --tags --abbrev=0 2>/dev/null || true)"
           if [ -n "$VERSION" ]; then
-            find docs -name '*.html' -exec sed -i "s|class=\"gw-version\"\([^>]*\)>dev<|class=\"gw-version\"\1>${VERSION}<|g" {} +
+            find docs -name '*.html' -exec sed -i \
+              -e "s|class=\"gw-version\"\([^>]*\)>dev<|class=\"gw-version\"\1>${VERSION}<|g" \
+              -e "s|class=\"gw-version\" href=\"https://github.com/jasondockery/groundwork/releases\"|class=\"gw-version\" href=\"https://github.com/${GITHUB_REPOSITORY}/releases\"|g" {} +
             echo "Stamped ${VERSION}"
           else
             VERSION=dev
