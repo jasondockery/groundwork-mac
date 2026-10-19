@@ -246,6 +246,7 @@
       <h2><span class="hash" aria-hidden="true">#</span>Groundwork safety</h2>
       <table class="keytable">
         <tr><td><code>chezmoi diff</code></td><td>Preview what Groundwork would change before applying.</td></tr>
+        <tr><td><code>groundwork-remote-desktop</code></td><td>Finish the native macOS Screen Sharing or GNOME RDP permission step for visual agent supervision. Desktop applies run its <code>prepare</code> action; <code>status</code> reads native registration/configuration. Consent and credentials remain local, then the OS owns startup. Headless and WSL profiles are excluded. Follow the <a href="https://github.com/jasondockery/groundwork-mac/blob/main/docs/remote-access.md">remote-access guide</a> for Tailscale ports, supported clients, and second-device acceptance.</td></tr>
         <tr><td><code>chezmoi apply</code></td><td>Apply the source repo to the home directory.</td></tr>
         <tr><td><code>groundwork-restore</code></td><td>Restore the first-run backup of managed files and macOS defaults. Does not uninstall apps or undo Homebrew upgrades.</td></tr>
         <tr><td><code>groundwork-doctor</code></td><td>Read-only machine health report. Its default run covers the shell runtime, runtime release age, Node/pnpm ownership, selected browser, Karabiner compatibility and process memory on macOS, and Docker health and leftovers. A Karabiner snapshot at or above the shared 1024&nbsp;MiB review threshold includes <code>groundwork-karabiner-restart</code> as the recommended action. It never deletes or changes anything.</td></tr>

@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Prepare native desktop sharing without replacing OS permission controls."""
+import argparse
+import os
+import platform
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+def run(command):
+    return subprocess.run(command, capture_output=True, text=True, timeout=15,
+                          env=dict(os.environ, LC_ALL='C'))
+
+
+def is_wsl():
+    path = Path('/proc/sys/kernel/osrelease')
+    return path.exists() and 'microsoft' in path.read_text().lower()
+
+
+def prepare(action):
+    system = platform.system()
+    if system == 'Darwin':
+        ready = run(['launchctl', 'print', 'system/com.apple.screensharing']).returncode == 0
+        print('macOS Screen Sharing service is registered.' if ready else
+              'Screen sharing needs one local approval in System Settings → General → Sharing.')
+        print('Enable Screen Sharing for only your intended users; macOS owns startup after approval.')
+        command = ['open', 'x-apple.systempreferences:com.apple.Sharing-Settings.extension']
+    elif system == 'Linux':
+        if is_wsl():
+            raise RuntimeError('Use the native groundwork-windows host command; WSL does not configure Windows desktop sharing.')
+        if shutil.which('omarchy'):
+            raise RuntimeError('Use groundwork-omarchy-mac-arm64; never apply this engine on Omarchy.')
+        if 'gnome' not in os.environ.get('XDG_CURRENT_DESKTOP', '').lower():
+            raise RuntimeError('This Linux desktop needs its compositor-specific sharing setup; GNOME is the supported native path here.')
+        if not shutil.which('grdctl') or not shutil.which('gnome-control-center'):
+            raise RuntimeError('Install your distribution’s gnome-remote-desktop and GNOME Settings packages, then rerun this command.')
+        status = run(['grdctl', 'status'])
+        if status.returncode:
+            raise RuntimeError('GNOME sharing status is unavailable; run from the logged-in desktop with its unlocked keyring.')
+        ready = bool(re.search(r'RDP:\s*\n\s*Status:\s*enabled\b', status.stdout, re.IGNORECASE))
+        if ready and action != 'status':
+            result = run(['systemctl', '--user', 'enable', '--now', 'gnome-remote-desktop.service'])
+            if result.returncode:
+                raise RuntimeError('GNOME RDP is configured but its user service could not start; inspect its user journal.')
+        print('GNOME RDP is configured; its native service owns startup.' if ready else
+              'Open Settings → System → Remote Desktop → Desktop Sharing; enable sharing/control and set local credentials.')
+        print('Use an RDP client and the port shown by GNOME; credentials stay in its native keyring.')
+        command = ['gnome-control-center', 'system']
+    else:
+        raise RuntimeError('Use the native groundwork-windows host command on Windows.')
+    if action == 'setup' or (not ready and action == 'prepare' and sys.stdout.isatty()):
+        if system == 'Darwin':
+            result = run(command)
+            if result.returncode:
+                raise RuntimeError('Could not open native Sharing settings; open the location printed above manually.')
+        else:
+            # The first GNOME Settings process can own the interactive window;
+            # launching it is complete without waiting for that window to close.
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+    print('Tailscale enrollment, the desktop port grant, and a second-device screen/input test are still required.')
+    return 0 if ready or action != 'status' else 1
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', nargs='?', default='setup', choices=('setup', 'prepare', 'status'))
+    args = parser.parse_args(argv)
+    try:
+        return prepare(args.action)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print('Remote desktop: ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
