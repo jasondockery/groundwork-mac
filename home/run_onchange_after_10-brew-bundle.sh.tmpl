@@ -193,6 +193,13 @@ deadline=180 observe_deadline=10 heartbeat=20 cancel_grace=5 poll_seconds=0.2 or
 . "$maintenance_lib"
 run_bounded "Homebrew metadata refresh" "$HOME/.local/bin/groundwork-brew-update"
 
+# Resolve only the documented legacy formula link, preserving manual commands.
+# shellcheck source=/dev/null
+. {{ joinPath .chezmoi.sourceDir "dot_local/share/groundwork/lib/brew-ownership.sh" | quote }}
+if grep -qxF 'brew "opencode"' "$bundle_file"; then
+  run_bounded "OpenCode formula ownership" groundwork_reconcile_opencode
+fi
+
 sudo_prepare_status=0
 groundwork_sudo_prepare || sudo_prepare_status=$?
 case "$sudo_prepare_status" in
@@ -208,6 +215,35 @@ case "$sudo_prepare_status" in
       echo "Groundwork: administrator permission is not cached, and this run cannot tell which apps need a password." >&2
       echo "Nothing further was installed. From a terminal on this machine, run chezmoi apply and enter your password when asked." >&2
       exit 1
+    fi
+    deferred_mas="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-mas.XXXXXX")"
+    if ! groundwork_pending_mas_entries "$bundle_file" >"$deferred_mas"; then
+      rm -f -- "$deferred_casks" "$deferred_mas"
+      echo "Groundwork: App Store inventory is unavailable; no bundle was attempted." >&2
+      exit 1
+    fi
+    if [[ -s "$deferred_mas" ]]; then
+      mas_deferred_path="$(groundwork_sudo_mas_deferred_path)"
+      if [[ -L "$mas_deferred_path" || ( -e "$mas_deferred_path" && ! -f "$mas_deferred_path" ) ]]; then
+        rm -f -- "$deferred_casks" "$deferred_mas"
+        echo "Groundwork: App Store retry state is not a regular file." >&2
+        exit 1
+      fi
+      mkdir -p "$(dirname "$mas_deferred_path")"
+      chmod 600 "$deferred_mas"
+      mv -f -- "$deferred_mas" "$mas_deferred_path"
+      filtered_mas_bundle="$(mktemp "${TMPDIR:-/tmp}/groundwork-mas-brewfile.XXXXXX")"
+      awk -v deferred="$mas_deferred_path" 'BEGIN { while ((getline row < deferred) > 0) skip[row] = 1 } !skip[$0]' \
+        "$bundle_file" >"$filtered_mas_bundle"
+      if [[ "$bundle_file_owned" -eq 1 ]]; then
+        mv -f -- "$filtered_mas_bundle" "$bundle_file"
+      else
+        bundle_file="$filtered_mas_bundle"
+        bundle_file_owned=1
+      fi
+      echo "Groundwork: selected App Store installations need administrator permission and were set aside for the next terminal apply."
+    else
+      rm -f -- "$deferred_mas"
     fi
     if [[ -s "$deferred_casks" ]]; then
       deferred_tokens=()
@@ -245,7 +281,7 @@ case "$sudo_prepare_status" in
         bundle_file_owned=1
       fi
       echo "Groundwork: these apps need an administrator password, so they were set aside: ${deferred_tokens[*]}."
-      echo "They are not installed yet. The rest of this setup will continue."
+      echo "Their installation or ownership reconciliation is pending. Independent setup will continue."
       echo "From a terminal on this machine, run chezmoi apply and enter your password when asked."
     fi
     rm -f -- "$deferred_casks"
@@ -341,6 +377,10 @@ if [[ "$bundle_status" -ne 0 ]]; then
 fi
 {{- if and (eq .chezmoi.os "darwin") (not .headless) }}
 
+# The bundle can replace CLT-only state with a new, unaccepted Xcode.
+# License agreement remains a local human action, never automatic consent.
+groundwork_check_xcode_license
+
 # ---- Chrome checksum exceptions, and ONLY after the safe lane succeeded ----
 #
 # Chrome stable and Beta ship `sha256 :no_check` upstream (Google's own updater
@@ -387,8 +427,12 @@ CONFLICT
   exit 1
 fi
 
+browser_installed="$(groundwork_installed_casks)" || {
+  echo "Groundwork: browser inventory failed; no browser installation was attempted." >&2
+  exit 1
+}
 for browser_cask in "${browser_casks[@]}"; do
-  if brew list --cask "$browser_cask" >/dev/null 2>&1; then
+  if grep -qxF -- "$browser_cask" <<<"$browser_installed"; then
     echo "Groundwork: managed browser present: $browser_cask"
     continue
   fi
