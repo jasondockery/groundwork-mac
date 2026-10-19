@@ -186,6 +186,8 @@ bundle_status=0
 # manager and catalog before selecting or installing the changed manifest.
 maintenance_lib="$HOME/.local/share/groundwork/lib/maintenance-runner.sh"
 [[ -r "$maintenance_lib" ]] || { echo "Groundwork: bounded Homebrew runner is missing." >&2; exit 1; }
+# Shared policy globals are consumed by the sourced maintenance runner.
+# shellcheck disable=SC2034
 deadline=180 observe_deadline=10 heartbeat=20 cancel_grace=5 poll_seconds=0.2 orphan_grace=5
 # shellcheck source=/dev/null
 . "$maintenance_lib"

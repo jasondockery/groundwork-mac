@@ -16086,7 +16086,17 @@ PY
     render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.tmpl "$out_dir/$case_name/Brewfile" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
     render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.browser.tmpl "$out_dir/$case_name/Brewfile.browser" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
     if [[ "$os" == "linux" || "$headless" == "true" ]]; then
-      assert_not_contains '^(cask|mas) ' "$out_dir/$case_name/Brewfile" "cask/mas leaked into $case_name Brewfile"
+      assert_not_contains '^mas ' "$out_dir/$case_name/Brewfile" "App Store apps leaked into $case_name"
+      # Casks also package native Linux/headless CLIs. Permit only that declared
+      # set, plus Cursor on desktop Linux; reject every other GUI artifact.
+      native_cask_pattern='^cask "(codex|claude-code@latest|grok-build)"([[:space:]]*#.*)?$'
+      if [[ "$os" == linux && "$headless" == false ]]; then
+        native_cask_pattern="$native_cask_pattern|^cask \"cursor\"([[:space:]]*#.*)?$"
+      fi
+      if unexpected_casks="$(grep '^cask ' "$out_dir/$case_name/Brewfile" | grep -vE "$native_cask_pattern")"; then
+        printf '%s\n' "$unexpected_casks" >&2
+        fail "unsupported GUI casks leaked into $case_name"
+      fi
       assert_not_contains '^cask ' "$out_dir/$case_name/Brewfile.browser" "a GUI browser leaked into $case_name"
     else
       grep -qxF 'cask "google-chrome"' "$out_dir/$case_name/Brewfile.browser" \

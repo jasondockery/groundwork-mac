@@ -55,7 +55,10 @@ class CommonSetupTests(unittest.TestCase):
                             if platform == "darwin" and not headless:
                                 for line in ('cask "chatgpt"', 'cask "claude"', 'cask "cursor"'):
                                     self.assertIn(line, source)
-                            elif platform == "linux":
+                            if headless:
+                                for app in ("chatgpt", "claude", "cursor", "docker-desktop"):
+                                    self.assertNotIn(f'cask "{app}"\n', source)
+                            if platform == "linux":
                                 self.assertNotIn('cask "chatgpt"', source)
                                 self.assertNotIn('cask "claude"\n', source)
 
@@ -85,6 +88,14 @@ class CommonSetupTests(unittest.TestCase):
             (self.root / "installed").unlink()
         self.assertEqual((self.root / "calls").read_text().splitlines(),
                          ["update", "install -y build-essential procps curl file git"] * 2)
+        (self.root / "calls").unlink()
+        source = self.text("home/run_before_00-install-homebrew.sh.tmpl", headless=True,
+                           chezmoi=dict(os="linux", arch="riscv64"))
+        result = subprocess.run(["/bin/bash"], input=source, env=env, text=True,
+                                capture_output=True, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "calls").exists())
+        self.assertFalse((self.root / "installed").exists())
 
     def test_preferences_override_legacy_role_independently(self):
         source = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=True,
@@ -92,6 +103,9 @@ class CommonSetupTests(unittest.TestCase):
         self.assertIn('cask "docker-desktop"', source)
         self.assertIn('cask "obsidian"', source)
         self.assertNotIn('brew "colima"', source)
+        headless = self.text("home/dot_config/homebrew/Brewfile.tmpl", headless=True,
+                             docker_backend="docker-desktop")
+        self.assertNotIn('cask "docker-desktop"', headless)
         git = self.text("home/dot_gitconfig.tmpl", work=True, git_identity="personal")
         self.assertIn("email = ci@example.com", git)
         git = self.text("home/dot_gitconfig.tmpl", work=False, git_identity="work")

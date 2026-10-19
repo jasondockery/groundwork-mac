@@ -6,7 +6,10 @@ if [[ "$(uname -s)" == Linux ]] && { command -v omarchy >/dev/null 2>&1 || [[ -d
   exit 1
 fi
 
-{{ if eq .chezmoi.os "darwin" -}}
+{{ if not (has .chezmoi.arch (list "amd64" "arm64")) -}}
+echo "Groundwork's Homebrew setup requires x86_64 or ARM64. No packages were installed." >&2
+exit 1
+{{ else if eq .chezmoi.os "darwin" -}}
 if ! /usr/bin/xcode-select -p >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 Apple Command Line Tools are not installed yet.

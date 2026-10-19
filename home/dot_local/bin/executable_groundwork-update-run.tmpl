@@ -1923,7 +1923,7 @@ esac
 docker_pending="$HOME/.local/state/groundwork/docker-tidy-pending"
 docker_maintenance_result="skipped"
 docker_backend="none"
-{{- if eq .chezmoi.os "darwin" }}
+{{- if and (eq .chezmoi.os "darwin") (or (not .headless) (eq (get $developer "docker_backend") "colima")) }}
 docker_backend={{ get $developer "docker_backend" | quote }}
 {{- end }}
 docker_start_deadline="${GROUNDWORK_DOCKER_START_DEADLINE_SECONDS:-180}"
