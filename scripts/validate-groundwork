@@ -1149,6 +1149,7 @@ line_number() {
 validate_static_foundation() {
   check "common developer setup and Docker configuration merge"
   python3 -B scripts/test-common-setup
+  python3 -B scripts/test-remote-desktop
 
   local canonical_rows canonical_expected canonical_observed
 

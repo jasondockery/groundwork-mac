@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Exercise native sharing boundaries without changing a desktop or keyring."""
+from importlib.machinery import SourceFileLoader
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import unittest
+from unittest.mock import patch
+
+SOURCE = Path(__file__).resolve().parents[1] / 'home/dot_local/bin/executable_groundwork-remote-desktop'
+loader = SourceFileLoader('remote_desktop', str(SOURCE))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+remote = importlib.util.module_from_spec(spec)
+loader.exec_module(remote)
+
+
+class RemoteDesktopTests(unittest.TestCase):
+    def result(self, status=0, text=''):
+        return subprocess.CompletedProcess([], status, stdout=text, stderr='')
+
+    def test_mac_opens_supported_settings_without_root_or_permission_bypass(self):
+        with patch.object(remote.platform, 'system', return_value='Darwin'):
+            with patch.object(remote, 'run', side_effect=[self.result(1), self.result()]) as run:
+                self.assertEqual(remote.main(['setup']), 0)
+        self.assertEqual(run.call_args_list[1].args[0][0], 'open')
+        self.assertFalse(any('sudo' in call.args[0] for call in run.call_args_list))
+
+    def test_unapproved_status_and_noninteractive_prepare_do_not_open_settings(self):
+        with patch.object(remote.platform, 'system', return_value='Darwin'):
+            with patch.object(remote, 'run', return_value=self.result(1)) as run:
+                with patch.object(remote.sys.stdout, 'isatty', return_value=False):
+                    self.assertEqual(remote.main(['prepare']), 0)
+                    self.assertEqual(remote.main(['status']), 1)
+        self.assertTrue(all(call.args[0][0] == 'launchctl' for call in run.call_args_list))
+
+    def test_explicit_mac_setup_opens_settings_even_when_service_is_registered(self):
+        with patch.object(remote.platform, 'system', return_value='Darwin'):
+            with patch.object(remote, 'run', return_value=self.result()) as run:
+                self.assertEqual(remote.main(['setup']), 0)
+        self.assertEqual(run.call_args_list[1].args[0][0], 'open')
+
+    def test_wsl_and_omarchy_refuse_before_native_commands(self):
+        for wsl, omarchy in [(True, False), (False, True)]:
+            with patch.object(remote.platform, 'system', return_value='Linux'):
+                with patch.object(remote, 'is_wsl', return_value=wsl):
+                    with patch.object(remote.shutil, 'which', return_value='/stub' if omarchy else None):
+                        with patch.object(remote, 'run') as run:
+                            self.assertEqual(remote.main(['setup']), 1)
+            run.assert_not_called()
+
+    def test_gnome_existing_credentials_are_preserved_when_enabling_startup(self):
+        with patch.object(remote.platform, 'system', return_value='Linux'):
+            with patch.object(remote, 'is_wsl', return_value=False):
+                with patch.dict(os.environ, XDG_CURRENT_DESKTOP='ubuntu:GNOME'):
+                    with patch.object(remote.shutil, 'which', side_effect=lambda name: None if name == 'omarchy' else '/stub'):
+                        with patch.object(remote, 'run', side_effect=[self.result(text='RDP:\n  Status: enabled\n'), self.result()]) as run:
+                            self.assertEqual(remote.main(['prepare']), 0)
+        self.assertEqual(run.call_args_list[1].args[0], ['systemctl', '--user', 'enable', '--now', 'gnome-remote-desktop.service'])
+        self.assertFalse(any('set-credentials' in call.args[0] for call in run.call_args_list))
+
+
+if __name__ == '__main__':
+    unittest.main()
