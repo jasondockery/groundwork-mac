@@ -348,6 +348,12 @@ groundwork-update-reminder() {
 
   zmodload zsh/stat 2>/dev/null || return
 
+  local lock_lib="$HOME/.local/lib/groundwork/update-lock.sh"
+  if [[ -r "$lock_lib" ]]; then
+    source "$lock_lib"
+    groundwork_lock_is_active && return
+  fi
+
   local state_dir="$HOME/.local/state/groundwork"
   local stamp="$state_dir/last-update-all"
   local shown="$state_dir/update-reminder-last-shown"

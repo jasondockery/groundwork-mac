@@ -38,7 +38,7 @@ groundwork_sudo_keepalive_start() {
 # 0 when /dev/tty is a controlling terminal this process can use.
 groundwork_sudo_terminal_open() {
   [[ -r /dev/tty && -w /dev/tty ]] || return 1
-  : </dev/tty >/dev/null || return 1
+  { : </dev/tty >/dev/null; } 2>/dev/null || return 1
 }
 
 # Returns 0 when privileged commands can proceed, 10 when they must be set
@@ -94,12 +94,13 @@ groundwork_brewfile_casks() {
   ' "$1"
 }
 
-# Print cask tokens whose Homebrew installer is a pkg or script installer.
-# Those are the installs that call sudo. Returns 2 when the metadata or a
-# parser is unavailable; the caller must not guess which casks to skip.
+# Print pending casks needing a privileged installer or app adoption.
+# Installed receipts satisfy an install-only apply without another password.
+# Returns 2 for unavailable metadata or parsers; never guess the skipped set.
 groundwork_casks_needing_installer_sudo() {
   local brewfile="$1"
-  local requested metadata needed parser_status token
+  local requested metadata needed parser_status token artifact installed applications_dir foreign_owner
+  applications_dir="${GROUNDWORK_APPLICATIONS_DIR:-/Applications}"
   requested="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-casks.XXXXXX")"
   metadata="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-meta.XXXXXX")"
   needed="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-needed.XXXXXX")"
@@ -122,6 +123,12 @@ groundwork_casks_needing_installer_sudo() {
     return 2
   fi
 
+  installed="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-installed.XXXXXX")"
+  if ! groundwork_installed_casks >"$installed"; then
+    rm -f -- "$requested" "$metadata" "$needed" "$installed"
+    return 2
+  fi
+
   parser_status=0
   if command -v jq >/dev/null 2>&1; then
     jq -r --rawfile requested "$requested" '
@@ -135,9 +142,13 @@ groundwork_casks_needing_installer_sudo() {
             or any(.artifacts[]; type != "object")) then
           error("incomplete or malformed cask metadata")
         else .[] end
-      | select(any(.artifacts[]?; has("pkg") or has("installer")))
-      | .token
-      | select(test("^[A-Za-z0-9@+._-]+$"))
+      | . as $cask
+      | if any(.artifacts[]; has("pkg") or has("installer")) then .token
+        else .artifacts[] | select(has("app"))
+          | if (.app | type) != "array" or (.app[0] | type) != "string" then
+              error("invalid app artifact")
+            else [$cask.token, (.app[1].target // .app[0])] | @tsv end
+        end
     ' "$metadata" >"$needed" || parser_status=$?
   elif perl -MJSON::PP -e 1 >/dev/null 2>&1; then
     perl -MJSON::PP -e '
@@ -164,7 +175,14 @@ groundwork_casks_needing_installer_sudo() {
       for my $cask (@casks) {
         my $needs_sudo = grep { exists $_->{pkg} || exists $_->{installer} }
           @{ $cask->{artifacts} };
-        print $cask->{token}, "\n" if $needs_sudo;
+        if ($needs_sudo) { print $cask->{token}, "\n"; next; }
+        for my $artifact (@{ $cask->{artifacts} }) {
+          next unless exists $artifact->{app};
+          my $app = $artifact->{app};
+          die "invalid app artifact" unless ref($app) eq "ARRAY" && !ref($app->[0]) && defined $app->[0];
+          my $target = ref($app->[1]) eq "HASH" ? ($app->[1]{target} // $app->[0]) : $app->[0];
+          print $cask->{token}, "\t", $target, "\n";
+        }
       }
     ' "$metadata" "$requested" >"$needed" || parser_status=$?
   elif command -v python3 >/dev/null 2>&1; then
@@ -190,22 +208,55 @@ for cask in casks:
 for cask in casks:
     if any("pkg" in item or "installer" in item for item in cask["artifacts"]):
         print(cask["token"])
+    else:
+        for item in cask["artifacts"]:
+            if "app" not in item:
+                continue
+            app = item["app"]
+            if not isinstance(app, list) or not app or not isinstance(app[0], str):
+                raise SystemExit("invalid app artifact")
+            target = app[1].get("target", app[0]) if len(app) > 1 and isinstance(app[1], dict) else app[0]
+            print(cask["token"] + "\t" + target)
 PYTHON
   else
     parser_status=2
   fi
   if [[ "$parser_status" -ne 0 ]]; then
-    rm -f -- "$requested" "$metadata" "$needed"
+    rm -f -- "$requested" "$metadata" "$needed" "$installed"
     return 2
   fi
-
-  while IFS= read -r token; do
+  : >"$metadata"
+  while IFS=$'\t' read -r token artifact; do
     [[ -n "$token" ]] || continue
-    if grep -qxF -- "$token" "$requested"; then
-      printf '%s\n' "$token"
+    if ! grep -qxF -- "$token" "$requested"; then
+      parser_status=2
+      break
     fi
+    grep -qxF -- "$token" "$installed" && continue
+    if [[ -n "$artifact" ]]; then
+      if [[ "$artifact" == */* || "$artifact" != *.app || "$artifact" == *$'\n'* || "$artifact" == *$'\t'* || "$artifact" == *\\* ]]; then
+        parser_status=2
+        break
+      fi
+      if [[ ! -e "$applications_dir/$artifact" && ! -L "$applications_dir/$artifact" ]]; then
+        [[ -w "$applications_dir" ]] && continue
+      elif [[ ! -L "$applications_dir/$artifact" && -w "$applications_dir/$artifact" && -w "$applications_dir" ]]; then
+        # chmod/chgrp during adoption require ownership, even when a group
+        # grants write permission on the top-level directory.
+        foreign_owner="$(find "$applications_dir/$artifact" ! -user "$EUID" -print -quit)" || {
+          parser_status=2
+          break
+        }
+        [[ -z "$foreign_owner" ]] && continue
+      fi
+    fi
+    printf '%s\n' "$token" >>"$metadata"
   done <"$needed"
-  rm -f -- "$requested" "$metadata" "$needed"
+  if [[ "$parser_status" -eq 0 ]]; then
+    LC_ALL=C sort -u "$metadata"
+  fi
+  rm -f -- "$requested" "$metadata" "$needed" "$installed"
+  return "$parser_status"
 }
 
 groundwork_sudo_record_deferred() {
@@ -235,4 +286,84 @@ groundwork_sudo_read_deferred() {
     return 1
   fi
   awk 'NF == 1 { print }' "$path"
+}
+
+# A failed inventory is unknown, never proof that an application is missing.
+groundwork_installed_casks() {
+  local inventory status=0
+  inventory="$(mktemp "${TMPDIR:-/tmp}/groundwork-installed-casks.XXXXXX")"
+  HOMEBREW_NO_AUTO_UPDATE=1 brew list --cask --versions >"$inventory" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    awk 'NF && (NF < 2 || $1 !~ /^[A-Za-z0-9@+._-]+$/) { exit 1 }' "$inventory" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    awk 'NF { print $1 }' "$inventory"
+  fi
+  rm -f -- "$inventory"
+  return "$status"
+}
+
+groundwork_pending_casks() {
+  local requested="$1" installed status=0
+  installed="$(mktemp "${TMPDIR:-/tmp}/groundwork-pending-casks.XXXXXX")"
+  groundwork_installed_casks >"$installed" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    awk -v inventory="$installed" 'BEGIN { while ((getline token < inventory) > 0) done[token] = 1 } !done[$0] { print }' "$requested"
+  fi
+  rm -f -- "$installed"
+  return "$status"
+}
+
+groundwork_sudo_mas_deferred_path() {
+  printf '%s\n' "$HOME/.local/state/groundwork/sudo-deferred-app-store.Brewfile"
+}
+
+# Keep exact selected App Store declarations; app names are never shell code.
+groundwork_pending_mas_entries() {
+  local manifest="$1" requested installed status=0
+  requested="$(mktemp "${TMPDIR:-/tmp}/groundwork-mas-requested.XXXXXX")"
+  installed="$(mktemp "${TMPDIR:-/tmp}/groundwork-mas-installed.XXXXXX")"
+  if ! awk '$1 == "mas" && $0 !~ /^mas "[^"\t]+", id: [0-9]+[[:space:]]*(#.*)?$/ { exit 1 }' "$manifest"; then
+    rm -f -- "$requested" "$installed"
+    return 2
+  fi
+  awk '$1 == "mas" { print }' "$manifest" >"$requested"
+  if [[ ! -s "$requested" ]]; then
+    rm -f -- "$requested" "$installed"
+    return 0
+  fi
+  if ! command -v mas >/dev/null 2>&1; then
+    # A fresh bootstrap has not installed mas yet. Conservatively set aside
+    # its selected entries without claiming an installed-state observation.
+    cat "$requested"
+    rm -f -- "$requested" "$installed"
+    return 0
+  fi
+  mas list >"$installed" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    awk 'NF && $1 !~ /^[0-9]+$/ { exit 1 }' "$installed" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    awk -v inventory="$installed" '
+      BEGIN { while ((getline row < inventory) > 0) { split(row, fields); done[fields[1]] = 1 } }
+      { id = $0; sub(/^.*", id: /, "", id); sub(/[[:space:]].*$/, "", id); if (!done[id]) print }
+    ' "$requested"
+  fi
+  rm -f -- "$requested" "$installed"
+  return "$status"
+}
+
+# App Store installation can select a new Xcode after the initial preflight.
+# License consent is a local human action on every installation/retry path.
+groundwork_check_xcode_license() {
+  local developer_dir
+  [[ "$(uname -s)" == Darwin ]] || return 0
+  developer_dir="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
+  if [[ "$developer_dir" == *.app/Contents/Developer ]] \
+    && ! /usr/bin/xcodebuild -license check >/dev/null 2>&1; then
+    echo "Groundwork: the package bundle completed, but the selected Xcode license needs local acceptance." >&2
+    echo "Review and accept it with: sudo xcodebuild -license" >&2
+    echo "Then run chezmoi apply again. Later Homebrew stages were not started." >&2
+    return 1
+  fi
 }
