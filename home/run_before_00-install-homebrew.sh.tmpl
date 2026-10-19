@@ -61,6 +61,29 @@ if command -v apt-get >/dev/null 2>&1; then
     apt-get update
     apt-get install -y build-essential procps curl file git
   elif command -v sudo >/dev/null 2>&1; then
+    # These packages are required before Homebrew can install. Ask once when
+    # someone is here. When nobody is here, stop. Do not continue into the
+    # Homebrew installer without them.
+    if ! sudo -n true 2>/dev/null; then
+      if [[ -r /dev/tty && -w /dev/tty ]] && : </dev/tty >/dev/null; then
+        echo "Groundwork: Homebrew's Linux packages need an administrator password."
+        echo "Enter your password when asked. This approval covers those packages."
+        sudo_status=0
+        # sudo -v reads the password on its own standard input. Point that prompt
+        # at the terminal. These redirects are not a command run under sudo.
+        # shellcheck disable=SC2024
+        sudo -v </dev/tty >/dev/tty 2>/dev/tty || sudo_status=$?
+        if [[ "$sudo_status" -ne 0 ]]; then
+          echo "Groundwork: administrator permission was not granted, so no packages were installed." >&2
+          echo "From a terminal on this machine, run chezmoi apply and enter your password when asked." >&2
+          exit "$sudo_status"
+        fi
+      else
+        echo "Groundwork: Homebrew's Linux packages need an administrator password, and no terminal is available to ask for it." >&2
+        echo "Nothing was installed. From a terminal on this machine, run chezmoi apply and enter your password when asked." >&2
+        exit 1
+      fi
+    fi
     sudo apt-get update
     sudo apt-get install -y build-essential procps curl file git
   else

@@ -199,6 +199,7 @@
       <div class="callout note">
         <span class="label">The setup scripts retry themselves</span>
         <p>The install scripts are written to be re-run safely: anything that failed (a network blip, a tool that wasn't ready) is picked up on the next <code>chezmoi apply</code>, and steps that already succeeded are skipped. So a clean re-apply is the right first response to a half-finished install.</p>
+        <p>An apply with no terminal cannot type an administrator password. Installers that need one, such as the Tailscale app, are set aside and named in the output. The rest of setup continues. They are not installed yet, and that apply is not a successful install of those apps. Run <code>chezmoi apply</code> from a terminal on the machine and enter the password when asked. A real install error still stops the apply so the next run can retry it.</p>
       </div>
 
       <h3>Downloads fail with <code>curl: (92)</code> or the fetch stalls</h3>

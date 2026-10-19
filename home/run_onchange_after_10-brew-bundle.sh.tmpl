@@ -64,8 +64,12 @@ export HOMEBREW_NO_ASK=1
 # One failed package must not skip the recovery steps below (a dead cask
 # should never leave the launcher or keyboard driver down), but the script
 # still exits non-zero afterwards so chezmoi retries the bundle on the next
-# apply instead of recording it as done. Interactive macOS work keeps a real
-# terminal while saving a normalized log, so password prompts stay visible and
+# apply instead of recording it as done. A cask whose installer needs an
+# administrator password is the exception when nobody is at the terminal:
+# it is removed from this bundle, recorded for the every-apply retry, and
+# this script can exit 0 so later setup still runs. That is not success for
+# the set-aside cask. Interactive macOS work keeps a real terminal while
+# saving a normalized log, so password prompts stay visible and
 # groundwork-brew-repair can still offer Homebrew's exact remediation commands.
 brew_output_lib="$HOME/.local/share/groundwork/lib/brew-output.sh"
 if [[ ! -r "$brew_output_lib" ]]; then
@@ -74,6 +78,13 @@ if [[ ! -r "$brew_output_lib" ]]; then
 fi
 # shellcheck source=/dev/null
 . "$brew_output_lib"
+sudo_preflight_lib="$HOME/.local/share/groundwork/lib/sudo-preflight.sh"
+if [[ ! -r "$sudo_preflight_lib" ]]; then
+  echo "Groundwork: administrator-permission helper is missing: $sudo_preflight_lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$sudo_preflight_lib"
 brew_log_dir="$HOME/.local/state/groundwork/logs"
 mkdir -p "$brew_log_dir"
 bundle_log_final="$brew_log_dir/homebrew-bundle-latest.log"
@@ -118,6 +129,9 @@ fi
 bundle_log_exit() {
   local status=$?
   trap - EXIT
+  if declare -F groundwork_sudo_keepalive_stop >/dev/null 2>&1; then
+    groundwork_sudo_keepalive_stop
+  fi
   # An INT/TERM/HUP trap exits this shell directly, which skips the sweep inside
   # the attached Homebrew stage. Close any stage still live BEFORE restoring the
   # terminal, so the transaction never ends with brew, sudo, or an installer
@@ -168,6 +182,73 @@ if [[ "$groundwork_color" == "1" ]]; then
   export HOMEBREW_COLOR=1
 fi
 bundle_status=0
+sudo_prepare_status=0
+groundwork_sudo_prepare || sudo_prepare_status=$?
+case "$sudo_prepare_status" in
+  0) ;;
+  10)
+    deferred_casks="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-deferred.XXXXXX")"
+    chmod 600 "$deferred_casks"
+    classify_status=0
+    groundwork_casks_needing_installer_sudo "$bundle_file" >"$deferred_casks" \
+      || classify_status=$?
+    if [[ "$classify_status" -ne 0 ]]; then
+      rm -f -- "$deferred_casks"
+      echo "Groundwork: administrator permission is not cached, and this run cannot tell which apps need a password." >&2
+      echo "Nothing further was installed. From a terminal on this machine, run chezmoi apply and enter your password when asked." >&2
+      exit 1
+    fi
+    if [[ -s "$deferred_casks" ]]; then
+      deferred_tokens=()
+      while IFS= read -r deferred_token; do
+        [[ -n "$deferred_token" ]] && deferred_tokens+=("$deferred_token")
+      done <"$deferred_casks"
+      if [[ "${#deferred_tokens[@]}" -eq 0 ]]; then
+        rm -f -- "$deferred_casks"
+        echo "Groundwork: the password-gated app list was empty after classification. Nothing further was installed." >&2
+        exit 1
+      fi
+      if ! groundwork_sudo_record_deferred "${deferred_tokens[@]}"; then
+        rm -f -- "$deferred_casks"
+        echo "Groundwork: could not record the apps that need a password. Nothing further was installed." >&2
+        exit 1
+      fi
+      filtered_bundle="$(mktemp "${TMPDIR:-/tmp}/groundwork-brewfile.XXXXXX")"
+      chmod 600 "$filtered_bundle"
+      awk -v skip_file="$deferred_casks" '
+        BEGIN {
+          while ((getline token < skip_file) > 0) skipped[token] = 1
+          close(skip_file)
+        }
+        $1 == "cask" {
+          token = $2
+          gsub(/^"|"$/, "", token)
+          if (skipped[token]) next
+        }
+        { print }
+      ' "$bundle_file" >"$filtered_bundle"
+      if [[ "$bundle_file_owned" -eq 1 ]]; then
+        mv -f -- "$filtered_bundle" "$bundle_file"
+      else
+        bundle_file="$filtered_bundle"
+        bundle_file_owned=1
+      fi
+      echo "Groundwork: these apps need an administrator password, so they were set aside: ${deferred_tokens[*]}."
+      echo "They are not installed yet. The rest of this setup will continue."
+      echo "From a terminal on this machine, run chezmoi apply and enter your password when asked."
+    fi
+    rm -f -- "$deferred_casks"
+    ;;
+  130)
+    echo "Groundwork: the password prompt was cancelled. Privileged installs were not started." >&2
+    exit 130
+    ;;
+  *)
+    echo "Groundwork: administrator permission was not granted (exit ${sudo_prepare_status}). Nothing further was installed." >&2
+    echo "From a terminal on this machine, run chezmoi apply and enter your password when asked." >&2
+    exit "$sudo_prepare_status"
+    ;;
+esac
 # Checksums are an INSTALL-time policy, not just an upgrade-time one: a fresh
 # machine gets its casks from here, long before update-all ever runs.
 # HOMEBREW_CASK_OPTS is how --require-sha reaches `brew bundle`'s cask installs.

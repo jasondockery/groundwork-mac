@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Prove unattended metadata and retry boundaries with private command stubs."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+LIB = REPO / "home/dot_local/share/groundwork/lib/sudo-preflight.sh"
+
+
+class SudoTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="groundwork-sudo-review-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.home = self.root / "home"
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        for name in ("awk", "sort", "mktemp", "rm", "grep", "dirname", "mkdir", "chmod", "mv", "cat", "sleep"):
+            (self.bin / name).symlink_to(shutil.which(name))
+        self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin),
+                        REVIEW_METADATA=str(self.root / "metadata"),
+                        REVIEW_CAPTURE=str(self.root / "capture"))
+        self.stub("brew", 'case "$1" in info) cat "$REVIEW_METADATA";; shellenv) :;; bundle) for arg in "$@"; do case "$arg" in --file=*) cat "${arg#--file=}" >"$REVIEW_CAPTURE";; esac; done;; esac')
+        self.stub("sudo", "exit 0")
+        self.manifest = self.home / ".config/homebrew/Brewfile"
+        self.manifest.parent.mkdir(parents=True)
+        self.manifest.write_text('cask "tailscale-app"\ncask "ghostty"\n')
+        self.state = self.home / ".local/state/groundwork/sudo-deferred-casks.txt"
+        self.state.parent.mkdir(parents=True)
+        self.state.write_text("tailscale-app\n")
+        lib = self.home / ".local/share/groundwork/lib"
+        lib.mkdir(parents=True)
+        shutil.copy(LIB, lib / LIB.name)
+        self.env["GROUNDWORK_BREW_BIN"] = str(self.bin / "brew")
+
+    def stub(self, name, body):
+        path = self.bin / name
+        path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
+        path.chmod(0o755)
+
+    def run_shell(self, *command):
+        return subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=10)
+
+    def classify(self, metadata, parser):
+        for name in ("jq", "perl", "python3"):
+            path = self.bin / name
+            if path.exists():
+                path.unlink()
+        executable = shutil.which(parser)
+        if not executable:
+            self.skipTest(parser + " unavailable")
+        (self.bin / parser).symlink_to(executable)
+        (self.root / "metadata").write_text(json.dumps(metadata))
+        return self.run_shell("/bin/bash", "-c", 'source "$1"; groundwork_casks_needing_installer_sudo "$2"', "review", str(LIB), str(self.manifest))
+
+    def test_each_parser_rejects_incomplete_or_malformed_metadata(self):
+        valid = {"token": "tailscale-app", "artifacts": [{"pkg": ["Tailscale.pkg"]}]}
+        invalid = ({}, {"casks": []}, {"casks": [valid]},
+                   {"casks": [valid, valid]},
+                   {"casks": [valid, {"token": "ghostty"}]},
+                   {"casks": [valid, {"token": "ghostty", "artifacts": [None]}]})
+        for parser in ("jq", "perl", "python3"):
+            for metadata in invalid:
+                with self.subTest(parser=parser, metadata=metadata):
+                    result = self.classify(metadata, parser)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertEqual(result.stdout, "")
+
+    def test_each_parser_classifies_complete_response(self):
+        for parser in ("jq", "perl", "python3"):
+            with self.subTest(parser=parser):
+                result = self.classify({"casks": [
+                    {"token": "ghostty", "artifacts": [{"app": ["Ghostty.app"]}]},
+                    {"token": "tailscale-app", "artifacts": [{"pkg": ["Tailscale.pkg"]}]}]}, parser)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "tailscale-app\n")
+
+    def retry(self):
+        return self.run_shell("/bin/bash", str(REPO / "home/run_after_12-sudo-deferred-casks.sh"))
+
+    def test_removed_cask_never_reaches_homebrew(self):
+        self.manifest.write_text('brew "git"\n')
+        result = self.retry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "capture").exists())
+        self.assertFalse(self.state.exists())
+
+    def test_current_manual_exclusion_never_reaches_homebrew(self):
+        self.env["GROUNDWORK_BREWFILE_SKIP_CASKS"] = "tailscale-app"
+        result = self.retry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "capture").exists())
+
+    def test_missing_manifest_preserves_retry_without_install(self):
+        self.manifest.unlink()
+        result = self.retry()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.state.read_text(), "tailscale-app\n")
+        self.assertFalse((self.root / "capture").exists())
+
+    def test_current_cask_is_retried(self):
+        result = self.retry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "capture").read_text(), 'cask "tailscale-app"\n')
+        self.assertFalse(self.state.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
