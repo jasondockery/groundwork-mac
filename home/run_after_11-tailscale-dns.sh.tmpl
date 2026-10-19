@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+{{ if eq .chezmoi.os "darwin" -}}
+# Tailscale owns split DNS. Retire only the exact legacy Groundwork resolver;
+# custom files and symlinks remain user-owned. Keep a root-owned recovery copy.
+# This runs on every apply. When nobody can enter a password, it waits for the
+# next terminal apply instead of stopping the rest of setup.
+target="/etc/resolver/ts.net"
+if [[ ! -e "$target" && ! -L "$target" ]]; then
+  exit 0
+fi
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+printf '%s\n' 'nameserver 100.100.100.100' >"$tmp"
+if [[ -L "$target" || ! -f "$target" ]] || ! cmp -s "$tmp" "$target"; then
+  echo "Preserving custom $target; review it if Tailscale MagicDNS fails."
+  exit 0
+fi
+
+sudo_preflight_lib="$HOME/.local/share/groundwork/lib/sudo-preflight.sh"
+if [[ ! -r "$sudo_preflight_lib" ]]; then
+  echo "Groundwork: administrator-permission helper is missing: $sudo_preflight_lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$sudo_preflight_lib"
+trap 'groundwork_sudo_keepalive_stop; rm -f "$tmp"' EXIT
+sudo_prepare_status=0
+groundwork_sudo_prepare || sudo_prepare_status=$?
+case "$sudo_prepare_status" in
+  0) ;;
+  10)
+    echo "Groundwork: retiring the old Tailscale resolver needs an administrator password."
+    echo "It was not changed. From a terminal on this machine, run chezmoi apply and enter your password when asked."
+    exit 0
+    ;;
+  130)
+    echo "Groundwork: the password prompt was cancelled. The old Tailscale resolver was not changed." >&2
+    exit 130
+    ;;
+  *)
+    echo "Groundwork: administrator permission was not granted (exit ${sudo_prepare_status}). The old Tailscale resolver was not changed." >&2
+    exit "$sudo_prepare_status"
+    ;;
+esac
+
+backup_dir="$(sudo mktemp -d /etc/groundwork-tailscale-resolver.XXXXXX)"
+sudo mv "$target" "$backup_dir/ts.net"
+printf 'Retired legacy Tailscale resolver; recovery copy: %s/ts.net\n' "$backup_dir"
+sudo dscacheutil -flushcache || true
+sudo killall -HUP mDNSResponder || true
+{{ end -}}
