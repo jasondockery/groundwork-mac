@@ -37,14 +37,12 @@ RUN set -eux; \
 USER $USER
 WORKDIR /home/$USER
 RUN mkdir -p /home/$USER/.config/chezmoi
-ENV PATH=/home/$USER/.local/bin:/home/$USER/.cargo/bin:/home/$USER/.local/share/mise/shims:$PATH
+# Keep repository runtime shims before package-manager binaries for direct commands.
+ENV PATH=/home/$USER/.local/bin:/home/$USER/.cargo/bin:/home/$USER/.local/share/mise/shims:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
 
 RUN sh -c "$(curl -fsSL https://get.chezmoi.io)" -- -b /home/$USER/.local/bin
 COPY --chown=$USER:$USER . /opt/groundwork
 COPY --chown=$USER:$USER docker/chezmoi.headless.toml /home/$USER/.config/chezmoi/chezmoi.toml
 RUN chezmoi --source /opt/groundwork apply
-
-# Direct container commands need package binaries before shell startup runs.
-ENV PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
 
 CMD ["zsh"]
