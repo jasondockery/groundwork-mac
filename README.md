@@ -157,7 +157,6 @@ These establish the machine baseline and are stored in `~/.config/chezmoi/chezmo
 
 | Prompt | Notes |
 | --- | --- |
-| Is this a work machine? | `no` by default. `yes` gates personal apps and Docker Desktop off this Mac |
 | Is this a server/CI Mac with no desktop apps? | Mac only. `no` by default. Most Macs should press Enter; `yes` skips Raycast, browsers, Obsidian, App Store apps, and macOS defaults. Linux/WSL skip macOS desktop apps by OS |
 | What is your GitHub username? | Your own — sets your git identity, separate from the `jasondockery` repo address used for cloning |
 | What name should Git use for commits? | Your human name in commit metadata |
@@ -196,18 +195,19 @@ These are the one-time steps macOS or the app vendor should own: account sign-in
 - [ ] **ChatGPT app cleanup** — fresh Groundwork setup installs only the current unified `ChatGPT.app`. `ChatGPT Classic.app` remains supported for compatibility and existing Enterprise workflows, but it is a legacy duplicate for most people. After current-app ownership is verified, an interactive `update-all` may separately offer a default-no, signing-team-checked move to Trash or exact cask removal. The explicit command remains `groundwork-app-remove chatgpt-classic`. A deprecated `codex-app` receipt stays separate and uses `groundwork-app-remove codex-app`; it is never removed automatically.
 - [ ] **Grok Build** (optional to use) — the CLI is installed by the Brewfile, but using it needs a SuperGrok / X Premium+ subscription; run `grok` in a project to sign in. See `docs/grok.html`.
 - [ ] **T3 Code and Herdr** — all supported profiles include both. T3 Code uses the upstream **Nightly** channel (`t3-code@nightly` on desktop Macs); choose and authenticate an agent provider inside T3 Code, then run `herdr` to start a Herdr workspace. Homebrew owns desktop updates. Reapply the source to reconcile the official CLI installer to Nightly; `t3 update` follows the CLI channel. Choose **Both** in the multiplexer interview if you want to practice the tmux curriculum alongside Herdr. Shared setup and Tailscale guidance lives in [`groundwork-core/docs/ai-tools-and-remote-access.md`](https://github.com/jasondockery/groundwork-core/blob/main/docs/ai-tools-and-remote-access.md).
-- [ ] **Tailscale** — the Brewfile installs it where Homebrew is present. Headless or ARM64 Linux hosts without Homebrew need the official native package first; follow the [platform remote-access steps](docs/remote-access.md). Sign in to your tailnet, approve the device if required, and use its MagicDNS name for private access. The [shared Tailscale guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/tailscale.md) covers policy. Desktop Macs use the Tailscale app and Remote Login for incoming SSH.
+- [ ] **Tailscale** — the Brewfile installs it where Homebrew is present. A supported headless or ARM64 Linux setup also installs Homebrew and the Tailscale formula; follow the [platform remote-access steps](docs/remote-access.md). Sign in to your tailnet, approve the device if required, and use its MagicDNS name for private access. The [shared Tailscale guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/tailscale.md) covers policy. Desktop Macs use the Tailscale app and Remote Login for incoming SSH.
 - [ ] **Learning tracks** — the browser/Three.js FPS track starts at `docs/game-dev.html` and needs no Unity install. If you enabled `game_dev`, open Unity Hub, install the latest Unity 6 LTS editor, add the WebGL module, then follow `docs/game-dev-unity.html`. The web, app, and image/video tracks live at `docs/web-dev.html`, `docs/app-dev.html`, and `docs/gen-media.html`.
-- [ ] **Work Mac only** — start the Docker daemon: `colima start`.
+- [ ] **Containers** · Colima plus the Docker CLI is the common Mac default. Follow the [Docker Desktop migration and removal guide](docs/docker-desktop-to-colima.md) before moving existing workloads.
 
-## Work vs personal
+## One developer setup
 
-For a desktop Mac, open **T3 Code (Nightly)** and confirm its version/channel before signing in to a provider. On Apple Silicon, apply also reconciles the standalone `t3` CLI to Nightly, including an earlier Stable install in `~/.local/bin`. Homebrew owns the desktop app; the official CLI installer and `t3 update` own the standalone command. Intel Macs use the desktop app. An existing Stable desktop app stays installed; select the Nightly app in your launcher.
+Personal and managed machines share the coding tools: Codex CLI, Grok Build, Claude Code, OpenCode, and the supported desktop apps. Desktop Macs include ChatGPT, Claude, Cursor, VS Code, and OpenCode desktop. Linux/WSL includes the same native coding CLIs; desktop Linux also includes Cursor. Official ChatGPT and Claude native desktop apps are not provided for Linux; use their web apps there. Authentication stays local and organization/device policy takes precedence.
 
-One repo, both machines. The `work` flag (answered at init) gates the work Mac:
+Use `groundwork-configure` for independent choices: container backend, Git identity, optional personal apps, C#/infrastructure extensions, environment role, and release posture. Colima plus Docker CLI is the default on all Macs. Existing `work` answers are retained only to seed Git and optional-app preferences during migration; that flag no longer excludes coding tools. Explicit stored preferences survive re-initialization. New setup has no work/personal interview.
 
-- **Off work:** Claude Code + the Claude app, Codex (CLI + app), ChatGPT, Grok Build, Cursor, OpenCode, Zed, Obsidian, Docker Desktop, and AppCleaner. (Chrome, Karabiner, Raycast, BetterDisplay, and core terminal tools install on both machines.)
-- **On work:** Docker becomes Colima + the Docker CLI (license-free). Confirm your employer permits the AI tools before enabling them there.
+[Move from Docker Desktop to Colima](docs/docker-desktop-to-colima.md) covers the recommendation, differing migration scenarios, backups, project checks, rollback, and optional Docker Desktop uninstallation. Installing Colima alone does not migrate data or authorize removal.
+
+Homebrew owns the newest supported packages, including the checksummed Linux casks for coding CLIs. `update-all` refreshes Homebrew and upgrades eligible installed formulae and casks on both platforms. Operating-system updates and Windows host applications retain their native updater. All tool use and remote-access acceptance still require local checks; package presence is not authentication.
 
 ## Daily use
 

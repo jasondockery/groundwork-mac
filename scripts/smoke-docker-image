@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Run inside the built image through scripts/verify-docker-image.
+set -euo pipefail
+
+# Prove direct container execution before an interactive shell can repair PATH.
+for tool in codex claude grok opencode; do
+  "$tool" --version
+done
+tailscale version
+
+exec zsh -ic 'rg --version && nvim --version && tmux -V && herdr --version && t3 --version && mise --version && uv --version && zoxide --version && atuin --version && starship --version && lazygit --version && delta --version && eza --version && sesh --version && cd /opt/groundwork && scripts/test-developer-tool-visibility --require-runtime-tools --source-less-runtime-smoke && echo OK'

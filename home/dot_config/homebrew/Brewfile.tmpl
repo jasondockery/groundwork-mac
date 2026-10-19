@@ -1,5 +1,4 @@
-{{- $work := false -}}
-{{- if hasKey . "work" }}{{- $work = .work -}}{{- end -}}
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 {{- $headless := false -}}
 {{- if hasKey . "headless" }}{{- $headless = .headless -}}{{- end -}}
 {{- $gameDev := false -}}
@@ -78,6 +77,19 @@ brew "bitwarden-cli"
 # GNU timeout bounds official CLI installers on desktop and headless Macs.
 brew "coreutils"
 {{- end }}
+{{ if eq .chezmoi.os "darwin" -}}
+# Colima is the common Mac default. Existing Docker Desktop data is preserved.
+{{ if eq (get $developer "docker_backend") "colima" -}}
+brew "colima"
+brew "docker"
+brew "docker-compose"
+brew "docker-buildx"
+brew "docker-credential-helper"
+{{- else if and (not $headless) (eq (get $developer "docker_backend") "docker-desktop") -}}
+cask "docker-desktop"
+{{- end }}
+
+{{- end }}
 {{ if and (eq .chezmoi.os "darwin") $headless -}}
 # A headless Mac cannot approve the menu-bar app. This formula conflicts with the desktop cask.
 brew "tailscale"
@@ -118,43 +130,33 @@ cask "betterdisplay"          # display resolution presets, DDC brightness, layo
 cask "vorssaint"              # Apple Silicon menu-bar toolkit. macOS 14 or newer. Omarchy keeps its own bar.
 {{- end }}
 
-# Docker. Desktop needs a PAID license for orgs >250 staff or >$10M revenue, so:
-#   personal -> Docker Desktop (app + CLI + daemon); work -> Colima + CLI (free, no GUI).
-{{ if $work -}}
-brew "colima"
-brew "docker"
-brew "docker-compose"
-brew "docker-buildx"
-{{- else -}}
-cask "docker-desktop"
-{{- end }}
-
 cask "t3-code@nightly"       # selected T3 Code train; provider sign-in remains local
-{{ if not $work -}}
-# Personal machines only: AI agents + editors + personal apps
-# Claude Code CLI on the vendor's faster release channel. This is a normal
-# versioned, checksummed cask — NOT Homebrew's `version :latest` (which would
-# force `sha256 :no_check`). So it carries no release-age floor, but its
-# artifact is still verified, and `brew upgrade --require-sha` in update-all
-# keeps it that way.
-cask "claude-code@latest"
-cask "claude"                # Claude desktop app (chat, files, supervise Claude Code sessions)
-cask "codex"                 # Codex CLI
-cask "chatgpt"               # OpenAI ChatGPT desktop app
-cask "grok-build"            # Grok Build CLI (SpaceXAI coding agent; installs the `grok` binary)
-brew "opencode"              # OpenCode CLI
-cask "visual-studio-code"    # hosts the anthropic.claude-code extension (vscode-extensions.txt)
+# Developer desktop apps are available on personal and managed Macs alike.
+cask "claude"
+cask "chatgpt"
+cask "visual-studio-code"
 cask "cursor"
-cask "opencode-desktop"      # OpenCode UI
+cask "opencode-desktop"
 cask "zed"
+{{ if get $developer "personal_apps" -}}
 cask "obsidian"
 cask "ollama-app"            # local LLM runtime; serves localhost:11434 for Smart Connections embeddings + Whisper
 cask "discord"               # communities / gaming / dev servers
 cask "whatsapp"              # messaging
 cask "iina"                  # modern media player (mpv-backed); plays what QuickTime won't
 cask "appcleaner"            # remove plain dragged-in apps and their related files after checking the vendor/Homebrew path first
+{{- end }}
 {{ if $gameDev -}}
 cask "unity-hub"             # optional game-dev track: installs Unity Hub; install Unity 6 LTS inside Hub
 {{- end }}
 {{- end }}
+
+# Native coding CLIs use checksummed Homebrew artifacts on macOS and Linux,
+# including WSL2 and headless setups. Provider authentication remains local.
+cask "claude-code@latest"
+cask "codex"
+cask "grok-build"
+brew "opencode"
+{{ if and (eq .chezmoi.os "linux") (not $headless) -}}
+cask "cursor"
 {{- end }}

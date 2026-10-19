@@ -752,9 +752,13 @@ render() {
   local profile_preset="${11:-personal-current}"
   local environment_role="${12:-personal}"
   local release_posture="${13:-current}"
+  # Existing Docker Desktop transaction fixtures select that alternative; the
+  # default preference matrix is exercised by scripts/test-common-setup.
+  local docker_backend="${14:-colima}"
+  [[ "$work" == false && "$#" -lt 14 ]] && docker_backend="docker-desktop"
   local os_release='{}'
   [[ "$os" == "linux" ]] && os_release='{"ID":"ubuntu"}'
-  local data="{${base_data},\"work\":${work},\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"game_dev\":${game_dev},\"password_manager\":\"${password_manager}\",\"profile_preset\":\"${profile_preset}\",\"environment_role\":\"${environment_role}\",\"release_posture\":\"${release_posture}\",\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
+  local data="{${base_data},\"work\":${work},\"docker_backend\":\"${docker_backend}\",\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"game_dev\":${game_dev},\"password_manager\":\"${password_manager}\",\"profile_preset\":\"${profile_preset}\",\"environment_role\":\"${environment_role}\",\"release_posture\":\"${release_posture}\",\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
   chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" --override-data "$data" execute-template <"$input" >"$output"
 }
 
@@ -1143,6 +1147,9 @@ line_number() {
 }
 
 validate_static_foundation() {
+  check "common developer setup and Docker configuration merge"
+  python3 -B scripts/test-common-setup
+
   local canonical_rows canonical_expected canonical_observed
 
   check "repository Node/pnpm authority contract"
@@ -2832,6 +2839,10 @@ SH
     "$update_all_home/.local/bin/groundwork-brew-refetch"
   cat >"$update_all_bin/brew" <<'SH'
 #!/usr/bin/env bash
+# Linux's baseline fixture has formulae only; native coding casks get their
+# own exact-token transaction case. macOS retains its desktop inventory.
+fixture_default_casks=""
+if [[ "${FAKE_PLATFORM:-linux}" == darwin ]]; then fixture_default_casks=ghostty; fi
 # Real Homebrew asks for confirmation before install/upgrade/reinstall unless
 # ask mode is disabled, and it asks ONLY with a terminal attached -- so no
 # fixture can reproduce the prompt itself. Record what each mutating call
@@ -2870,13 +2881,13 @@ case "${1:-}" in
         if [[ "$#" -eq 0 ]]; then
           [[ "${BREW_CASK_INVENTORY_STATUS:-0}" == 0 ]] \
             || exit "$BREW_CASK_INVENTORY_STATUS"
-          installed_casks="${BREW_CASKS-ghostty}"
+          installed_casks="${BREW_CASKS-$fixture_default_casks}"
           [[ -z "$installed_casks" ]] || printf '%s\n' $installed_casks
           [[ ! -f "$HOME/.chatgpt-adopted" ]] || printf 'chatgpt\n'
         else
           for wanted in "$@"; do
             found=0
-            for installed in ${BREW_CASKS-ghostty}; do
+            for installed in ${BREW_CASKS-$fixture_default_casks}; do
               [[ "$installed" == "$wanted" ]] && found=1
             done
             [[ "$wanted" == chatgpt && -f "$HOME/.chatgpt-adopted" ]] && found=1
@@ -3009,7 +3020,7 @@ case "${1:-}" in
     if [[ "$named_arguments" -eq 0 ]]; then
       case "$mode" in
         formula) candidates=(${BREW_FORMULAE-git}) ;;
-        *) candidates=(${BREW_CASKS-ghostty}) ;;
+        *) candidates=(${BREW_CASKS-$fixture_default_casks}) ;;
       esac
     fi
     if [[ "${BREW_OUTDATED_STATUS:-0}" != 0 ]]; then
@@ -3885,8 +3896,8 @@ EOF
   done
 
   # A complete success runs in order against the approved metadata snapshot and
-  # only then atomically writes a UTC timestamp. The Linux render must not carry
-  # the macOS cask policy, and it reports the OS-ownership boundary: distro
+  # only then atomically writes a UTC timestamp. Linux reports its native
+  # package ownership boundary: distro
   # packages on Linux, the Windows host on WSL2, are never Groundwork's to touch.
   : >"$update_all_log"
   dynamic_exit=0
@@ -3923,6 +3934,20 @@ EOF
     >"$update_all_fixture/wsl-success-output" 2>&1
   diff -u "$update_all_fixture/expected-success" "$update_all_log"
   grep -qF 'managed separately on the host' "$update_all_fixture/wsl-success-output"
+
+  # Linux and WSL upgrade their exact installed coding casks through the same
+  # checksummed transaction, independently of formulae and desktop apps.
+  for coding_platform in linux wsl2; do
+    : >"$update_all_log"
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+      BREW_FORMULAE='' BREW_CASKS='codex claude-code@latest grok-build' \
+      FAKE_PLATFORM="$coding_platform" "$update_all_fixture/rendered-runner" \
+      >"$update_all_fixture/$coding_platform-coding-casks" 2>&1
+    grep -qxF 'brew upgrade --cask --require-sha codex claude-code@latest grok-build auto=1 casks=unset hb-color=unset' \
+      "$update_all_log" || fail "$coding_platform did not upgrade its exact coding casks"
+    grep -qF 'Groundwork update complete' "$update_all_fixture/$coding_platform-coding-casks" \
+      || fail "$coding_platform coding cask transaction did not complete"
+  done
 
   # The real runner collapses only the exact known no-change Homebrew shapes,
   # keeps an unknown warning in the live transcript, counts both classes in the
@@ -9096,8 +9121,8 @@ SH
     || fail "new-project refused a Linux-filesystem path under WSL"
   test -f "$wsl_home/wsl-ok-project/AGENTS.md"
 
-  # The Linux/WSL2 runner never carries the macOS cask policy; casks are a
-  # macOS concern (the darwin render is asserted in the beta channel profile).
+  # Linux/WSL2 coding casks use the same checksummed candidate selection and
+  # bounded upgrade runner as macOS. GUI-only stages remain platform-gated.
   static_linux_runner="$out_dir/static-linux-update-runner"
   render linux false amd64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
     "$static_linux_runner"
@@ -9111,8 +9136,10 @@ SH
   assert_not_contains "gw_brew_classify_stream \"\\\$upgrade_log\"" \
     "$static_linux_runner" \
     "the Linux Homebrew upgrade bypassed the shared output runner"
-  assert_not_contains '^[^#]*brew upgrade[^#]*--greedy' "$static_linux_runner" \
-    "a --greedy cask flag leaked into the Linux update runner"
+  grep -qF 'Homebrew cask upgrade' "$static_linux_runner" \
+    || fail "Linux must update its installed checksummed coding casks"
+  assert_not_contains 'brew upgrade --cask --greedy ' "$static_linux_runner" \
+    "Linux selected an unclassified global greedy upgrade"
 
   check "setup prompt wording"
   # chezmoi renders its own hint under every prompt ("> bool, default false") and
@@ -9152,8 +9179,8 @@ SH
     [[ "$bool_default" == "true" ]] && bool_named="yes"
     [[ "$bool_text" == *"Enter keeps the default: $bool_named)" ]] \
       || fail "every bool setup prompt must end by naming its real default ('... Enter keeps the default: $bool_named)'): $bool_prompt"
-    [[ "$bool_text" == *"y/t"*"n/f"* ]] \
-      || fail "every bool setup prompt must show the accepted answers (y/t ... n/f ...): $bool_prompt"
+    [[ "$bool_text" == *"yes or no"* ]] \
+      || fail "every bool setup prompt must explain yes or no: $bool_prompt"
   done <<<"$bool_prompts"
 
   # Regex over the template proves the source, not the UI. Drive a real
@@ -9161,51 +9188,73 @@ SH
   # appends its own "?" and its own "> bool, default false" hint, so a stray
   # "[y/N]" or trailing punctuation shows up as "[y/N]?" / "??" only here.
   if command -v tmux >/dev/null 2>&1; then
-    prompt_socket="groundwork-prompt-$$"
-    prompt_dir="$out_dir/prompt-render"
-    mkdir -p "$prompt_dir/home" "$prompt_dir/src"
-    cp home/.chezmoi.toml.tmpl "$prompt_dir/src/.chezmoi.toml.tmpl"
-    tmux -L "$prompt_socket" new-session -d -x 120 -y 24 -c "$prompt_dir" /bin/sh
-    # HOME alone does not isolate chezmoi: Groundwork exports XDG_CONFIG_HOME,
-    # and chezmoi reads its config from there first, so the machine's real saved
-    # answers would silently satisfy every promptOnce and no prompt would render
-    # — and worse, `chezmoi init` would REGENERATE the real config pointing at
-    # the scratch source (this happened; see the sentinel below). Every XDG dir
-    # is scoped into the fixture home.
-    real_chezmoi_config="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
-    real_config_before="none"
-    [[ ! -f "$real_chezmoi_config" ]] || real_config_before="$(cksum <"$real_chezmoi_config")"
-    tmux -L "$prompt_socket" send-keys \
-      "HOME=$prompt_dir/home XDG_CONFIG_HOME=$prompt_dir/home/.config XDG_DATA_HOME=$prompt_dir/home/.local/share XDG_STATE_HOME=$prompt_dir/home/.local/state XDG_CACHE_HOME=$prompt_dir/home/.cache chezmoi init --source $prompt_dir/src" Enter
-    prompt_rendered=""
-    for _ in $(seq 1 50); do
-      prompt_rendered="$(tmux -L "$prompt_socket" capture-pane -p 2>/dev/null || true)"
-      grep -qF 'bool, default' <<<"$prompt_rendered" && break
-      sleep 0.2
+    # Both platform prompts run locally, including the hosted-Linux boundary.
+    for prompt_os in darwin linux; do
+      prompt_socket="groundwork-prompt-$prompt_os-$$"
+      prompt_dir="$out_dir/prompt-render-$prompt_os"
+      mkdir -p "$prompt_dir/home" "$prompt_dir/src"
+      cp home/.chezmoi.toml.tmpl "$prompt_dir/src/.chezmoi.toml.tmpl"
+      native_prompt_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+      if [[ "$prompt_os" != "$native_prompt_os" ]]; then
+        # init fixes its OS before data overrides exist. Keep native init
+        # untouched; select the other OS branch in this private source fixture.
+        python3 - "$prompt_dir/src/.chezmoi.toml.tmpl" "$prompt_os" <<'PYTHON'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+path.write_text(path.read_text().replace(".chezmoi.os", json.dumps(sys.argv[2])))
+PYTHON
+      fi
+      prompt_command="chezmoi init --source $prompt_dir/src"
+      tmux -L "$prompt_socket" new-session -d -x 120 -y 24 -c "$prompt_dir" /bin/sh
+      # HOME alone does not isolate chezmoi: Groundwork exports XDG_CONFIG_HOME,
+      # and chezmoi reads its config from there first, so the machine's real saved
+      # answers would silently satisfy every promptOnce and no prompt would render
+      # — and worse, `chezmoi init` would REGENERATE the real config pointing at
+      # the scratch source (this happened; see the sentinel below). Every XDG dir
+      # is scoped into the fixture home.
+      real_chezmoi_config="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
+      real_config_before="none"
+      [[ ! -f "$real_chezmoi_config" ]] || real_config_before="$(cksum <"$real_chezmoi_config")"
+      tmux -L "$prompt_socket" send-keys \
+        "HOME=$prompt_dir/home XDG_CONFIG_HOME=$prompt_dir/home/.config XDG_DATA_HOME=$prompt_dir/home/.local/share XDG_STATE_HOME=$prompt_dir/home/.local/state XDG_CACHE_HOME=$prompt_dir/home/.cache DISPLAY= WAYLAND_DISPLAY= $prompt_command" Enter
+      prompt_rendered=""
+      for _ in $(seq 1 50); do
+        prompt_rendered="$(tmux -L "$prompt_socket" capture-pane -p 2>/dev/null || true)"
+        grep -qF 'bool, default' <<<"$prompt_rendered" && break
+        sleep 0.2
+      done
+      tmux -L "$prompt_socket" kill-server 2>/dev/null || true
+      grep -qF 'bool, default' <<<"$prompt_rendered" \
+        || fail "chezmoi init never rendered a prompt (cannot verify the setup UI)"
+      if [[ "$prompt_os" == darwin ]]; then
+        expected_first_prompt='Is this a server or CI Mac with no desktop apps, which most Macs are not (yes or no; Enter keeps the default: no)?'
+      else
+        expected_first_prompt='Is this a headless server or container with no desktop apps (yes or no; Enter keeps the default: yes)?'
+      fi
+      if ! grep -qF "$expected_first_prompt" <<<"$prompt_rendered"; then
+        printf '%s\n' "$prompt_rendered" >&2
+        fail "$prompt_os first setup prompt did not render its desktop/headless choice and default"
+      fi
+      if grep -qE '\?\?|\.\?|\[y/N\]|\[Y/n\]' <<<"$prompt_rendered"; then
+        printf '%s\n' "$prompt_rendered" >&2
+        fail "the rendered setup prompt has doubled punctuation or a hand-written [y/N] (chezmoi adds its own '?' and 'bool, default <x>' hint)"
+      fi
+      # Sentinel: validation must NEVER touch the machine's real chezmoi config.
+      # An earlier version of this check leaked through XDG_CONFIG_HOME and
+      # rewrote the real config to point at the scratch source; this assertion
+      # makes that class of regression fail loudly instead of corrupting state.
+      real_config_after="none"
+      [[ ! -f "$real_chezmoi_config" ]] || real_config_after="$(cksum <"$real_chezmoi_config")"
+      [[ "$real_config_before" == "$real_config_after" ]] \
+        || fail "the setup-UI check MUTATED the real chezmoi config at $real_chezmoi_config — its isolation is broken"
     done
-    tmux -L "$prompt_socket" kill-server 2>/dev/null || true
-    grep -qF 'bool, default' <<<"$prompt_rendered" \
-      || fail "chezmoi init never rendered a prompt (cannot verify the setup UI)"
-    grep -qF 'Is this a work machine (y/t = yes, n/f = no; Enter keeps the default: no)?' <<<"$prompt_rendered" \
-      || fail "the first setup prompt did not render with its answer affordance and named default"
-    if grep -qE '\?\?|\.\?|\[y/N\]|\[Y/n\]' <<<"$prompt_rendered"; then
-      printf '%s\n' "$prompt_rendered" >&2
-      fail "the rendered setup prompt has doubled punctuation or a hand-written [y/N] (chezmoi adds its own '?' and 'bool, default <x>' hint)"
-    fi
-    # Sentinel: validation must NEVER touch the machine's real chezmoi config.
-    # An earlier version of this check leaked through XDG_CONFIG_HOME and
-    # rewrote the real config to point at the scratch source; this assertion
-    # makes that class of regression fail loudly instead of corrupting state.
-    real_config_after="none"
-    [[ ! -f "$real_chezmoi_config" ]] || real_config_after="$(cksum <"$real_chezmoi_config")"
-    [[ "$real_config_before" == "$real_config_after" ]] \
-      || fail "the setup-UI check MUTATED the real chezmoi config at $real_chezmoi_config — its isolation is broken"
   fi
 
   check "chezmoi interview: release preferences stay out of bootstrap"
   # Stable versus preview and Xcode beta are mutable preferences, not facts
   # required to render a usable first install. Fresh setup derives a stable
-  # profile from the bootstrap-critical work answer; existing saved preferences
+  # profile, retaining a legacy seed when present; existing saved preferences
   # survive regeneration and remain editable through groundwork-configure.
   assert_no_matches "chezmoi init must not ask for a release profile" \
     rg -n 'promptChoiceOnce \. "profile_preset"|Starting profile' home/.chezmoi.toml.tmpl
@@ -9519,9 +9568,9 @@ KRXS
   gc_rc=0
   bash "$gc_bin" --release-posture sideways >/dev/null 2>&1 || gc_rc=$?
   [[ "$gc_rc" -eq 64 ]] || fail "groundwork-configure must reject an invalid release posture with exit 64"
-  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta work ' "$gc_bin" \
+  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend ' "$gc_bin" \
     || fail "groundwork-configure must expose independent posture/role and dependent Xcode beta settings"
-  grep -qE '^fields_kind=\(posture role multiplexer bool bool ' "$gc_bin" \
+  grep -qE '^fields_kind=\(posture role multiplexer bool docker ' "$gc_bin" \
     || fail "release posture, environment role, terminal multiplexer, and Xcode beta must use the matching guarded field types"
   grep -qE '^role_values=\(personal managed disposable\)$' "$gc_bin" \
     || fail "groundwork-configure must keep every supported environment role reachable"
@@ -15409,7 +15458,7 @@ EOF
   # If that preservation is ever removed, the editor starts printing "Proposed
   # changes" receipts for values that never move — so the two are asserted
   # together, right here, rather than in separate places that can drift apart.
-  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta work .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
+  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
     || fail "groundwork-configure must own mutable role/release preferences and preserve existing baseline settings"
   # Role and posture are stored separately from the preset PRECISELY so they can
   # diverge (specs/environment-profiles-and-release-posture.md): a managed
@@ -16059,7 +16108,17 @@ PY
     render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.tmpl "$out_dir/$case_name/Brewfile" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
     render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.browser.tmpl "$out_dir/$case_name/Brewfile.browser" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
     if [[ "$os" == "linux" || "$headless" == "true" ]]; then
-      assert_not_contains '^(cask|mas) ' "$out_dir/$case_name/Brewfile" "cask/mas leaked into $case_name Brewfile"
+      assert_not_contains '^mas ' "$out_dir/$case_name/Brewfile" "App Store apps leaked into $case_name"
+      # Casks also package native Linux/headless CLIs. Permit only that declared
+      # set, plus Cursor on desktop Linux; reject every other GUI artifact.
+      native_cask_pattern='^cask "(codex|claude-code@latest|grok-build)"([[:space:]]*#.*)?$'
+      if [[ "$os" == linux && "$headless" == false ]]; then
+        native_cask_pattern="$native_cask_pattern|^cask \"cursor\"([[:space:]]*#.*)?$"
+      fi
+      if unexpected_casks="$(grep '^cask ' "$out_dir/$case_name/Brewfile" | grep -vE "$native_cask_pattern")"; then
+        printf '%s\n' "$unexpected_casks" >&2
+        fail "unsupported GUI casks leaked into $case_name"
+      fi
       assert_not_contains '^cask ' "$out_dir/$case_name/Brewfile.browser" "a GUI browser leaked into $case_name"
     else
       grep -qxF 'cask "google-chrome"' "$out_dir/$case_name/Brewfile.browser" \

@@ -70,7 +70,7 @@ The Docker daemon is shared by every repository; broad stopped-container,
 dangling-image, builder-cache, and volume decisions require the owner.
 
 `update-all` owns only the backend selected by the rendered machine profile:
-Docker Desktop on a personal Mac, Colima on a work Mac. It never starts the
+Colima by default on every Mac, or the explicit `docker_backend` alternative. It never starts the
 other backend, never stops a backend that was already running, defaults its
 start prompt to no, and never starts either backend without a terminal.
 `groundwork-apps-start` deliberately excludes Docker. A start, readiness,

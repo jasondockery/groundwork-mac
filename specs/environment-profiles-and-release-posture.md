@@ -132,13 +132,29 @@ the stored preset below is only the historical bootstrap seed. Confirming that
 transaction runs `chezmoi apply`, so selected desired state such as Chrome Beta
 is reconciled immediately. `update-all` owns later upgrades and maintenance.
 
+### Independent developer preferences
+
+`home/.chezmoitemplates/developer-settings` is the compatibility resolver for
+`docker_backend` (`colima`, `docker-desktop`, `none`), `git_identity` (`personal`,
+`work`), `personal_apps`, and `work_extensions`. The shared developer tools and
+AI CLIs are available for every role. macOS defaults to Colima plus Docker CLI,
+including headless Macs. Device policy still takes precedence.
+
+`groundwork-configure` edits these preferences independently. Explicit stored
+values win. Legacy `work` seeds only the missing Git identity and optional app
+and extension preferences; it no longer gates AI tools or selects Docker.
+Existing role, posture, identity data, and valid interview answers survive
+reinitialization. A fresh setup has no work/personal install question.
+Docker Desktop removal and data migration are explicit owner operations:
+[the single migration guide](../docs/docker-desktop-to-colima.md).
+
 ### Stored preset seeds
 
 | Preset | role | posture | |
 | ------ | ---- | ------- | --- |
 | **Personal Current** | personal | current | **recommended default** |
 | **Personal Preview** | personal | preview | |
-| **Work Managed** | managed | current | default when `work` is yes |
+| **Work Managed** | managed | current | legacy seed when stored `work` is true |
 | **Disposable Experimental** | disposable | preview | |
 
 **Personal Current is the shipped default, and that is not a cautious choice.**

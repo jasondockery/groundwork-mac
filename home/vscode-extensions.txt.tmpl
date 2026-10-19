@@ -1,5 +1,5 @@
-{{- $work := false -}}
-{{- if hasKey . "work" }}{{- $work = .work -}}{{- end -}}
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
+{{- $work := get $developer "work_extensions" -}}
 {{- $gameDev := false -}}
 {{- if hasKey . "game_dev" }}{{- $gameDev = .game_dev -}}{{- end -}}
 # VS Code / Cursor extensions, curated from the work Mac.
@@ -71,7 +71,7 @@ aliasadidev.nugetpackagemanagergui
 patcx.vscode-nuget-gallery
 {{- end }}
 {{ if $work -}}
-# Work stack (SQL Server / Kubernetes / Terraform) — work Mac only
+# Work stack (SQL Server / Kubernetes / Terraform) — optional infrastructure extensions
 ms-mssql.mssql
 code:ms-mssql.data-workspace-vscode
 code:ms-mssql.sql-bindings-vscode
