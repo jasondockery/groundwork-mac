@@ -1,5 +1,14 @@
 {{- $terminalMultiplexer := includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim -}}
+{{- $wsl := false -}}
+{{- if hasKey .chezmoi "kernel" -}}
+{{- if contains "microsoft" (lower (toString (get .chezmoi.kernel "osrelease"))) -}}
+{{- $wsl = true -}}
+{{- end -}}
+{{- end }}
 .DS_Store
+{{ if or .headless $wsl }}
+.local/bin/groundwork-remote-desktop
+{{ end }}
 {{ if or (ne .chezmoi.os "darwin") .headless }}
 Library/**
 .config/karabiner/**

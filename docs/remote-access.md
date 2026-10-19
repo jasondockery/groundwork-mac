@@ -10,6 +10,18 @@ For inbound terminal access, enable System Settings → General → Sharing → 
 
 Do not install the headless formula alongside the desktop cask. Use the app to diagnose sign-in and DNS, then test `tailscale status` and a connection from another approved machine before relying on remote recovery.
 
+### Automatic startup and local desktop permission
+
+Desktop applies run `groundwork-remote-desktop prepare`. On a Mac, it checks native Screen Sharing registration and opens Sharing settings from an interactive setup when local approval is still needed. Run `groundwork-remote-desktop` yourself to open that setup, or `groundwork-remote-desktop status` for a read-only registration check. Registration is not proof of permitted users or a successful screen session.
+
+Approve System Settings → General → Sharing → Screen Sharing once and allow only the local users you intend to use. macOS owns the service's automatic startup thereafter. Groundwork does not bypass privacy consent, enable every user, replace Remote Management, or write hidden Apple permission databases. If Remote Management is already enabled, reconcile that existing service locally rather than enabling a competing one.
+
+From another Mac, use Screen Sharing with the destination's MagicDNS name or `vnc://MACHINE`; authenticate as an allowed account. For the Omarchy Mini, use its generated WayVNC password instead, following its [automatic desktop-sharing guide](https://github.com/jasondockery/groundwork-omarchy-mac-arm64/blob/main/docs/remote-access.md#automatic-desktop-sharing). Use an RDP client such as Windows App for Windows/GNOME destinations. Follow the [shared port policy](https://github.com/jasondockery/groundwork-core/blob/main/docs/tailscale.md#agent-tools-and-screens); Tailscale enrollment does not turn on a desktop server or authorize its port.
+
+On a real GNOME Linux desktop, the same helper checks the native RDP configuration. Once its local credentials and sharing permission are set, it enables/starts the native user service without changing credentials. A first interactive apply opens GNOME Settings → System; choose Remote Desktop → Desktop Sharing, allow control, and retain the credentials in GNOME's keyring. Use the displayed port and verify the server certificate in your RDP client. Install the distribution's `gnome-remote-desktop` and GNOME Settings packages first if absent; Groundwork does not install or replace a desktop environment. Other desktops need their supported server. Headless profiles, containers, WSL and Omarchy are excluded from this managed desktop hook.
+
+Verify screen viewing/control from a second approved device, then after reboot and desktop login. A service or settings window alone does not prove remote acceptance. The native lock screen, disk encryption, sleep behavior, host firewall and OS permissions still apply. To disable sharing, use the same native Settings panel; Groundwork preserves that disabled setting and reports the local approval step on later desktop applies.
+
 ## Headless Mac and Linux
 
 The shared engine installs Homebrew on supported headless Macs and x86_64/ARM64 Linux, then installs the `tailscale` formula. Choose the service owner before starting a daemon; do not start a Homebrew daemon alongside an existing native service.
