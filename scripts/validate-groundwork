@@ -1318,6 +1318,9 @@ PY
 }
 
 validate_update() {
+  check "sudo metadata completeness and retry intent"
+  python3 -B scripts/test-sudo-preflight
+
   run_fixture_pty() { # output input-file command [args...]
     local output="$1" input_file="$2"
     shift 2
@@ -5457,6 +5460,14 @@ EOF
 
   render linux false amd64 home/run_before_00-install-homebrew.sh.tmpl \
     "$update_all_fixture/linux-homebrew-before"
+  # Hosted Linux runners may already have Homebrew at the absolute fallback.
+  # Bind that observation to the fixture as well as isolating PATH.
+  python3 - "$update_all_fixture/linux-homebrew-before" "$update_all_fixture/absent-brew" <<'PYTHON'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text(path.read_text().replace("/home/linuxbrew/.linuxbrew/bin/brew", sys.argv[2]))
+PYTHON
   chmod +x "$update_all_fixture/linux-homebrew-before"
   apt_bin="$update_all_fixture/apt-bin"
   mkdir -p "$apt_bin"

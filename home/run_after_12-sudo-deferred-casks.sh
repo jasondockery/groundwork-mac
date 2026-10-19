@@ -15,7 +15,7 @@ fi
 . "$sudo_preflight_lib"
 
 deferred_path="$(groundwork_sudo_deferred_path)"
-if [[ ! -e "$deferred_path" ]]; then
+if [[ ! -e "$deferred_path" && ! -L "$deferred_path" ]]; then
   exit 0
 fi
 if [[ -L "$deferred_path" || ! -f "$deferred_path" ]]; then
@@ -23,25 +23,54 @@ if [[ -L "$deferred_path" || ! -f "$deferred_path" ]]; then
   exit 1
 fi
 
-deferred_tokens=()
-if ! deferred_text="$(groundwork_sudo_read_deferred "$deferred_path")"; then
-  echo "Groundwork: the set-aside app list is malformed, so nothing was installed." >&2
-  echo "From a terminal on this machine, run chezmoi apply and enter your password when asked." >&2
-  exit 1
-fi
-while IFS= read -r deferred_token; do
-  [[ -n "$deferred_token" ]] && deferred_tokens+=("$deferred_token")
-done <<<"$deferred_text"
-if [[ "${#deferred_tokens[@]}" -eq 0 ]]; then
-  rm -f -- "$deferred_path"
-  exit 0
-fi
-
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-sudo-retry.XXXXXX")"
 cleanup() {
   groundwork_sudo_keepalive_stop
-  [[ -z "${deferred_brewfile:-}" ]] || rm -f -- "$deferred_brewfile"
+  rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
+
+if ! groundwork_sudo_read_deferred "$deferred_path" >"$work_dir/saved"; then
+  echo "Groundwork: the set-aside app list is malformed, so nothing was installed." >&2
+  exit 1
+fi
+manifest="$HOME/.config/homebrew/Brewfile"
+if [[ ! -f "$manifest" || -L "$manifest" ]] \
+  || ! groundwork_brewfile_casks "$manifest" >"$work_dir/desired"; then
+  echo "Groundwork: the current Brewfile is unavailable or malformed; set-aside apps were preserved." >&2
+  exit 1
+fi
+: >"$work_dir/excluded"
+while IFS= read -r token; do
+  [[ -n "$token" ]] || continue
+  if [[ ! "$token" =~ ^[A-Za-z0-9@+._-]+$ ]]; then
+    echo "Groundwork: the current cask exclusion is malformed; nothing was installed." >&2
+    exit 64
+  fi
+  printf '%s\n' "$token" >>"$work_dir/excluded"
+done <<<"${GROUNDWORK_BREWFILE_SKIP_CASKS:-}"
+awk -v desired="$work_dir/desired" -v excluded="$work_dir/excluded" '
+  BEGIN {
+    while ((getline token < desired) > 0) wanted[token] = 1
+    while ((getline token < excluded) > 0) blocked[token] = 1
+  }
+  wanted[$0] && !blocked[$0] && !seen[$0]++ { print }
+' "$work_dir/saved" >"$work_dir/selected"
+if [[ ! -s "$work_dir/selected" ]]; then
+  rm -f -- "$deferred_path"
+  echo "Groundwork: no set-aside apps remain selected by the current setup."
+  exit 0
+fi
+# Historical retry state never grants permission to install a removed app.
+# Reconcile before prompting, and retain selected tokens after any failure.
+staging="$(mktemp "${deferred_path}.XXXXXX")"
+chmod 600 "$staging"
+cat "$work_dir/selected" >"$staging"
+mv -f -- "$staging" "$deferred_path"
+deferred_tokens=()
+while IFS= read -r token; do
+  deferred_tokens+=("$token")
+done <"$work_dir/selected"
 
 sudo_prepare_status=0
 groundwork_sudo_prepare || sudo_prepare_status=$?
@@ -72,7 +101,8 @@ if ! command -v brew >/dev/null 2>&1; then
   exit 1
 fi
 
-deferred_brewfile="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-brewfile.XXXXXX")"
+deferred_brewfile="$work_dir/Brewfile"
+: >"$deferred_brewfile"
 chmod 600 "$deferred_brewfile"
 for deferred_token in "${deferred_tokens[@]}"; do
   printf 'cask "%s"\n' "$deferred_token" >>"$deferred_brewfile"
@@ -93,7 +123,8 @@ if [[ "$bundle_status" -ne 0 ]]; then
   exit "$bundle_status"
 fi
 
-remaining="$(mktemp "${TMPDIR:-/tmp}/groundwork-sudo-remaining.XXXXXX")"
+remaining="$work_dir/remaining"
+: >"$remaining"
 chmod 600 "$remaining"
 if [[ -s "$deferred_path" ]]; then
   awk 'NR == FNR { done[$0] = 1; next } !done[$0] { print }' \
