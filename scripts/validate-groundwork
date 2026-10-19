@@ -2904,6 +2904,7 @@ case "${1:-}" in
       printf '{"formulae":['
       separator=''
       for token in "$@"; do
+        [[ "$token" == -- ]] && continue
         printf '%s' "$separator"
         separator=,
         formula_pinned=false
@@ -2923,6 +2924,7 @@ case "${1:-}" in
     printf '{"formulae":[],"casks":['
     separator=''
     for token in "$@"; do
+        [[ "$token" == -- ]] && continue
       printf '%s' "$separator"
       separator=,
       case "$token" in
