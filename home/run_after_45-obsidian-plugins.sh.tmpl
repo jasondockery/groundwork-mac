@@ -2,7 +2,8 @@
 # Best-effort Obsidian community-plugin installer. The plugin list and installer
 # live in Groundwork so every vault gets the same curated plugin set. Existing
 # plugin folders are left untouched, so iCloud-synced installs win.
-{{ if and (eq .chezmoi.os "darwin") (not .headless) (not .work) -}}
+{{- $developer := includeTemplate "developer-settings" . | fromJson }}
+{{ if and (eq .chezmoi.os "darwin") (not .headless) (get $developer "personal_apps") -}}
 set -euo pipefail
 
 vault_name="{{ .obsidian_vault_name }}"

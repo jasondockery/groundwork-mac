@@ -1,6 +1,7 @@
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 [user]
     name = {{ .name }}
-    email = {{ if and .work (ne .email_work "") }}{{ .email_work }}{{ else }}{{ .email_personal }}{{ end }}
+    email = {{ if and (eq (get $developer "git_identity") "work") (ne .email_work "") }}{{ .email_work }}{{ else }}{{ .email_personal }}{{ end }}
 {{- if and (eq .chezmoi.os "darwin") (ne .password_manager "none") (ne .signingkey "") }}
     signingkey = {{ .signingkey }}
 {{- end }}

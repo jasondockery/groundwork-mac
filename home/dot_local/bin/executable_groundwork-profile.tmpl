@@ -102,6 +102,7 @@ fi
 role={{ if hasKey . "environment_role" }}{{ .environment_role | quote }}{{ else if .work }}"managed"{{ else }}"personal"{{ end }}
 preset={{ if hasKey . "profile_preset" }}{{ .profile_preset | quote }}{{ else }}"legacy"{{ end }}
 posture={{ if hasKey . "release_posture" }}{{ .release_posture | quote }}{{ else }}"current"{{ end }}
+docker_backend={{ $developer := includeTemplate "developer-settings" . | fromJson }}{{ get $developer "docker_backend" | quote }}
 multiplexer={{ includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim | quote }}
 headless={{ if .headless }}true{{ else }}false{{ end }}
 xcode={{ if and (hasKey . "xcode") .xcode }}true{{ else }}false{{ end }}
@@ -138,6 +139,7 @@ detect_system_channel() {
 case "$command" in
   show)
     echo "Groundwork environment profile"
+    printf '  macOS container backend: %s\n' "$docker_backend"
     echo
     printf '  Bootstrap seed    %s\n' "$preset"
     printf '  Role              %s\n' "$role"

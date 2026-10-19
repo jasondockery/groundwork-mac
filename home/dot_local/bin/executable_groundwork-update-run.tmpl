@@ -1,3 +1,4 @@
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -586,7 +587,6 @@ if command -v brew >/dev/null 2>&1; then
   fi
   # Use the metadata snapshot that just refreshed. A user-customized Homebrew
   # auto-update interval must not start a second, unwrapped update here.
-  {{- if eq .chezmoi.os "darwin" }}
   ordinary_cask_file="$runner_receipt_dir/homebrew-cask-ordinary"
   auto_check_file="$runner_receipt_dir/homebrew-cask-auto-check"
   latest_check_file="$runner_receipt_dir/homebrew-cask-latest-check"
@@ -786,18 +786,6 @@ EOF
       offer_privileged_cask_consent
     fi
   fi
-  {{- else }}
-  ordinary_cask_file="$runner_receipt_dir/homebrew-cask-ordinary"
-  auto_check_file="$runner_receipt_dir/homebrew-cask-auto-check"
-  latest_check_file="$runner_receipt_dir/homebrew-cask-latest-check"
-  consent_cask_file="$runner_receipt_dir/homebrew-cask-consent"
-  cask_apps_file="$runner_receipt_dir/homebrew-cask-apps.tsv"
-  : >"$ordinary_cask_file"
-  : >"$auto_check_file"
-  : >"$latest_check_file"
-  : >"$consent_cask_file"
-  : >"$cask_apps_file"
-  {{- end }}
 
   select_brew_outdated() {
     local label="$1" candidates_file="$2" selected_file="$3"
@@ -934,7 +922,6 @@ EOF
   else
     : >"$formula_outdated"
   fi
-  {{- if eq .chezmoi.os "darwin" }}
   # Ordinary cask metadata already carries Homebrew's normal outdated decision.
   cp "$ordinary_cask_file" "$ordinary_casks"
   if [[ "$homebrew_status" -eq 0 ]]; then
@@ -945,11 +932,6 @@ EOF
     select_brew_outdated "Homebrew casks with version latest" \
       "$latest_check_file" "$latest_casks" --cask --greedy-latest || homebrew_status=$?
   fi
-  {{- else }}
-  : >"$ordinary_casks"
-  : >"$auto_casks"
-  : >"$latest_casks"
-  {{- end }}
   if [[ "$homebrew_status" -eq 0 ]]; then
     formula_candidate_count="$(wc -l <"$formula_candidates" | tr -d ' ')"
     formula_outdated_count="$(wc -l <"$formula_outdated" | tr -d ' ')"
@@ -1123,7 +1105,6 @@ EOF
       upgrade_status=$?
     fi
   fi
-  {{- if eq .chezmoi.os "darwin" }}
   if [[ "$upgrade_status" -eq 0 ]] && ((${#ordinary_cask_tokens[@]} > 0)); then
     brew_attempted_count=$((brew_attempted_count + ${#ordinary_cask_tokens[@]}))
     homebrew_upgrade_started=1
@@ -1156,7 +1137,6 @@ EOF
       upgrade_status=$?
     fi
   fi
-  {{- end }}
   mv -f -- "$upgrade_log" "$upgrade_log_final"
   runner_temp=""
   runner_temp_final=""
@@ -1197,7 +1177,6 @@ EOF
     select_brew_outdated "post-update Homebrew formulae" \
       "$formula_outdated" "$formula_remaining" --formula || homebrew_status=$?
   fi
-  {{- if eq .chezmoi.os "darwin" }}
   if [[ "$homebrew_status" -eq 0 ]]; then
     select_brew_outdated "post-update ordinary Homebrew casks" \
       "$ordinary_casks_ready" "$ordinary_remaining" --cask || homebrew_status=$?
@@ -1210,7 +1189,6 @@ EOF
     select_brew_outdated "post-update latest-version Homebrew casks" \
       "$latest_casks_ready" "$latest_remaining" --cask --greedy-latest || homebrew_status=$?
   fi
-  {{- end }}
   homebrew_remaining_count=0
   for remaining_file in "$formula_remaining" "$ordinary_remaining" \
     "$auto_remaining" "$latest_remaining"; do
@@ -1945,12 +1923,8 @@ esac
 docker_pending="$HOME/.local/state/groundwork/docker-tidy-pending"
 docker_maintenance_result="skipped"
 docker_backend="none"
-{{- if and (eq .chezmoi.os "darwin") (not .headless) }}
-{{- if .work }}
-docker_backend="colima"
-{{- else }}
-docker_backend="docker-desktop"
-{{- end }}
+{{- if and (eq .chezmoi.os "darwin") (or (not .headless) (eq (get $developer "docker_backend") "colima")) }}
+docker_backend={{ get $developer "docker_backend" | quote }}
 {{- end }}
 docker_start_deadline="${GROUNDWORK_DOCKER_START_DEADLINE_SECONDS:-180}"
 docker_stop_deadline="${GROUNDWORK_DOCKER_STOP_DEADLINE_SECONDS:-120}"

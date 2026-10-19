@@ -232,7 +232,7 @@ info_status=0
 run_bounded_internal "verify Docker daemon" "$observe_deadline" "" \
   "$docker_executable" info >/dev/null 2>&1 || info_status=$?
 if [[ "$info_status" -ne 0 ]]; then
-  echo "groundwork-docker-build-scratch: Docker daemon not reachable. Start Docker Desktop, or run 'colima start' on a work Mac, then rerun." >&2
+  echo "groundwork-docker-build-scratch: Docker daemon not reachable. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun." >&2
   exit "$info_status"
 fi
 

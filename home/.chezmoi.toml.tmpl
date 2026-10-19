@@ -10,14 +10,12 @@
 {{- fail "Groundwork supports WSL2, not WSL1: WSL1 filesystem and syscall behavior differ from real Linux. From PowerShell, check with `wsl --list --verbose` and convert with `wsl --set-version <DistributionName> 2`, then rerun setup." -}}
 {{- end -}}
 {{- end -}}
-{{- /* Every yes/no question carries its own affordance: chezmoi's bool
-prompt accepts y/yes/t/true/1 and n/no/f/false/0, shows only a dim
-"bool, default <x>" hint, and takes the default on a bare Enter — so the
-question itself must say what to type and name the default. */ -}}
-{{- $work := promptBoolOnce . "work" "Is this a work machine (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- /* Retain the former profile only as a migration input. New setup has one
+common tool set; independent preferences below own actual behavior. */ -}}
+{{- $work := and (hasKey . "work") .work -}}
 {{- $headless := false -}}
 {{- if eq .chezmoi.os "darwin" -}}
-{{- $headless = promptBoolOnce . "headless" "Is this a server or CI Mac with no desktop apps, which most Macs are not (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $headless = promptBoolOnce . "headless" "Is this a server or CI Mac with no desktop apps, which most Macs are not (yes or no; Enter keeps the default: no)" false -}}
 {{- else -}}
 {{- /* Native Linux is a supported desktop, not just a server: default to
 headless only when nothing indicates a graphical session. A desktop Ubuntu
@@ -26,18 +24,29 @@ Two literal prompts, not one computed default, so the named default in the
 question text always matches the real one. */ -}}
 {{- $graphical := or (env "DISPLAY") (env "WAYLAND_DISPLAY") -}}
 {{- if $graphical -}}
-{{- $headless = promptBoolOnce . "headless" "Is this a headless server or container with no desktop apps (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $headless = promptBoolOnce . "headless" "Is this a headless server or container with no desktop apps (yes or no; Enter keeps the default: no)" false -}}
 {{- else -}}
-{{- $headless = promptBoolOnce . "headless" "Is this a headless server or container with no desktop apps (y/t = yes, n/f = no; Enter keeps the default: yes)" true -}}
+{{- $headless = promptBoolOnce . "headless" "Is this a headless server or container with no desktop apps (yes or no; Enter keeps the default: yes)" true -}}
 {{- end -}}
 {{- end -}}
 {{- $name := promptStringOnce . "name" "What name should Git use for commits" -}}
-{{- $emailPersonal := promptStringOnce . "email_personal" "What personal email should Git use for commits" -}}
+{{- $emailPersonal := promptStringOnce . "email_personal" "What email should Git use for commits" -}}
 {{- $emailWork := promptStringOnce . "email_work" "What work email should Git use (leave blank if none)" "" -}}
 {{- $codeDir := promptStringOnce . "code_dir" "Where should projects live" "~/code" -}}
-{{- $resetExisting := promptBoolOnce . "reset_existing_configs" "Reset old terminal, editor, and tmux state before applying (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
-{{- $pwManagers := list "bitwarden" "1password" "none" -}}
-{{- $pwManager := promptChoiceOnce . "password_manager" "Which password manager should Groundwork configure for SSH and Git signing" $pwManagers "bitwarden" -}}
+{{- $resetExisting := promptBoolOnce . "reset_existing_configs" "Reset old terminal, editor, and tmux state before applying (yes or no; Enter keeps the default: no)" false -}}
+{{- $pwByNum := dict "1" "bitwarden" "2" "1password" "3" "none" -}}
+{{- $pwNumByValue := dict "bitwarden" "1" "1password" "2" "none" "3" -}}
+{{- $pwDefault := "1" -}}
+{{- if and (hasKey . "password_manager") (hasKey $pwNumByValue .password_manager) -}}
+{{- $pwDefault = index $pwNumByValue .password_manager -}}
+{{- end -}}
+{{- $pwChoice := promptChoiceOnce . "password_manager" "Password manager for SSH and Git signing · type 1-3:\n  1. Bitwarden (recommended)\n  2. 1Password\n  3. None" (list "1" "2" "3") $pwDefault -}}
+{{- $pwManager := $pwChoice -}}
+{{- if hasKey $pwByNum $pwChoice -}}
+{{- $pwManager = index $pwByNum $pwChoice -}}
+{{- else if not (hasKey $pwNumByValue $pwChoice) -}}
+{{- fail "Groundwork: invalid password manager selection" -}}
+{{- end -}}
 {{- $signingKey := promptStringOnce . "signingkey" "What SSH public key should Git use for signing (leave blank to skip)" "" -}}
 {{- $obsidianVault := promptStringOnce . "obsidian_vault_name" "What should the Obsidian vault be named (leave blank to skip)" "my_obsidian_vault" -}}
 {{- /* Browser migration compatibility. `install_chrome` used to gate an
@@ -51,7 +60,7 @@ make an older config fail or silently rewrite unrelated answers. */ -}}
 {{- end -}}
 {{- /* Bootstrap establishes a usable machine; mutable application-channel
 preferences belong to groundwork-configure. A fresh install therefore seeds a
-stable profile from the bootstrap-critical work-machine answer without asking a
+stable profile, preserving a legacy work-machine seed without asking a
 second stable-versus-preview question. Existing stored presets remain valid and
 survive regeneration. See specs/environment-profiles-and-release-posture.md. */ -}}
 {{- $validPresets := list "personal-current" "personal-preview" "work-managed" "disposable-experimental" -}}
@@ -167,8 +176,8 @@ run, the stored value string on an ordinary existing-config run. */ -}}
 {{- $keyRepeat = $keyRepeatChoice -}}
 {{- end -}}
 {{- end -}}
-{{- $gameDev := promptBoolOnce . "game_dev" "Install optional Unity game development tools, a large download (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
-{{- $xcode := promptBoolOnce . "xcode" "Install Xcode for native Apple and iOS development, large at ~15GB+ (y/t = yes, n/f = no; Enter keeps the default: no)" false -}}
+{{- $gameDev := promptBoolOnce . "game_dev" "Install optional Unity game development tools, a large download (yes or no; Enter keeps the default: no)" false -}}
+{{- $xcode := promptBoolOnce . "xcode" "Install Xcode for native Apple and iOS development, large at ~15GB+ (yes or no; Enter keeps the default: no)" false -}}
 {{- $beta := false -}}
 {{- /* Xcode beta posture is mutable and belongs to groundwork-configure, not
 bootstrap. Preserve an existing answer; a fresh install stays stable. */ -}}
@@ -176,10 +185,16 @@ bootstrap. Preserve an existing answer; a fresh install stays stable. */ -}}
 {{- $beta = .beta -}}
 {{- end -}}
 
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
+
 sourceDir = {{ .chezmoi.workingTree | quote }}
 
 [data]
     work = {{ $work }}
+    docker_backend = {{ get $developer "docker_backend" | quote }}
+    git_identity = {{ get $developer "git_identity" | quote }}
+    personal_apps = {{ get $developer "personal_apps" }}
+    work_extensions = {{ get $developer "work_extensions" }}
     headless = {{ $headless }}
     name = {{ $name | quote }}
     email_personal = {{ $emailPersonal | quote }}

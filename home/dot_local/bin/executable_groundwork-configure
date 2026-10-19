@@ -120,6 +120,19 @@ chezmoi --config "$config_path" data --format=json >"$data_json" 2>/dev/null \
     echo "$prog: could not read the current configuration data." >&2
     exit 1
   }
+# Show the same migrated defaults that the templates actually render.
+printf '%s' '{{ includeTemplate "developer-settings" . }}' \
+  | chezmoi --config "$config_path" --source "$source_path" execute-template \
+    >"$tmp_root/developer.json"
+python3 - "$data_json" "$tmp_root/developer.json" <<'PYTHON'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle: data = json.load(handle)
+with open(sys.argv[2]) as handle: defaults = json.load(handle)
+for key, value in defaults.items():
+    data.setdefault(key, value)
+with open(path, "w") as handle: json.dump(data, handle)
+PYTHON
 # Digest at editor-open time; promotion aborts if the config changes under us.
 config_digest_open="$(cksum <"$config_path")"
 
@@ -127,10 +140,10 @@ config_digest_open="$(cksum <"$config_path")"
 # key                  label                 kind    clearable
 # Every mutable field is offered here even when bootstrap deliberately does not
 # ask it. home/.chezmoi.toml.tmpl preserves stored values on every platform.
-fields_key=(release_posture environment_role terminal_multiplexer beta work password_manager key_repeat code_dir name email_personal email_work game_dev xcode obsidian_vault_name signingkey)
-fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Work machine" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Obsidian vault" "SSH signing key")
-fields_kind=(posture role multiplexer bool bool pw keyrepeat string string string string bool bool string string)
-fields_clear=(no no no no no no no no no no yes no no yes yes)
+fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode obsidian_vault_name signingkey git_identity personal_apps work_extensions)
+fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions")
+fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool string string identity bool bool)
+fields_clear=(no no no no no no no no no no yes no no yes yes no no no)
 
 posture_values=(current preview)
 posture_labels=("Stable channels for posture-managed apps (currently Chrome stable)" "Preview channels for posture-managed apps (currently Chrome Beta + stable fallback)")
@@ -149,6 +162,14 @@ choice_values=()
 choice_labels=()
 load_choices() { # kind -> populates choice_values / choice_labels
   case "$1" in
+    docker)
+      choice_values=(colima docker-desktop none)
+      choice_labels=("Colima + Docker CLI (recommended on macOS)" "Docker Desktop (explicit alternative)" "None")
+      ;;
+    identity)
+      choice_values=(personal work)
+      choice_labels=("Default commit email" "Work commit email (default email when blank)")
+      ;;
     posture)
       choice_values=("${posture_values[@]}")
       choice_labels=("${posture_labels[@]}")
@@ -271,7 +292,7 @@ display_of() { # key kind -> human display of the effective value
   v="$(current_value "$1")"
   case "$2" in
     bool) [[ "$v" == "true" ]] && echo "Yes" || echo "No" ;;
-    posture | keyrepeat | multiplexer) choice_display "$2" "$v" ;;
+    posture | keyrepeat | multiplexer | docker | identity) choice_display "$2" "$v" ;;
     *) [[ -z "$v" ]] && echo "(none)" || echo "$v" ;;
   esac
 }
@@ -312,7 +333,7 @@ edit_field() { # index
         esac
       done
       ;;
-    posture | role | keyrepeat | multiplexer | pw)
+    posture | role | keyrepeat | multiplexer | pw | docker | identity)
       load_choices "$kind"
       for ((j = 0; j < ${#choice_values[@]}; j++)); do printf '  %d. %s\n' "$((j + 1))" "${choice_labels[j]}"; done
       while true; do
@@ -376,7 +397,7 @@ data.pop("chezmoi", None)
 pending = {}
 for arg in sys.argv[4:]:
     k, _, v = arg.partition("=")
-    if isinstance(data.get(k), bool):
+    if k in ("personal_apps", "work_extensions") or isinstance(data.get(k), bool):
         pending[k] = (v == "true")
     else:
         pending[k] = v
@@ -419,7 +440,7 @@ print_receipt() { # structured, from the pending registry — no grepped TOML
 fmt() { # value kind -> display
   case "$2" in
     bool) [[ "$1" == "true" ]] && echo "Yes" || echo "No" ;;
-    posture | role | keyrepeat | multiplexer) choice_display "$2" "$1" ;;
+    posture | role | keyrepeat | multiplexer | docker | identity) choice_display "$2" "$1" ;;
     *) [[ -z "$1" ]] && echo "(none)" || echo "$1" ;;
   esac
 }
