@@ -14,6 +14,6 @@ set -euo pipefail
 # before GNOME's own service can be enabled without resetting authentication.
 case ":${XDG_CURRENT_DESKTOP:-}:" in
   *GNOME* | *gnome*) "$HOME/.local/bin/groundwork-remote-desktop" prepare ;;
-  *) echo 'Desktop sharing: use this desktop’s native server; no competing desktop was installed.' ;;
+  *) echo 'Desktop sharing: use the native server for this desktop; no competing desktop was installed.' ;;
 esac
 {{ end -}}
