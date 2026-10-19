@@ -38,8 +38,8 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "bccfaabb4da885f9661d405e4718044d147a8bd71b30b9df08c7b1ebd6983deb",
-      "lastmod": "2026-10-18"
+      "sha256": "9be34d563cfc1bb5d22ed5ffb5f7ed53dee3b60d077164fd4c1d5dd53f8e5278",
+      "lastmod": "2026-10-19"
     },
     "customizing.html": {
       "sha256": "b26182c6b8b85a57ff4008086ff53a9b0973e1996b2dc620a37c9392f450a688",
@@ -146,7 +146,7 @@
       "lastmod": "2026-08-13"
     },
     "platforms.html": {
-      "sha256": "e094fd8c8b59e991e2d2c32b90c2c742e5250e308a56b5399223ca052fb258d0",
+      "sha256": "87218c4cc936b54b5bb354826abf232dd2228231900896a2a23e0eb6acf5a1cc",
       "lastmod": "2026-10-19"
     },
     "practice.html": {
@@ -186,7 +186,7 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "ce8dd9bd75ca7e25bfb2aedf57cfba4537cb9a0c4c9a328b42682c051136d2c8",
+      "sha256": "cf66a74ff6c5714bed1dc092649247e20d7ccf7338ac7ccc52ba9745f3be5afb",
       "lastmod": "2026-10-19"
     },
     "web-dev.html": {
