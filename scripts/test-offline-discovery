@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Exercise cleanup's offline selection policy through its real process boundary."""
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+FIXTURE_PIN = '40.5.6'
+
+
+class OfflineTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='groundwork-offline-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.home = self.root / 'home'
+        self.bin = self.home / '.local/bin'
+        self.bin.mkdir(parents=True)
+        self.calls = self.root / 'calls'
+        self.records = self.root / 'repositories'
+        self.records.write_text('')
+        self.stores = self.root / 'stores'
+        self.stores.mkdir()
+        lib = self.home / '.local/share/groundwork/lib'
+        lib.mkdir(parents=True)
+        shutil.copy(REPO / 'home/dot_local/share/groundwork/lib/maintenance-runner.sh', lib)
+        locklib = self.home / '.local/lib/groundwork'
+        locklib.mkdir(parents=True)
+        shutil.copy(REPO / 'home/dot_local/lib/groundwork/update-lock.sh', locklib)
+        config = self.home / '.config/groundwork'
+        config.mkdir(parents=True)
+        (config / 'repos.conf').write_text('trusted_pnpm_store_root = ' + str(self.stores) + '\n')
+        (self.bin / 'jq').symlink_to(shutil.which('jq'))
+        (self.bin / 'node').symlink_to('/usr/bin/true')
+        self.script(self.bin / 'groundwork-repos', 'cat "$REVIEW_RECORDS"')
+        self.script(self.bin / 'mise', 'exit 1')
+        self.script(self.bin / 'brew', '''case "$1" in
+--cache) printf '%s\\n' "$HOME/cache" ;;
+*) printf 'brew %s\\n' "$*" >>"$REVIEW_CALLS" ;;
+esac''')
+        self.script(self.bin / 'npm', '''case "$1" in
+config) printf '%s\\n' "$HOME/npm-cache" ;;
+*) printf 'npm %s\\n' "$*" >>"$REVIEW_CALLS" ;;
+esac''')
+        proxy = self.root / 'corepack/dist/pnpm.js'
+        self.script(proxy, '''printf 'pnpm %s at %s network=%s prompt=%s\\n' "$*" "$PWD" "${COREPACK_ENABLE_NETWORK:-unset}" "${COREPACK_ENABLE_DOWNLOAD_PROMPT:-unset}" >>"$REVIEW_CALLS"
+if [[ -f .hang ]]; then sleep 30; fi
+if [[ -f .offline ]]; then
+  echo '! Corepack is about to download https://example.invalid/pnpm.tgz' >&2
+  echo "Network access disabled by the environment; can't reach https://example.invalid/pnpm.tgz" >&2
+  exit 1
+fi
+if [[ "${1:-}" == --store-dir ]]; then shift 2; fi
+case "$*" in
+'store path') cat .store ;;
+--version) jq -r '.packageManager | sub("^pnpm@"; "")' package.json ;;
+'store prune'*) : ;;
+*) exit 64 ;;
+esac''')
+        (self.bin / 'pnpm').symlink_to(proxy)
+        self.env = dict(os.environ, HOME=str(self.home), PATH='/usr/bin:/bin',
+                        XDG_CONFIG_HOME=str(self.home / '.config'),
+                        XDG_DATA_HOME=str(self.home / '.local/share'),
+                        REVIEW_CALLS=str(self.calls), REVIEW_RECORDS=str(self.records),
+                        COREPACK_ENV_FILE='0',
+                        GROUNDWORK_MAINTENANCE_POLL_SECONDS='0.05',
+                        GROUNDWORK_MAINTENANCE_CANCEL_GRACE_SECONDS='1')
+        for name in ('GROUNDWORK_UPDATE_LOCK_HELD', 'GROUNDWORK_UPDATE_LOCK_TOKEN', 'COREPACK_HOME'):
+            self.env.pop(name, None)
+
+    def script(self, path, body):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('#!/bin/bash\n' + body + '\n')
+        path.chmod(0o755)
+
+    def repository(self, name, offline=False, pin=FIXTURE_PIN, generation='v40'):
+        repo = self.root / name
+        repo.mkdir()
+        (repo / 'package.json').write_text(json.dumps({'packageManager': 'pnpm@' + pin}))
+        if offline:
+            (repo / '.offline').touch()
+        else:
+            store = self.stores / generation
+            store.mkdir(exist_ok=True)
+            (repo / '.store').write_text(str(store) + '\n')
+        with self.records.open('a') as records:
+            records.write(str(repo) + '\tfixture\n')
+        return repo
+
+    def run_cleanup(self, *args):
+        return subprocess.run(['/bin/bash', str(REPO / 'home/dot_local/bin/executable_groundwork-cleanup'), *args],
+                              env=self.env, capture_output=True, text=True, timeout=20)
+
+    def test_repeated_cache_miss_is_classified_once_and_independent_work_continues(self):
+        self.repository('old-a', offline=True)
+        self.repository('old-b', offline=True)
+        self.repository('cached', pin='39.0.1', generation='v39')
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('intentionally offline, not a connectivity test', result.stdout)
+        self.assertIn('2 store probes, 1 known misses reused', result.stdout)
+        self.assertNotIn('about to download', result.stdout + result.stderr)
+        calls = self.calls.read_text()
+        self.assertEqual(calls.count('pnpm store path'), 2, calls)
+        self.assertIn('brew cleanup --prune=all', calls)
+        self.assertIn('npm cache verify', calls)
+        self.assertIn(' store prune', calls)
+        for line in calls.splitlines():
+            if line.startswith('pnpm store path') or line.startswith('pnpm --version'):
+                self.assertIn('network=0 prompt=0', line)
+        logs = list((self.home / '.local/state/groundwork/logs').glob('pnpm-offline-probes.*'))
+        self.assertEqual(len(logs), 1)
+        self.assertIn('Network access disabled', logs[0].read_text())
+        self.assertEqual(stat.S_IMODE(logs[0].stat().st_mode), 0o600)
+
+    def test_same_cached_pin_still_observes_each_repository_store(self):
+        self.repository('configured-a', generation='v40')
+        self.repository('configured-b', generation='v41')
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text()
+        self.assertEqual(calls.count('pnpm store path'), 2, calls)
+        self.assertEqual(calls.count(' store prune'), 2, calls)
+        self.assertIn(str(self.stores / 'v40'), result.stdout)
+        self.assertIn(str(self.stores / 'v41'), result.stdout)
+
+    def test_repository_corepack_environment_prevents_cross_context_cache_reuse(self):
+        self.env.pop('COREPACK_ENV_FILE')
+        a = self.repository('env-a', offline=True)
+        b = self.repository('env-b', offline=True)
+        (a / '.corepack.env').write_text('COREPACK_HOME=/different-a\n')
+        (b / '.corepack.env').write_text('COREPACK_HOME=/different-b\n')
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
+        self.assertIn('2 store probes, 0 known misses reused', result.stdout)
+        self.assertFalse((self.home / '.local/state').exists())
+
+    def test_mise_shims_use_each_repository_effective_corepack_cache_context(self):
+        proxy = (self.bin / 'pnpm').resolve()
+        (self.bin / 'pnpm').unlink()
+        runtime = self.root / 'runtime/bin'
+        runtime.mkdir(parents=True)
+        (runtime / 'pnpm').symlink_to(proxy)
+        shims = self.root / 'mise/shims'
+        shims.mkdir(parents=True)
+        self.script(shims / 'pnpm', 'exec "$HOME/.local/bin/mise" exec -- "$REVIEW_RUNTIME_BIN/pnpm" "$@"')
+        self.script(self.bin / 'mise', """[[ "${1:-}" == exec && "${2:-}" == -- ]] || exit 1
+shift 2
+export COREPACK_HOME="$(cat .corepack-cache)"
+export PATH="$REVIEW_RUNTIME_BIN:$PATH"
+exec "$@"
+""")
+        self.env['PATH'] = str(shims) + ':/usr/bin:/bin'
+        self.env['REVIEW_RUNTIME_BIN'] = str(runtime)
+        for name, cache in (('context-a', 'cache-a'), ('context-b', 'cache-b'), ('context-a2', 'cache-a')):
+            repo = self.repository(name, offline=True)
+            (repo / '.corepack-cache').write_text(str(self.root / cache) + '\n')
+        for variable in ('COREPACK_HOME', 'XDG_CACHE_HOME', 'LOCALAPPDATA'):
+            with self.subTest(variable=variable):
+                self.calls.unlink(missing_ok=True)
+                script = (self.bin / 'mise').read_text()
+                for previous in ('COREPACK_HOME', 'XDG_CACHE_HOME', 'LOCALAPPDATA'):
+                    script = script.replace('export ' + previous + '=', 'export ' + variable + '=')
+                (self.bin / 'mise').write_text(script)
+                result = self.run_cleanup()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
+                self.assertIn('2 store probes, 1 known misses reused', result.stdout)
+
+    def test_explicit_environment_file_named_default_never_shares_misses(self):
+        self.env['COREPACK_ENV_FILE'] = 'default'
+        self.repository('custom-env-a', offline=True)
+        self.repository('custom-env-b', offline=True)
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
+        self.assertIn('0 known misses reused', result.stdout)
+
+    def test_cumulative_deadline_discards_partial_candidates_and_keeps_other_maintenance(self):
+        self.repository('first-ready')
+        slow = self.repository('second-hangs')
+        (slow / '.hang').touch()
+        self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
+        result = self.run_cleanup('--yes')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('partial candidates discarded; independent maintenance continues', result.stdout)
+        calls = self.calls.read_text()
+        self.assertIn('brew cleanup --prune=all', calls)
+        self.assertIn('npm cache verify', calls)
+        self.assertNotIn(' store prune', calls)
+
+
+if __name__ == '__main__':
+    unittest.main()

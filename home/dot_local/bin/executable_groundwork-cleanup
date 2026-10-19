@@ -31,6 +31,11 @@ requested formulae and casks are retained. Whole pnpm store generations,
 custom untrusted stores, Docker data, Xcode data, and application or user data
 are never deleted by this command.
 
+Cleanup probes pnpm with networking and download prompts disabled. An uncached
+Corepack version is review-only, not a VPN/router test. Repeated misses share
+only artifact availability; every usable repository still resolves its own
+store configuration. Discovery has one cumulative deadline and reports progress.
+
 Every observation is bounded. Each mutating package-manager command runs in
 its own process group with a hard deadline, visible heartbeat, and cancellation
 of that process tree.
@@ -115,6 +120,7 @@ pnpm_attempt="$state_dir/pnpm-prune-last-attempt"
 legacy_pending="$state_dir/homebrew-cleanup-pending"
 deadline="${GROUNDWORK_MAINTENANCE_DEADLINE_SECONDS:-1800}"
 observe_deadline="${GROUNDWORK_MAINTENANCE_OBSERVE_DEADLINE_SECONDS:-120}"
+discovery_deadline="${GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS:-120}"
 heartbeat="${GROUNDWORK_MAINTENANCE_HEARTBEAT_SECONDS:-60}"
 cancel_grace="${GROUNDWORK_MAINTENANCE_CANCEL_GRACE_SECONDS:-2}"
 poll_seconds="${GROUNDWORK_MAINTENANCE_POLL_SECONDS:-1}"
@@ -123,7 +129,7 @@ monthly_days="${GROUNDWORK_PNPM_PRUNE_DAYS:-30}"
 high_water_gib="${GROUNDWORK_PNPM_HIGH_WATER_GIB:-20}"
 high_water_retry_days="${GROUNDWORK_PNPM_HIGH_WATER_RETRY_DAYS:-7}"
 
-for numeric_setting in "$deadline" "$observe_deadline" "$heartbeat" "$cancel_grace" "$orphan_grace" "$monthly_days" \
+for numeric_setting in "$deadline" "$observe_deadline" "$discovery_deadline" "$heartbeat" "$cancel_grace" "$orphan_grace" "$monthly_days" \
   "$high_water_gib" "$high_water_retry_days"; do
   if [[ ! "$numeric_setting" =~ ^[0-9]+$ || "$numeric_setting" -lt 1 ]]; then
     echo "groundwork-cleanup: maintenance deadlines, cadence, and thresholds must be positive integers." >&2
@@ -149,6 +155,7 @@ store_candidates=""
 review_records=""
 repository_records=""
 group_records=""
+probe_dir=""
 cleanup_exit() {
   local status=$?
   if type groundwork_lock_release >/dev/null 2>&1; then
@@ -159,6 +166,7 @@ cleanup_exit() {
   [[ -z "$review_records" ]] || rm -f -- "$review_records" || true
   [[ -z "$repository_records" ]] || rm -f -- "$repository_records" || true
   [[ -z "$group_records" ]] || rm -f -- "$group_records" || true
+  [[ -z "$probe_dir" ]] || rm -rf -- "$probe_dir" || true
   exit "$status"
 }
 trap cleanup_exit EXIT
@@ -218,6 +226,8 @@ store_candidates="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-candidates.XXXXXX
 review_records="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-review.XXXXXX")"
 repository_records="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-repositories.XXXXXX")"
 group_records="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-group.XXXXXX")"
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-cleanup-probes.XXXXXX")"
+: >"$probe_dir/errors"
 
 format_bytes() {
   if [[ -z "$1" ]]; then
@@ -418,12 +428,12 @@ trusted_store_base() {
 
 pnpm_store_path_at() {
   cd "$1"
-  exec env COREPACK_ENABLE_NETWORK=0 pnpm store path
+  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm store path
 }
 
 pnpm_version_at() {
   cd "$1"
-  exec env COREPACK_ENABLE_NETWORK=0 pnpm --version
+  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --version
 }
 
 mise_npm_path_at_home() {
@@ -475,20 +485,88 @@ observed_cache_path() {
   printf '%s\n' "$resolved"
 }
 
+# Inspect only cache context, never credentials or the complete mise environment.
+pnpm_context_fields() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${COREPACK_HOME+x}:${COREPACK_HOME-}" "${XDG_CACHE_HOME+x}:${XDG_CACHE_HOME-}" \
+    "${LOCALAPPDATA+x}:${LOCALAPPDATA-}" "$HOME" \
+    "${COREPACK_ENV_FILE+x}:${COREPACK_ENV_FILE-}" "$(command -v pnpm)" "$(command -v node || true)"
+}
+
+pnpm_artifact_key_at() {
+  local repo="$1" declaration="$2" launcher fields cache xdg_cache local_cache context_home env_file proxy node target directory value
+  launcher="$(command -v pnpm || true)"
+  if [[ "$launcher" == */mise/shims/pnpm ]]; then
+    # shellcheck disable=SC2016 # Resolve only these fields inside mise's effective environment.
+    fields="$(cd "$repo" && mise exec -- /bin/bash -c \
+      'printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "${COREPACK_HOME+x}:${COREPACK_HOME-}" "${XDG_CACHE_HOME+x}:${XDG_CACHE_HOME-}" "${LOCALAPPDATA+x}:${LOCALAPPDATA-}" "$HOME" "${COREPACK_ENV_FILE+x}:${COREPACK_ENV_FILE-}" "$(command -v pnpm)" "$(command -v node || true)"' 2>/dev/null)" || return 1
+  else
+    fields="$(pnpm_context_fields)"
+  fi
+  [[ "$fields" != *$'\n'* ]] || return 1
+  awk -F'\t' 'NF != 7 { exit 1 }' <<<"$fields" || return 1
+  IFS=$'\t' read -r cache xdg_cache local_cache context_home env_file proxy node <<<"$fields"
+  [[ "$context_home" == /* && "$proxy" == /* && "$node" == /* ]] || return 1
+  # Bind every cache-location input without duplicating Corepack's fallback logic.
+  # Relative/empty overrides have a cwd-dependent meaning, so never share them.
+  for value in "$cache" "$xdg_cache" "$local_cache"; do
+    case "$value" in : | x:/*) ;; *) return 1 ;; esac
+  done
+  [[ "$env_file" == x:0 || "$env_file" == : ]] || return 1
+  if [[ "$env_file" != x:0 ]]; then
+    directory="$repo"
+    while :; do
+      [[ ! -e "$directory/.corepack.env" && ! -L "$directory/.corepack.env" ]] || return 1
+      [[ "$directory" != / ]] || break
+      directory="$(dirname "$directory")"
+    done
+  fi
+  target="$(readlink "$proxy" 2>/dev/null)" || return 1
+  case "$target" in */corepack/dist/pnpm.js) ;; *) return 1 ;; esac
+  # Negative availability only. Store paths and successful probes are never reused.
+  printf '%q|%q\n' "$fields" "$declaration"
+}
+
+record_pnpm_probe_error() {
+  local repo="$1" operation="$2" diagnostic="$3"
+  [[ -s "$diagnostic" ]] || return 0
+  printf '\nRepository: %s\nProbe: %s\n' "$repo" "$operation" >>"$probe_dir/errors"
+  cat "$diagnostic" >>"$probe_dir/errors"
+}
+
 add_store_selection() {
-  local repo="$1" package_manager="$2" expected_version store version canonical output status=0
+  local repo="$1" package_manager="$2" expected_version store version canonical output key diagnostic status=0
+  local seen_key
   if has_terminal_control "$repo" || has_terminal_control "$package_manager"; then
     echo "groundwork-cleanup: refused a repository selection containing a record control character." >&2
     return 1
   fi
   expected_version="${package_manager#pnpm@}"
   expected_version="${expected_version%%+*}"
-  output="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-pnpm.XXXXXX")"
-  run_bounded_capture "resolve pnpm store for $repo" "$output" pnpm_store_path_at "$repo" || status=$?
+  output="$probe_dir/output"
+  diagnostic="$probe_dir/stderr"
+  key="$(pnpm_artifact_key_at "$repo" "$package_manager")" || key=''
+  if [[ -n "$key" && -n "${offline_missing_keys[*]-}" ]]; then
+    for seen_key in "${offline_missing_keys[@]}"; do
+      if [[ "$key" == "$seen_key" ]]; then
+        cache_hits=$((cache_hits + 1))
+        append_review "$repo" "$package_manager is uncached in this Corepack context (same-run observation); cleanup is intentionally offline, not a connectivity test; no store was touched"
+        return 0
+      fi
+    done
+  fi
+  probe_count=$((probe_count + 1))
+  (pnpm_store_path_at "$repo") >"$output" 2>"$diagnostic" || status=$?
+  record_pnpm_probe_error "$repo" 'store path' "$diagnostic"
   exit_if_terminal_status "$status"
   if [[ "$status" -ne 0 ]]; then
     rm -f -- "$output"
-    append_review "$repo" "$package_manager could not resolve a store offline; no store was touched"
+    if grep -qF "Network access disabled by the environment; can't reach " "$diagnostic"; then
+      [[ -z "$key" ]] || offline_missing_keys+=("$key")
+      append_review "$repo" "$package_manager is uncached; cleanup is intentionally offline, not a connectivity test; no store was touched"
+    else
+      append_review "$repo" "$package_manager could not resolve a store offline; see private probe diagnostics; no store was touched"
+    fi
     return 0
   fi
   store="$(<"$output")"
@@ -499,7 +577,8 @@ add_store_selection() {
   fi
   : >"$output"
   status=0
-  run_bounded_capture "resolve pnpm version for $repo" "$output" pnpm_version_at "$repo" || status=$?
+  (pnpm_version_at "$repo") >"$output" 2>"$diagnostic" || status=$?
+  record_pnpm_probe_error "$repo" 'version' "$diagnostic"
   exit_if_terminal_status "$status"
   if [[ "$status" -ne 0 ]]; then
     rm -f -- "$output"
@@ -540,14 +619,15 @@ add_store_selection() {
 }
 
 discover_exact_selections() {
-  local repos_command jq_bin jq_check repo _ package_manager output version status=0
+  local repos_command jq_bin repo _ package_manager output version status=0 count=0 total
+  local offline_missing_keys=()
+  local probe_count=0 cache_hits=0
   repos_command="$HOME/.local/bin/groundwork-repos"
   if [[ ! -x "$repos_command" ]]; then
     append_review "Repository discovery" "groundwork-repos is unavailable; pnpm automatic maintenance is incomplete"
     return 1
   fi
-  run_bounded_capture "discover configured Git repositories" "$repository_records" \
-    "$repos_command" --strict --no-cache list || status=$?
+  "$repos_command" --strict --no-cache list >"$repository_records" || status=$?
   exit_if_terminal_status "$status"
   if [[ "$status" -ne 0 ]]; then
     append_review "Repository discovery" "canonical no-cache discovery failed or timed out; pnpm automatic maintenance is incomplete"
@@ -558,21 +638,24 @@ discover_exact_selections() {
     append_review "Repository discovery" "jq is unavailable; exact packageManager pins were not inspected and no pnpm store is automatic"
     return 1
   fi
-  jq_check="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-jq-check.XXXXXX")"
   status=0
-  run_bounded_capture "verify jq" "$jq_check" "$jq_bin" --version || status=$?
-  rm -f -- "$jq_check"
+  "$jq_bin" --version >"$probe_dir/jq-version" || status=$?
   exit_if_terminal_status "$status"
   if [[ "$status" -ne 0 ]]; then
     append_review "Repository discovery" "jq failed its bounded self-check; exact packageManager pins were not inspected and no pnpm store is automatic"
     return 1
   fi
+  total="$(awk 'END {print NR + 0}' "$repository_records")"
+  printf '  Offline pnpm discovery: %s repository/worktree records; deadline %ss.\n' "$total" "$discovery_deadline"
   while IFS=$'\t' read -r repo _; do
+    count=$((count + 1))
+    if [[ "$count" -eq 1 || $((count % 25)) -eq 0 ]]; then
+      printf '  Offline pnpm discovery: inspected %s/%s repository records.\n' "$count" "$total"
+    fi
     [[ -f "$repo/package.json" ]] || continue
-    output="$(mktemp "${TMPDIR:-/tmp}/groundwork-cleanup-jq.XXXXXX")"
+    output="$probe_dir/package-manager"
     status=0
-    run_bounded_capture "inspect $repo/package.json" "$output" \
-      "$jq_bin" -r '.packageManager // empty' "$repo/package.json" || status=$?
+    "$jq_bin" -r '.packageManager // empty' "$repo/package.json" >"$output" || status=$?
     exit_if_terminal_status "$status"
     if [[ "$status" -ne 0 ]]; then
       rm -f -- "$output"
@@ -599,6 +682,7 @@ discover_exact_selections() {
         ;;
     esac
   done <"$repository_records"
+  printf '  Offline pnpm discovery: inspected %s/%s repository records; %s store probes, %s known misses reused; complete.\n' "$count" "$total" "$probe_count" "$cache_hits"
 }
 
 select_representative() {
@@ -671,7 +755,31 @@ build_candidates() {
 
 pnpm_discovery_failed=0
 if command -v pnpm >/dev/null 2>&1; then
-  discover_exact_selections || pnpm_discovery_failed=1
+  # All observation children share one supervised group and cumulative deadline.
+  # A partial inventory cannot prove absence of conflicting selectors.
+  run_pnpm_discovery() {
+    local deadline="$discovery_deadline"
+    run_bounded 'discover offline pnpm store selections' discover_exact_selections
+  }
+  discovery_status=0
+  run_pnpm_discovery || discovery_status=$?
+  exit_if_terminal_status "$discovery_status"
+  if [[ "$discovery_status" -ne 0 ]]; then
+    pnpm_discovery_failed=1
+    : >"$store_selections"
+    append_review 'Repository discovery' "offline selection incomplete (exit $discovery_status); partial candidates discarded; independent maintenance continues"
+  fi
+  if [[ -s "$probe_dir/errors" ]]; then
+    if [[ "$act" -eq 1 ]]; then
+      mkdir -p "$state_dir/logs"
+      probe_log="$(mktemp "$state_dir/logs/pnpm-offline-probes.XXXXXX")"
+      chmod 600 "$probe_log"
+      cat "$probe_dir/errors" >"$probe_log"
+      printf '  Private offline pnpm diagnostics: %s\n' "$probe_log"
+    else
+      echo '  Offline pnpm diagnostics were temporary in report mode; --yes retains a private log.'
+    fi
+  fi
   build_candidates
 fi
 
@@ -1061,14 +1169,14 @@ prune_pnpm_store() {
   local directory="$1" expected_store="$2" expected_version="$3" store_base="$4"
   local actual_store actual_version
   cd "$directory"
-  actual_store="$(COREPACK_ENABLE_NETWORK=0 pnpm --store-dir "$store_base" store path 2>/dev/null)" || return 1
+  actual_store="$(COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --store-dir "$store_base" store path 2>/dev/null)" || return 1
   actual_store="$(canonical_dir "$actual_store" || printf '%s' "$actual_store")"
-  actual_version="$(COREPACK_ENABLE_NETWORK=0 pnpm --version 2>/dev/null)" || return 1
+  actual_version="$(COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --version 2>/dev/null)" || return 1
   if [[ "$actual_store" != "$expected_store" || "$actual_version" != "$expected_version" ]]; then
     echo "groundwork-cleanup: pnpm selection changed before prune (expected $expected_version at $expected_store; found $actual_version at $actual_store)." >&2
     return 1
   fi
-  exec env COREPACK_ENABLE_NETWORK=0 pnpm --store-dir "$store_base" store prune
+  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --store-dir "$store_base" store prune
 }
 
 echo
