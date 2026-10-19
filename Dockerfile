@@ -44,4 +44,7 @@ COPY --chown=$USER:$USER . /opt/groundwork
 COPY --chown=$USER:$USER docker/chezmoi.headless.toml /home/$USER/.config/chezmoi/chezmoi.toml
 RUN chezmoi --source /opt/groundwork apply
 
+# Direct container commands need package binaries before shell startup runs.
+ENV PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
+
 CMD ["zsh"]

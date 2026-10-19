@@ -9188,51 +9188,73 @@ SH
   # appends its own "?" and its own "> bool, default false" hint, so a stray
   # "[y/N]" or trailing punctuation shows up as "[y/N]?" / "??" only here.
   if command -v tmux >/dev/null 2>&1; then
-    prompt_socket="groundwork-prompt-$$"
-    prompt_dir="$out_dir/prompt-render"
-    mkdir -p "$prompt_dir/home" "$prompt_dir/src"
-    cp home/.chezmoi.toml.tmpl "$prompt_dir/src/.chezmoi.toml.tmpl"
-    tmux -L "$prompt_socket" new-session -d -x 120 -y 24 -c "$prompt_dir" /bin/sh
-    # HOME alone does not isolate chezmoi: Groundwork exports XDG_CONFIG_HOME,
-    # and chezmoi reads its config from there first, so the machine's real saved
-    # answers would silently satisfy every promptOnce and no prompt would render
-    # — and worse, `chezmoi init` would REGENERATE the real config pointing at
-    # the scratch source (this happened; see the sentinel below). Every XDG dir
-    # is scoped into the fixture home.
-    real_chezmoi_config="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
-    real_config_before="none"
-    [[ ! -f "$real_chezmoi_config" ]] || real_config_before="$(cksum <"$real_chezmoi_config")"
-    tmux -L "$prompt_socket" send-keys \
-      "HOME=$prompt_dir/home XDG_CONFIG_HOME=$prompt_dir/home/.config XDG_DATA_HOME=$prompt_dir/home/.local/share XDG_STATE_HOME=$prompt_dir/home/.local/state XDG_CACHE_HOME=$prompt_dir/home/.cache chezmoi init --source $prompt_dir/src" Enter
-    prompt_rendered=""
-    for _ in $(seq 1 50); do
-      prompt_rendered="$(tmux -L "$prompt_socket" capture-pane -p 2>/dev/null || true)"
-      grep -qF 'bool, default' <<<"$prompt_rendered" && break
-      sleep 0.2
+    # Both platform prompts run locally, including the hosted-Linux boundary.
+    for prompt_os in darwin linux; do
+      prompt_socket="groundwork-prompt-$prompt_os-$$"
+      prompt_dir="$out_dir/prompt-render-$prompt_os"
+      mkdir -p "$prompt_dir/home" "$prompt_dir/src"
+      cp home/.chezmoi.toml.tmpl "$prompt_dir/src/.chezmoi.toml.tmpl"
+      native_prompt_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+      if [[ "$prompt_os" != "$native_prompt_os" ]]; then
+        # init fixes its OS before data overrides exist. Keep native init
+        # untouched; select the other OS branch in this private source fixture.
+        python3 - "$prompt_dir/src/.chezmoi.toml.tmpl" "$prompt_os" <<'PYTHON'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+path.write_text(path.read_text().replace(".chezmoi.os", json.dumps(sys.argv[2])))
+PYTHON
+      fi
+      prompt_command="chezmoi init --source $prompt_dir/src"
+      tmux -L "$prompt_socket" new-session -d -x 120 -y 24 -c "$prompt_dir" /bin/sh
+      # HOME alone does not isolate chezmoi: Groundwork exports XDG_CONFIG_HOME,
+      # and chezmoi reads its config from there first, so the machine's real saved
+      # answers would silently satisfy every promptOnce and no prompt would render
+      # — and worse, `chezmoi init` would REGENERATE the real config pointing at
+      # the scratch source (this happened; see the sentinel below). Every XDG dir
+      # is scoped into the fixture home.
+      real_chezmoi_config="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
+      real_config_before="none"
+      [[ ! -f "$real_chezmoi_config" ]] || real_config_before="$(cksum <"$real_chezmoi_config")"
+      tmux -L "$prompt_socket" send-keys \
+        "HOME=$prompt_dir/home XDG_CONFIG_HOME=$prompt_dir/home/.config XDG_DATA_HOME=$prompt_dir/home/.local/share XDG_STATE_HOME=$prompt_dir/home/.local/state XDG_CACHE_HOME=$prompt_dir/home/.cache DISPLAY= WAYLAND_DISPLAY= $prompt_command" Enter
+      prompt_rendered=""
+      for _ in $(seq 1 50); do
+        prompt_rendered="$(tmux -L "$prompt_socket" capture-pane -p 2>/dev/null || true)"
+        grep -qF 'bool, default' <<<"$prompt_rendered" && break
+        sleep 0.2
+      done
+      tmux -L "$prompt_socket" kill-server 2>/dev/null || true
+      grep -qF 'bool, default' <<<"$prompt_rendered" \
+        || fail "chezmoi init never rendered a prompt (cannot verify the setup UI)"
+      if [[ "$prompt_os" == darwin ]]; then
+        expected_first_prompt='Is this a server or CI Mac with no desktop apps, which most Macs are not (yes or no; Enter keeps the default: no)?'
+      else
+        expected_first_prompt='Is this a headless server or container with no desktop apps (yes or no; Enter keeps the default: yes)?'
+      fi
+      if ! grep -qF "$expected_first_prompt" <<<"$prompt_rendered"; then
+        printf '%s\n' "$prompt_rendered" >&2
+        fail "$prompt_os first setup prompt did not render its desktop/headless choice and default"
+      fi
+      if grep -qE '\?\?|\.\?|\[y/N\]|\[Y/n\]' <<<"$prompt_rendered"; then
+        printf '%s\n' "$prompt_rendered" >&2
+        fail "the rendered setup prompt has doubled punctuation or a hand-written [y/N] (chezmoi adds its own '?' and 'bool, default <x>' hint)"
+      fi
+      # Sentinel: validation must NEVER touch the machine's real chezmoi config.
+      # An earlier version of this check leaked through XDG_CONFIG_HOME and
+      # rewrote the real config to point at the scratch source; this assertion
+      # makes that class of regression fail loudly instead of corrupting state.
+      real_config_after="none"
+      [[ ! -f "$real_chezmoi_config" ]] || real_config_after="$(cksum <"$real_chezmoi_config")"
+      [[ "$real_config_before" == "$real_config_after" ]] \
+        || fail "the setup-UI check MUTATED the real chezmoi config at $real_chezmoi_config — its isolation is broken"
     done
-    tmux -L "$prompt_socket" kill-server 2>/dev/null || true
-    grep -qF 'bool, default' <<<"$prompt_rendered" \
-      || fail "chezmoi init never rendered a prompt (cannot verify the setup UI)"
-    grep -qF 'Is this a server or CI Mac with no desktop apps, which most Macs are not (yes or no; Enter keeps the default: no)?' <<<"$prompt_rendered" \
-      || fail "the first setup prompt did not render its desktop/headless choice and default"
-    if grep -qE '\?\?|\.\?|\[y/N\]|\[Y/n\]' <<<"$prompt_rendered"; then
-      printf '%s\n' "$prompt_rendered" >&2
-      fail "the rendered setup prompt has doubled punctuation or a hand-written [y/N] (chezmoi adds its own '?' and 'bool, default <x>' hint)"
-    fi
-    # Sentinel: validation must NEVER touch the machine's real chezmoi config.
-    # An earlier version of this check leaked through XDG_CONFIG_HOME and
-    # rewrote the real config to point at the scratch source; this assertion
-    # makes that class of regression fail loudly instead of corrupting state.
-    real_config_after="none"
-    [[ ! -f "$real_chezmoi_config" ]] || real_config_after="$(cksum <"$real_chezmoi_config")"
-    [[ "$real_config_before" == "$real_config_after" ]] \
-      || fail "the setup-UI check MUTATED the real chezmoi config at $real_chezmoi_config — its isolation is broken"
   fi
 
   check "chezmoi interview: release preferences stay out of bootstrap"
   # Stable versus preview and Xcode beta are mutable preferences, not facts
   # required to render a usable first install. Fresh setup derives a stable
-  # profile from the bootstrap-critical work answer; existing saved preferences
+  # profile, retaining a legacy seed when present; existing saved preferences
   # survive regeneration and remain editable through groundwork-configure.
   assert_no_matches "chezmoi init must not ask for a release profile" \
     rg -n 'promptChoiceOnce \. "profile_preset"|Starting profile' home/.chezmoi.toml.tmpl
