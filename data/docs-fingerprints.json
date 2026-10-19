@@ -38,7 +38,7 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "9be34d563cfc1bb5d22ed5ffb5f7ed53dee3b60d077164fd4c1d5dd53f8e5278",
+      "sha256": "d95005c49e7098a5ef15be37d37758cf80a46daecb3f6697a6cca8a77a6048f5",
       "lastmod": "2026-10-19"
     },
     "customizing.html": {
@@ -114,8 +114,8 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "de9cb062907b6394b17b94af3a2cd0edef6feef49b14d815798c86c32551ceec",
-      "lastmod": "2026-10-19"
+      "sha256": "0e16c440b5186ea81339ff7b5fc0b85c677edc3a90eb5bfabc7204f4d0ed94f3",
+      "lastmod": "2026-10-18"
     },
     "keyboard.html": {
       "sha256": "d218e9a90212ad01c9be13ee501a269d8ab4ebc07c3540dadef9eec0be94ac73",
@@ -186,7 +186,7 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "cf66a74ff6c5714bed1dc092649247e20d7ccf7338ac7ccc52ba9745f3be5afb",
+      "sha256": "89e1b08316bf8af406385f054a55c92ce8d5d434f8c97fa8dd1b8f504322baf2",
       "lastmod": "2026-10-19"
     },
     "web-dev.html": {

@@ -1149,6 +1149,7 @@ line_number() {
 validate_static_foundation() {
   check "common developer setup and Docker configuration merge"
   python3 -B scripts/test-common-setup
+  python3 -B scripts/test-remote-desktop
 
   local canonical_rows canonical_expected canonical_observed
 
@@ -2881,12 +2882,25 @@ case "${1:-}" in
         ;;
       --cask)
         shift
+        cask_versions=0
+        if [[ "${1:-}" == --versions ]]; then
+          cask_versions=1
+          shift
+        fi
         if [[ "$#" -eq 0 ]]; then
           [[ "${BREW_CASK_INVENTORY_STATUS:-0}" == 0 ]] \
             || exit "$BREW_CASK_INVENTORY_STATUS"
           installed_casks="${BREW_CASKS-$fixture_default_casks}"
-          [[ -z "$installed_casks" ]] || printf '%s\n' $installed_casks
-          [[ ! -f "$HOME/.chatgpt-adopted" ]] || printf 'chatgpt\n'
+          for installed in $installed_casks; do
+            if [[ "$cask_versions" -eq 1 ]]; then
+              printf '%s 1.0\n' "$installed"
+            else
+              printf '%s\n' "$installed"
+            fi
+          done
+          if [[ -f "$HOME/.chatgpt-adopted" ]]; then
+            if [[ "$cask_versions" -eq 1 ]]; then printf 'chatgpt 1.0\n'; else printf 'chatgpt\n'; fi
+          fi
         else
           for wanted in "$@"; do
             found=0
@@ -2895,6 +2909,7 @@ case "${1:-}" in
             done
             [[ "$wanted" == chatgpt && -f "$HOME/.chatgpt-adopted" ]] && found=1
             [[ "$found" -eq 1 ]] || exit 1
+            if [[ "$cask_versions" -eq 1 ]]; then printf '%s 1.0\n' "$wanted"; fi
           done
         fi
         ;;
@@ -3542,7 +3557,10 @@ SH
     >"$update_all_fixture/handoff-output" 2>&1
   update_all_status=$?
   set -e
-  [[ "$update_all_status" -eq 42 ]] || fail "update-all did not preserve the freshly installed runner's exit status"
+  if [[ "$update_all_status" -ne 42 ]]; then
+    cat "$update_all_fixture/handoff-output" >&2
+    fail "update-all did not preserve the freshly installed runner's exit status (observed $update_all_status)"
+  fi
   # color=0 on the chezmoi line proves the launcher decided color BEFORE the
   # sync (hook scripts inherit it), and on the runner line that the exec'd
   # runner inherits the same decision; stdout is a file here, so it is 0.
@@ -5458,7 +5476,7 @@ EOF
   retry_script="$PWD/home/run_after_12-sudo-deferred-casks.sh"
   : >"$update_all_log"
   HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
-    GROUNDWORK_TEST_LOG="$update_all_log" SUDO_CACHED=0 \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" SUDO_CACHED=0 \
     run_without_tty "$retry_script" \
     >"$update_all_fixture/sudo-retry-no-tty" 2>&1 \
     || fail "a set-aside retry with no terminal failed the apply"
@@ -5480,7 +5498,7 @@ EOF
   printf 'bad;token\n' >"$update_all_home/.local/state/groundwork/sudo-deferred-casks.txt"
   : >"$update_all_log"
   if HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
-    GROUNDWORK_TEST_LOG="$update_all_log" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
     "$retry_script" >"$update_all_fixture/sudo-retry-malformed" 2>&1; then
     fail "a malformed set-aside list was installed"
   fi

@@ -20,12 +20,16 @@ class SudoTests(unittest.TestCase):
         self.home = self.root / "home"
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("awk", "sort", "mktemp", "rm", "grep", "dirname", "mkdir", "chmod", "mv", "cat", "sleep"):
+        for name in ("awk", "sort", "mktemp", "rm", "grep", "dirname", "mkdir", "chmod", "mv", "cat", "sleep", "uname", "find"):
             (self.bin / name).symlink_to(shutil.which(name))
         self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin),
                         REVIEW_METADATA=str(self.root / "metadata"),
-                        REVIEW_CAPTURE=str(self.root / "capture"))
-        self.stub("brew", 'case "$1" in info) cat "$REVIEW_METADATA";; shellenv) :;; bundle) for arg in "$@"; do case "$arg" in --file=*) cat "${arg#--file=}" >"$REVIEW_CAPTURE";; esac; done;; esac')
+                        REVIEW_CAPTURE=str(self.root / "capture"),
+                        REVIEW_INSTALLED=str(self.root / "installed"),
+                        GROUNDWORK_APPLICATIONS_DIR=str(self.root / "Applications"))
+        (self.root / "installed").write_text("")
+        (self.root / "Applications").mkdir()
+        self.stub("brew", 'case "$1" in list) cat "$REVIEW_INSTALLED";; info) cat "$REVIEW_METADATA";; shellenv) :;; bundle) for arg in "$@"; do case "$arg" in --file=*) cat "${arg#--file=}" >"$REVIEW_CAPTURE";; esac; done;; esac')
         self.stub("sudo", "exit 0")
         self.manifest = self.home / ".config/homebrew/Brewfile"
         self.manifest.parent.mkdir(parents=True)
@@ -36,10 +40,13 @@ class SudoTests(unittest.TestCase):
         lib = self.home / ".local/share/groundwork/lib"
         lib.mkdir(parents=True)
         shutil.copy(LIB, lib / LIB.name)
+        (lib / LIB.name).write_text((lib / LIB.name).read_text().replace('/usr/bin/', str(self.bin) + '/'))
         self.env["GROUNDWORK_BREW_BIN"] = str(self.bin / "brew")
 
     def stub(self, name, body):
         path = self.bin / name
+        if path.is_symlink():
+            path.unlink()
         path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
         path.chmod(0o755)
 
@@ -80,6 +87,94 @@ class SudoTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, "tailscale-app\n")
 
+    def test_installed_privileged_cask_is_not_deferred(self):
+        (self.root / "installed").write_text("tailscale-app 1.0\n")
+        for parser in ("jq", "perl", "python3"):
+            with self.subTest(parser=parser):
+                result = self.classify({"casks": [
+                    {"token": "ghostty", "artifacts": [{"app": ["Ghostty.app"]}]},
+                    {"token": "tailscale-app", "artifacts": [{"pkg": ["Tailscale.pkg"]}]}]}, parser)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_unwritable_unowned_app_is_deferred(self):
+        app = self.root / "Applications/Ghostty.app"
+        app.mkdir(parents=True, exist_ok=True)
+        app.chmod(0o555)
+        for parser in ("jq", "perl", "python3"):
+            with self.subTest(parser=parser):
+                result = self.classify({"casks": [
+                    {"token": "ghostty", "artifacts": [{"app": ["Ghostty.app"]}]},
+                    {"token": "tailscale-app", "artifacts": [{"pkg": ["Tailscale.pkg"]}]}]}, parser)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(set(result.stdout.splitlines()), {"ghostty", "tailscale-app"})
+
+    def test_group_writable_bundle_with_foreign_owned_descendant_is_deferred(self):
+        app = self.root / "Applications/Ghostty.app"
+        app.mkdir()
+        self.stub("find", 'printf "%s\\n" "root-owned-descendant"')
+        for parser in ("jq", "perl", "python3"):
+            result = self.classify({"casks": [
+                {"token": "ghostty", "artifacts": [{"app": ["Ghostty.app"]}]},
+                {"token": "tailscale-app", "artifacts": [{"pkg": ["Tailscale.pkg"]}]}]}, parser)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(set(result.stdout.splitlines()), {"ghostty", "tailscale-app"})
+
+    def test_missing_app_in_unwritable_destination_is_deferred(self):
+        (self.root / "Applications").chmod(0o555)
+        result = self.classify({"casks": [
+            {"token": "ghostty", "artifacts": [{"app": ["Ghostty.app"]}]},
+            {"token": "tailscale-app", "artifacts": [{"pkg": ["Tailscale.pkg"]}]}]}, "jq")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(result.stdout.splitlines()), {"ghostty", "tailscale-app"})
+
+    def test_retry_discovers_trusted_brew_before_inventory(self):
+        alternate = self.root / "alternate"
+        alternate.mkdir()
+        brew = alternate / "brew"
+        (self.bin / "brew").rename(brew)
+        brew.write_text(brew.read_text().replace("shellenv) :;", f"""shellenv) echo 'export PATH="{alternate}:$PATH"';"""))
+        self.env["GROUNDWORK_BREW_BIN"] = str(brew)
+        result = self.retry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "capture").exists())
+
+    def test_installed_saved_cask_does_not_prompt_or_install(self):
+        (self.root / "installed").write_text("tailscale-app 1.0\n")
+        self.stub("sudo", "exit 88")
+        result = self.retry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "capture").exists())
+        self.assertFalse(self.state.exists())
+
+    def test_pending_app_store_entries_use_exact_installed_ids(self):
+        self.stub("mas", 'printf "1593408455 Anybox (1.0)\\n"')
+        self.manifest.write_text('mas "Anybox", id: 1593408455\nmas "Xcode", id: 497799835\n')
+        result = self.run_shell("/bin/bash", "-c", 'source "$1"; groundwork_pending_mas_entries "$2"', "review", str(LIB), str(self.manifest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'mas "Xcode", id: 497799835\n')
+
+    def test_app_store_only_retry_is_durable_and_installs_selected_entry(self):
+        self.state.unlink()
+        self.manifest.write_text('mas "Xcode", id: 497799835\n')
+        saved = self.state.parent / "sudo-deferred-app-store.Brewfile"
+        saved.write_text(self.manifest.read_text())
+        self.stub("mas", 'exit 0')
+        result = self.retry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "capture").read_text(), self.manifest.read_text())
+        self.assertFalse(saved.exists())
+
+    def test_app_store_failed_inventory_preserves_saved_work(self):
+        self.manifest.write_text('mas "Xcode", id: 497799835\n')
+        saved = self.state.parent / "sudo-deferred-app-store.Brewfile"
+        saved.write_text(self.manifest.read_text())
+        self.stub("mas", 'exit 7')
+        result = self.retry()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(saved.exists())
+        self.assertFalse((self.root / "capture").exists())
+
     def retry(self):
         return self.run_shell("/bin/bash", str(REPO / "home/run_after_12-sudo-deferred-casks.sh"))
 
@@ -108,6 +203,123 @@ class SudoTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / "capture").read_text(), 'cask "tailscale-app"\n')
         self.assertFalse(self.state.exists())
+
+
+    def test_deferred_install_rechecks_xcode_license(self):
+        self.state.unlink()
+        self.manifest.write_text('mas "Xcode", id: 497799835\n')
+        saved = self.state.parent / "sudo-deferred-app-store.Brewfile"
+        saved.write_text(self.manifest.read_text())
+        self.stub("mas", 'exit 0')
+        self.stub("uname", 'printf "Darwin\\n"')
+        self.stub("xcode-select", 'printf "%s\\n" "/Applications/Xcode.app/Contents/Developer"')
+        self.stub("xcodebuild", 'exit 1')
+        result = self.retry()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sudo xcodebuild -license", result.stderr)
+        self.assertTrue(saved.exists())
+
+    def test_inventory_failure_is_not_an_absent_application(self):
+        self.stub("brew", "exit 7")
+        result = self.run_shell("/bin/bash", "-c", 'source "$1"; groundwork_installed_casks', "review", str(LIB))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_post_bundle_xcode_license_gate_requires_local_acceptance(self):
+        source = LIB.read_text().replace('/usr/bin/', str(self.bin) + '/')
+        fixture_lib = self.root / "xcode-preflight.sh"
+        fixture_lib.write_text(source)
+        self.stub("uname", 'printf "Darwin\\n"')
+        gate = 'source "$1"; groundwork_check_xcode_license'
+
+        self.stub("xcode-select", 'printf "%s\\n" "/Applications/Xcode.app/Contents/Developer"')
+        self.stub("xcodebuild", 'exit 1')
+        result = self.run_shell("/bin/bash", "-c", gate, "fixture", str(fixture_lib))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("package bundle completed", result.stderr)
+        self.assertIn("sudo xcodebuild -license", result.stderr)
+        self.stub("xcodebuild", 'exit 0')
+        self.assertEqual(self.run_shell("/bin/bash", "-c", gate, "fixture", str(fixture_lib)).returncode, 0)
+        self.stub("xcode-select", 'printf "%s\\n" "/Library/Developer/CommandLineTools"')
+        self.stub("xcodebuild", 'exit 1')
+        self.assertEqual(self.run_shell("/bin/bash", "-c", gate, "fixture", str(fixture_lib)).returncode, 0)
+
+
+class OwnershipTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="groundwork-ownership-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.prefix = self.root / "brew"
+        self.old = self.root / "old"
+        self.new = self.root / "new"
+        for directory in (self.prefix, self.old, self.new):
+            (directory / "bin").mkdir(parents=True)
+        for directory in (self.old, self.new):
+            p = directory / "bin/opencode"
+            p.write_text("#!/bin/sh\nexit 0\n")
+            p.chmod(0o755)
+        self.link = self.prefix / "bin/opencode"
+        self.link.symlink_to(self.old / "bin/opencode")
+        self.log = self.root / "commands"
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                        TEST_PREFIX=str(self.prefix), TEST_OLD=str(self.old), TEST_NEW=str(self.new),
+                        TEST_LOG=str(self.log))
+        brew = self.bin / "brew"
+        brew.write_text("""#!/bin/bash
+set -eu
+printf '%s\\n' "$*" >>"$TEST_LOG"
+case "$1 $2" in
+  '--prefix ') printf '%s\\n' "$TEST_PREFIX" ;;
+  '--prefix opencode-v2') printf '%s\\n' "$TEST_OLD" ;;
+  '--prefix opencode') printf '%s\\n' "$TEST_NEW" ;;
+  'unlink '*) rm -f "$TEST_PREFIX/bin/opencode" ;;
+  'link opencode') [[ "${TEST_LINK_FAIL:-0}" == 0 ]] || exit 17; ln -s "$TEST_NEW/bin/opencode" "$TEST_PREFIX/bin/opencode" ;;
+  'link opencode-v2') ln -s "$TEST_OLD/bin/opencode" "$TEST_PREFIX/bin/opencode" ;;
+  'install '*) exit 19 ;;
+  *) exit 64 ;;
+esac
+""")
+        # --prefix is queried with no optional argument.
+        brew.write_text(brew.read_text().replace('case "$1 $2"', 'case "$1 ${2:-}"'))
+        brew.chmod(0o755)
+
+    def run_reconcile(self):
+        library = REPO / "home/dot_local/share/groundwork/lib/brew-ownership.sh"
+        return subprocess.run(["/bin/bash", "-c", 'source "$1"; groundwork_reconcile_opencode', "review", str(library)],
+                              env=self.env, capture_output=True, text=True, timeout=10)
+
+    def test_legacy_owned_link_migrates_and_retains_both_installations(self):
+        result = self.run_reconcile()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.link.resolve(), self.new / "bin/opencode")
+        self.assertTrue((self.old / "bin/opencode").exists())
+        before = self.log.read_text()
+        self.assertEqual(self.run_reconcile().returncode, 0)
+        self.assertEqual(self.log.read_text().count("unlink"), before.count("unlink"))
+
+    def test_link_failure_restores_original(self):
+        self.env["TEST_LINK_FAIL"] = "1"
+        result = self.run_reconcile()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.link.resolve(), self.old / "bin/opencode")
+
+    def test_install_failure_leaves_original_link(self):
+        (self.new / "bin/opencode").unlink()
+        result = self.run_reconcile()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.link.resolve(), self.old / "bin/opencode")
+        self.assertNotIn("unlink", self.log.read_text())
+
+    def test_manual_command_is_preserved(self):
+        self.link.unlink()
+        self.link.write_text("manual")
+        result = self.run_reconcile()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.link.read_text(), "manual")
+        self.assertNotIn("unlink", self.log.read_text())
 
 
 if __name__ == "__main__":
