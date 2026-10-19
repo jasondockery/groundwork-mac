@@ -120,21 +120,31 @@ class CommonSetupTests(unittest.TestCase):
         brew.chmod(0o755)
         source = self.text("home/dot_docker/modify_private_config.json.tmpl")
         source = source.replace('Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")', f'Path({str(brew)!r}),')
-        script = self.root / "modify.py"
-        script.write_text(source)
+        managed = self.root / "source/dot_docker"
+        managed.mkdir(parents=True)
+        (managed / "modify_private_config.json").write_text(source)
+        destination = self.root / "destination"
+        (destination / ".docker").mkdir(parents=True)
+        target = destination / ".docker/config.json"
         original = {"credsStore": "desktop", "currentContext": "desktop-linux", "cliPluginsExtraDirs": ["/my/plugins"], "auths": {"example.test": {}}, "custom": "私の設定"}
-        command = ["python3", str(script)]
-        result = subprocess.run(command, input=json.dumps(original), text=True, capture_output=True, timeout=15)
+        target.write_text(json.dumps(original))
+        command = ["chezmoi", "--config", str(self.config), "--source", str(managed.parent),
+                   "--destination", str(destination), "apply", "--force"]
+        result = subprocess.run(command, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
-        merged = json.loads(result.stdout)
+        merged = json.loads(target.read_text())
         for key in ("credsStore", "currentContext", "auths", "custom"):
             self.assertEqual(merged[key], original[key])
-        self.assertIn("/my/plugins", merged["cliPluginsExtraDirs"])
-        again = subprocess.run(command, input=result.stdout, text=True, capture_output=True, timeout=15)
-        self.assertEqual(json.loads(again.stdout), merged)
-        bad = subprocess.run(command, input="malformed", text=True, capture_output=True, timeout=15)
+        self.assertEqual(merged["cliPluginsExtraDirs"], ["/my/plugins", "/fixture/homebrew/lib/docker/cli-plugins"])
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+        again = subprocess.run(command, text=True, capture_output=True, timeout=15)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(json.loads(target.read_text()), merged)
+        target.write_text("malformed")
+        bad = subprocess.run(command, text=True, capture_output=True, timeout=15)
         self.assertNotEqual(bad.returncode, 0)
-        self.assertEqual(bad.stdout, "")
+        self.assertEqual(target.read_text(), "malformed")
+
 
 
 if __name__ == "__main__":

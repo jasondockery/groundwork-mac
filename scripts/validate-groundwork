@@ -2839,6 +2839,10 @@ SH
     "$update_all_home/.local/bin/groundwork-brew-refetch"
   cat >"$update_all_bin/brew" <<'SH'
 #!/usr/bin/env bash
+# Linux's baseline fixture has formulae only; native coding casks get their
+# own exact-token transaction case. macOS retains its desktop inventory.
+fixture_default_casks=""
+if [[ "${FAKE_PLATFORM:-linux}" == darwin ]]; then fixture_default_casks=ghostty; fi
 # Real Homebrew asks for confirmation before install/upgrade/reinstall unless
 # ask mode is disabled, and it asks ONLY with a terminal attached -- so no
 # fixture can reproduce the prompt itself. Record what each mutating call
@@ -2877,13 +2881,13 @@ case "${1:-}" in
         if [[ "$#" -eq 0 ]]; then
           [[ "${BREW_CASK_INVENTORY_STATUS:-0}" == 0 ]] \
             || exit "$BREW_CASK_INVENTORY_STATUS"
-          installed_casks="${BREW_CASKS-ghostty}"
+          installed_casks="${BREW_CASKS-$fixture_default_casks}"
           [[ -z "$installed_casks" ]] || printf '%s\n' $installed_casks
           [[ ! -f "$HOME/.chatgpt-adopted" ]] || printf 'chatgpt\n'
         else
           for wanted in "$@"; do
             found=0
-            for installed in ${BREW_CASKS-ghostty}; do
+            for installed in ${BREW_CASKS-$fixture_default_casks}; do
               [[ "$installed" == "$wanted" ]] && found=1
             done
             [[ "$wanted" == chatgpt && -f "$HOME/.chatgpt-adopted" ]] && found=1
@@ -3016,7 +3020,7 @@ case "${1:-}" in
     if [[ "$named_arguments" -eq 0 ]]; then
       case "$mode" in
         formula) candidates=(${BREW_FORMULAE-git}) ;;
-        *) candidates=(${BREW_CASKS-ghostty}) ;;
+        *) candidates=(${BREW_CASKS-$fixture_default_casks}) ;;
       esac
     fi
     if [[ "${BREW_OUTDATED_STATUS:-0}" != 0 ]]; then
@@ -3892,8 +3896,8 @@ EOF
   done
 
   # A complete success runs in order against the approved metadata snapshot and
-  # only then atomically writes a UTC timestamp. The Linux render must not carry
-  # the macOS cask policy, and it reports the OS-ownership boundary: distro
+  # only then atomically writes a UTC timestamp. Linux reports its native
+  # package ownership boundary: distro
   # packages on Linux, the Windows host on WSL2, are never Groundwork's to touch.
   : >"$update_all_log"
   dynamic_exit=0
@@ -3930,6 +3934,20 @@ EOF
     >"$update_all_fixture/wsl-success-output" 2>&1
   diff -u "$update_all_fixture/expected-success" "$update_all_log"
   grep -qF 'managed separately on the host' "$update_all_fixture/wsl-success-output"
+
+  # Linux and WSL upgrade their exact installed coding casks through the same
+  # checksummed transaction, independently of formulae and desktop apps.
+  for coding_platform in linux wsl2; do
+    : >"$update_all_log"
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+      BREW_FORMULAE='' BREW_CASKS='codex claude-code@latest grok-build' \
+      FAKE_PLATFORM="$coding_platform" "$update_all_fixture/rendered-runner" \
+      >"$update_all_fixture/$coding_platform-coding-casks" 2>&1
+    grep -qxF 'brew upgrade --cask --require-sha codex claude-code@latest grok-build auto=1 casks=unset hb-color=unset' \
+      "$update_all_log" || fail "$coding_platform did not upgrade its exact coding casks"
+    grep -qF 'Groundwork update complete' "$update_all_fixture/$coding_platform-coding-casks" \
+      || fail "$coding_platform coding cask transaction did not complete"
+  done
 
   # The real runner collapses only the exact known no-change Homebrew shapes,
   # keeps an unknown warning in the live transcript, counts both classes in the
@@ -9528,9 +9546,9 @@ KRXS
   gc_rc=0
   bash "$gc_bin" --release-posture sideways >/dev/null 2>&1 || gc_rc=$?
   [[ "$gc_rc" -eq 64 ]] || fail "groundwork-configure must reject an invalid release posture with exit 64"
-  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta work ' "$gc_bin" \
+  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend ' "$gc_bin" \
     || fail "groundwork-configure must expose independent posture/role and dependent Xcode beta settings"
-  grep -qE '^fields_kind=\(posture role multiplexer bool bool ' "$gc_bin" \
+  grep -qE '^fields_kind=\(posture role multiplexer bool docker ' "$gc_bin" \
     || fail "release posture, environment role, terminal multiplexer, and Xcode beta must use the matching guarded field types"
   grep -qE '^role_values=\(personal managed disposable\)$' "$gc_bin" \
     || fail "groundwork-configure must keep every supported environment role reachable"
@@ -15418,7 +15436,7 @@ EOF
   # If that preservation is ever removed, the editor starts printing "Proposed
   # changes" receipts for values that never move — so the two are asserted
   # together, right here, rather than in separate places that can drift apart.
-  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta work .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
+  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
     || fail "groundwork-configure must own mutable role/release preferences and preserve existing baseline settings"
   # Role and posture are stored separately from the preset PRECISELY so they can
   # diverge (specs/environment-profiles-and-release-posture.md): a managed
