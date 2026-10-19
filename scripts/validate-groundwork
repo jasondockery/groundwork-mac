@@ -1329,6 +1329,9 @@ validate_update() {
   check "sudo metadata completeness and retry intent"
   python3 -B scripts/test-sudo-preflight
 
+  check "effective coding CLI ownership and live updater reminders"
+  python3 -B scripts/test-migration-diagnostics
+
   run_fixture_pty() { # output input-file command [args...]
     local output="$1" input_file="$2"
     shift 2

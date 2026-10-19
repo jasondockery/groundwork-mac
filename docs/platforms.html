@@ -154,6 +154,7 @@
       <p>That is why most docs pages are not split by OS. The operating system changes the install surface; it does not change the core practice.</p>
 
       <h2><span class="hash" aria-hidden="true">#</span>Read-only health checks</h2>
+      <p><code>groundwork-doctor --ai-tools</code> reports Claude Code command ownership and compares the effective command with the selected Homebrew installation. It also runs after apply and during update-all. An older native command can still win on PATH after a successful package update; <a href="troubleshooting.html">review the reversible ownership recovery</a> before changing it.</p>
       <p><code>groundwork-doctor</code> reports what this machine proves without changing it. Its default run already includes Karabiner on macOS, including the exact restart command when the shared memory review threshold is met. Run the whole report first, or narrow it when you are diagnosing one layer:</p>
       <table class="keytable">
         <tr><td><code>groundwork-doctor --shell</code></td><td>Check that Groundwork&apos;s Homebrew zsh is installed, registered, selected as the login shell, and actually running in this process.</td></tr>
