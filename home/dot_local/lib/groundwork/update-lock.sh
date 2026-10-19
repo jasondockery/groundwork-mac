@@ -64,6 +64,18 @@ groundwork_lock_remove_stale() {
   rmdir "$groundwork_lock_dir" 2>/dev/null
 }
 
+# Observation only: pending markers also exist while a live transaction runs.
+groundwork_lock_is_active() {
+  local owner_pid owner_start owner_operation current_start
+  [[ -d "$groundwork_lock_dir" && ! -L "$groundwork_lock_dir" ]] || return 1
+  owner_pid="$(groundwork_lock_read "$groundwork_lock_dir/pid")"
+  owner_start="$(groundwork_lock_read "$groundwork_lock_dir/process-start")"
+  owner_operation="$(groundwork_lock_read "$groundwork_lock_dir/operation")"
+  [[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_start" && "$owner_operation" == update-all ]] || return 1
+  current_start="$(groundwork_lock_process_start "$owner_pid")" || return 1
+  [[ -n "$current_start" && "$current_start" == "$owner_start" ]]
+}
+
 groundwork_lock_acquire() {
   local operation="$1" attempt owner_pid owner_started owner_operation owner_token
   local owner_process_start current_process_start new_process_start

@@ -1223,6 +1223,16 @@ EOF
   fi
 fi
 
+# Installation success alone cannot prove which coding command wins PATH.
+coding_ownership_lib="$HOME/.local/share/groundwork/lib/coding-cli-ownership.sh"
+if [[ -r "$coding_ownership_lib" ]]; then
+  # shellcheck source=/dev/null
+  . "$coding_ownership_lib"
+  gw_claude_ownership_report
+else
+  echo 'Groundwork: coding CLI ownership probe unavailable; effective Claude version is unknown.'
+fi
+
 mas_lane_status="skipped"
 mas_status=0
 mas_attempted_count=0
