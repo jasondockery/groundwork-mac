@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+{{- $wsl := false -}}
+{{- if hasKey .chezmoi "kernel" -}}
+{{- if contains "microsoft" (lower (toString (get .chezmoi.kernel "osrelease"))) -}}
+{{- $wsl = true -}}
+{{- end -}}
+{{- end }}
+{{ if and (not .headless) (not $wsl) (eq .chezmoi.os "darwin") -}}
+# macOS requires one local Sharing approval. Never bypass TCC or replace users.
+"$HOME/.local/bin/groundwork-remote-desktop" prepare
+{{ else if and (not .headless) (not $wsl) (eq .chezmoi.os "linux") -}}
+# Preserve non-GNOME desktops. A native permission/credential step is needed
+# before GNOME's own service can be enabled without resetting authentication.
+case ":${XDG_CURRENT_DESKTOP:-}:" in
+  *GNOME* | *gnome*) "$HOME/.local/bin/groundwork-remote-desktop" prepare ;;
+  *) echo 'Desktop sharing: use this desktop’s native server; no competing desktop was installed.' ;;
+esac
+{{ end -}}

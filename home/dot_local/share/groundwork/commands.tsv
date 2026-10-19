@@ -1,4 +1,5 @@
 # category	command	kind	description
+daily	groundwork-remote-desktop	command	Prepare native macOS Screen Sharing or GNOME RDP for visual agent supervision. setup opens required local permission settings; prepare runs during desktop applies; status checks native registration/configuration without changing it. macOS consent and GNOME credentials remain local, and their native services own startup. Headless and WSL profiles are excluded. Omarchy uses its separate WayVNC setup.
 daily	groundwork-help [query]	command	Show this command catalog. Add a word to filter, like groundwork-help git or groundwork-help update.
 daily	groundwork-help --pick [query]	command	Fuzzy-pick a command from the catalog with fzf; prints it and copies it to the clipboard when possible.
 daily	groundwork-docs	command	Open the complete local Groundwork site from the checkout chezmoi is actually using. Resolves visible ~/code and legacy ~/.local/share/chezmoi source layouts instead of trusting a copied file:// path; prints the exact path on headless platforms.
