@@ -752,9 +752,13 @@ render() {
   local profile_preset="${11:-personal-current}"
   local environment_role="${12:-personal}"
   local release_posture="${13:-current}"
+  # Existing Docker Desktop transaction fixtures select that alternative; the
+  # default preference matrix is exercised by scripts/test-common-setup.
+  local docker_backend="${14:-colima}"
+  [[ "$work" == false && "$#" -lt 14 ]] && docker_backend="docker-desktop"
   local os_release='{}'
   [[ "$os" == "linux" ]] && os_release='{"ID":"ubuntu"}'
-  local data="{${base_data},\"work\":${work},\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"game_dev\":${game_dev},\"password_manager\":\"${password_manager}\",\"profile_preset\":\"${profile_preset}\",\"environment_role\":\"${environment_role}\",\"release_posture\":\"${release_posture}\",\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
+  local data="{${base_data},\"work\":${work},\"docker_backend\":\"${docker_backend}\",\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"game_dev\":${game_dev},\"password_manager\":\"${password_manager}\",\"profile_preset\":\"${profile_preset}\",\"environment_role\":\"${environment_role}\",\"release_posture\":\"${release_posture}\",\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
   chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" --override-data "$data" execute-template <"$input" >"$output"
 }
 
@@ -1143,6 +1147,9 @@ line_number() {
 }
 
 validate_static_foundation() {
+  check "common developer setup and Docker configuration merge"
+  python3 -B scripts/test-common-setup
+
   local canonical_rows canonical_expected canonical_observed
 
   check "repository Node/pnpm authority contract"
@@ -9096,8 +9103,8 @@ SH
     || fail "new-project refused a Linux-filesystem path under WSL"
   test -f "$wsl_home/wsl-ok-project/AGENTS.md"
 
-  # The Linux/WSL2 runner never carries the macOS cask policy; casks are a
-  # macOS concern (the darwin render is asserted in the beta channel profile).
+  # Linux/WSL2 coding casks use the same checksummed candidate selection and
+  # bounded upgrade runner as macOS. GUI-only stages remain platform-gated.
   static_linux_runner="$out_dir/static-linux-update-runner"
   render linux false amd64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
     "$static_linux_runner"
@@ -9111,8 +9118,10 @@ SH
   assert_not_contains "gw_brew_classify_stream \"\\\$upgrade_log\"" \
     "$static_linux_runner" \
     "the Linux Homebrew upgrade bypassed the shared output runner"
-  assert_not_contains '^[^#]*brew upgrade[^#]*--greedy' "$static_linux_runner" \
-    "a --greedy cask flag leaked into the Linux update runner"
+  grep -qF 'Homebrew cask upgrade' "$static_linux_runner" \
+    || fail "Linux must update its installed checksummed coding casks"
+  assert_not_contains 'brew upgrade --cask --greedy ' "$static_linux_runner" \
+    "Linux selected an unclassified global greedy upgrade"
 
   check "setup prompt wording"
   # chezmoi renders its own hint under every prompt ("> bool, default false") and
@@ -9152,8 +9161,8 @@ SH
     [[ "$bool_default" == "true" ]] && bool_named="yes"
     [[ "$bool_text" == *"Enter keeps the default: $bool_named)" ]] \
       || fail "every bool setup prompt must end by naming its real default ('... Enter keeps the default: $bool_named)'): $bool_prompt"
-    [[ "$bool_text" == *"y/t"*"n/f"* ]] \
-      || fail "every bool setup prompt must show the accepted answers (y/t ... n/f ...): $bool_prompt"
+    [[ "$bool_text" == *"yes or no"* ]] \
+      || fail "every bool setup prompt must explain yes or no: $bool_prompt"
   done <<<"$bool_prompts"
 
   # Regex over the template proves the source, not the UI. Drive a real
@@ -9186,8 +9195,8 @@ SH
     tmux -L "$prompt_socket" kill-server 2>/dev/null || true
     grep -qF 'bool, default' <<<"$prompt_rendered" \
       || fail "chezmoi init never rendered a prompt (cannot verify the setup UI)"
-    grep -qF 'Is this a work machine (y/t = yes, n/f = no; Enter keeps the default: no)?' <<<"$prompt_rendered" \
-      || fail "the first setup prompt did not render with its answer affordance and named default"
+    grep -qF 'Is this a server or CI Mac with no desktop apps, which most Macs are not (yes or no; Enter keeps the default: no)?' <<<"$prompt_rendered" \
+      || fail "the first setup prompt did not render its desktop/headless choice and default"
     if grep -qE '\?\?|\.\?|\[y/N\]|\[Y/n\]' <<<"$prompt_rendered"; then
       printf '%s\n' "$prompt_rendered" >&2
       fail "the rendered setup prompt has doubled punctuation or a hand-written [y/N] (chezmoi adds its own '?' and 'bool, default <x>' hint)"

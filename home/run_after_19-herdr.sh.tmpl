@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Homebrew owns Herdr on normal hosts. Headless images skip Homebrew, so fill
+# Homebrew owns Herdr on supported hosts, including headless setups. Fill
 # only a missing command through Herdr's checksum-verifying stable installer.
 for brew_bin in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
   [[ -x "$brew_bin" ]] && eval "$("$brew_bin" shellenv)" && break

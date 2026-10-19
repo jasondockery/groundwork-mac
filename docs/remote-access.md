@@ -12,7 +12,7 @@ Do not install the headless formula alongside the desktop cask. Use the app to d
 
 ## Headless Mac and Linux
 
-When Homebrew is present, the Brewfile installs the `tailscale` formula. The Mac bootstrap installs Homebrew, but direct headless applies and ARM64 Linux can skip it entirely. Choose the service owner before starting a daemon; do not start a Homebrew daemon alongside an existing native service.
+The shared engine installs Homebrew on supported headless Macs and x86_64/ARM64 Linux, then installs the `tailscale` formula. Choose the service owner before starting a daemon; do not start a Homebrew daemon alongside an existing native service.
 
 For a Homebrew-owned installation, start the service with the full executable path so sudo does not need Homebrew on its PATH:
 
@@ -21,7 +21,7 @@ sudo "$(command -v brew)" services start tailscale
 sudo "$(command -v tailscale)" up --timeout=5m
 ```
 
-For Linux without Homebrew, first install the stable package using the [official instructions for your distribution and release](https://pkgs.tailscale.com/stable/) ([Linux installation guide](https://tailscale.com/docs/install/linux)). This includes ARM64 Ubuntu; Groundwork does not install that native package automatically. On an Ubuntu host with systemd, enable its native service and then sign in:
+For Linux without Homebrew, first install the stable package using the [official instructions for your distribution and release](https://pkgs.tailscale.com/stable/) ([Linux installation guide](https://tailscale.com/docs/install/linux)). This is an alternative for a machine using native packages; Groundwork does not install that native package automatically. On an Ubuntu host with systemd, enable its native service and then sign in:
 
 ```bash
 sudo systemctl enable --now tailscaled
@@ -39,7 +39,7 @@ tailscale status
 
 The macOS open-source daemon and Linux can serve Tailscale SSH. It handles port 22 on the Tailscale interface; an internet-facing SSH port, router forwarding, Funnel, and an exit node are unnecessary for machine-to-machine terminal access. Keep an existing remote session open while testing changes through a second connection.
 
-Herdr stays available in headless images that skip Homebrew: apply installs a missing command with the official stable installer and verifies that it runs. Existing package-managed installations keep their updater. For a direct installation, use `herdr update`; provider sign-in and remote sessions still require local setup.
+Homebrew owns Herdr and the common coding CLIs on supported headless machines. The Herdr fallback hook only installs a missing command and leaves existing package ownership intact. Provider sign-in and remote sessions still require local setup.
 
 ## Windows and WSL2
 

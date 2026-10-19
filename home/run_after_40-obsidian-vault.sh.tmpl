@@ -1,7 +1,8 @@
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
-{{ if and (eq .chezmoi.os "darwin") (not .headless) (not .work) -}}
+{{ if and (eq .chezmoi.os "darwin") (not .headless) (get $developer "personal_apps") -}}
 vault_name="{{ .obsidian_vault_name }}"
 [[ -n "$vault_name" ]] || exit 0
 vault="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/$vault_name"

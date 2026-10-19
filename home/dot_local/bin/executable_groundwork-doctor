@@ -291,14 +291,14 @@ docker_section() {
   . "$docker_lib"
   docker_executable="$(gw_docker_resolve_trusted_executable docker 2>/dev/null || true)"
   if [[ -z "$docker_executable" ]]; then
-    note "trusted docker CLI not found; skipping. Personal Mac: Docker Desktop. Work Mac: Colima + Docker CLI (both ship with Groundwork)."
+    note "trusted docker CLI not found; skipping. Groundwork defaults to Colima + Docker CLI on macOS; check your explicit container backend preference."
     return 0
   fi
   GW_DOCKER_JQ="$(gw_docker_resolve_trusted_executable jq 2>/dev/null || true)"
   [[ -n "$GW_DOCKER_JQ" ]] || GW_DOCKER_JQ="/groundwork/unavailable/jq"
   docker() { "$docker_executable" "$@"; }
   if ! docker info >/dev/null 2>&1; then
-    note "Docker daemon not reachable; skipping Docker checks. Start Docker Desktop, or run 'colima start' on a work Mac, then rerun groundwork-doctor."
+    note "Docker daemon not reachable; skipping Docker checks. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun groundwork-doctor."
     return 0
   fi
   ok "Docker daemon is reachable"
@@ -415,7 +415,7 @@ EOF
   }
 
   if [[ "$settings_hint" == true ]]; then
-    note "engine settings live in Docker Desktop -> Settings -> Docker Engine (work Macs: the managed Colima template already sets them). See the Platforms page for the exact JSON."
+    note "Colima engine settings come from the managed template for new instances; Docker Desktop uses Settings -> Docker Engine. See the Platforms page for the exact JSON."
   fi
 }
 

@@ -6,10 +6,7 @@ if [[ "$(uname -s)" == Linux ]] && { command -v omarchy >/dev/null 2>&1 || [[ -d
   exit 1
 fi
 
-{{ if .headless -}}
-echo "headless profile; skipping Homebrew install."
-exit 0
-{{- else if eq .chezmoi.os "darwin" -}}
+{{ if eq .chezmoi.os "darwin" -}}
 if ! /usr/bin/xcode-select -p >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 Apple Command Line Tools are not installed yet.
@@ -47,10 +44,6 @@ if ! command -v brew >/dev/null 2>&1 && [[ ! -x /opt/homebrew/bin/brew && ! -x /
     "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 fi
 {{- else if eq .chezmoi.os "linux" }}
-{{ if ne .chezmoi.arch "amd64" -}}
-echo "Homebrew unsupported on arm64 Linux; skipping brew install."
-exit 0
-{{- else }}
 
 if command -v brew >/dev/null 2>&1 || [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
   exit 0
@@ -94,5 +87,4 @@ fi
 
 NONINTERACTIVE=1 /bin/bash -c \
   "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-{{- end }}
 {{- end }}

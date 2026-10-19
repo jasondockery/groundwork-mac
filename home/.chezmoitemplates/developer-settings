@@ -1,0 +1,24 @@
+{{- /* One compatibility boundary for independent developer preferences. */ -}}
+{{- $legacyWork := and (hasKey . "work") .work -}}
+{{- $identity := "personal" -}}
+{{- if and $legacyWork (hasKey . "email_work") (ne .email_work "") -}}
+{{- $identity = "work" -}}
+{{- end -}}
+{{- $settings := dict "docker_backend" "colima" "git_identity" $identity "personal_apps" (not $legacyWork) "work_extensions" $legacyWork -}}
+{{- range $key := list "docker_backend" "git_identity" "personal_apps" "work_extensions" -}}
+{{- if hasKey $ $key -}}
+{{- $_ := set $settings $key (index $ $key) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (has (get $settings "docker_backend") (list "colima" "docker-desktop" "none")) -}}
+{{- fail "Groundwork: docker_backend must be colima, docker-desktop, or none" -}}
+{{- end -}}
+{{- if not (has (get $settings "git_identity") (list "personal" "work")) -}}
+{{- fail "Groundwork: git_identity must be personal or work" -}}
+{{- end -}}
+{{- range $key := list "personal_apps" "work_extensions" -}}
+{{- if not (kindIs "bool" (get $settings $key)) -}}
+{{- fail (printf "Groundwork: %s must be true or false" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- $settings | toJson -}}

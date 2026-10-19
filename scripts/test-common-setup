@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Exercise the common rendered setup, legacy migration, and private Docker merge."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import tomllib
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+class CommonSetupTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="groundwork-common-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.config = self.root / "empty.toml"
+        self.config.touch()
+        self.data = dict(name="CI", email_personal="ci@example.com", email_work="work@example.com",
+                         code_dir="~/code", reset_existing_configs=False, password_manager="none",
+                         signingkey="", obsidian_vault_name="", game_dev=False, xcode=False,
+                         headless=False, terminal_multiplexer="herdr", key_repeat="fast",
+                         chezmoi=dict(os="darwin", arch="arm64", osRelease={"ID": "ubuntu"}))
+
+    def render(self, path, init=False, **data):
+        effective = dict(self.data, **data)
+        command = ["chezmoi", "--config", str(self.config), "--source", str(REPO),
+                   "--override-data", json.dumps(effective), "execute-template"]
+        if init:
+            command += ["--init"]
+        return subprocess.run(command, input=(REPO / path).read_text(), text=True,
+                              capture_output=True, timeout=15)
+
+    def text(self, path, **data):
+        result = self.render(path, **data)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_ai_tools_and_tailscale_across_platform_architecture_and_legacy_role(self):
+        for platform in ("darwin", "linux"):
+            for arch in ("arm64", "amd64"):
+                for work in (False, True):
+                    for headless in (False, True):
+                        with self.subTest(platform=platform, arch=arch, work=work, headless=headless):
+                            source = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=work,
+                                               headless=headless, chezmoi=dict(os=platform, arch=arch))
+                            for line in ('cask "codex"', 'cask "claude-code@latest"', 'cask "grok-build"', 'brew "opencode"'):
+                                self.assertIn(line, source)
+                            self.assertIn('cask "tailscale-app"' if platform == "darwin" and not headless else 'brew "tailscale"', source)
+                            if platform == "darwin":
+                                self.assertIn('brew "colima"', source)
+                                self.assertNotIn('cask "docker-desktop"', source)
+                            if platform == "darwin" and not headless:
+                                for line in ('cask "chatgpt"', 'cask "claude"', 'cask "cursor"'):
+                                    self.assertIn(line, source)
+                            elif platform == "linux":
+                                self.assertNotIn('cask "chatgpt"', source)
+                                self.assertNotIn('cask "claude"\n', source)
+
+    def test_headless_linux_bootstrap_installs_homebrew_on_both_architectures(self):
+        binaries = self.root / "bin"
+        binaries.mkdir()
+        stubs = {
+            "uname": "printf 'Linux\\n'",
+            "id": "printf '0\\n'",
+            "apt-get": 'printf "%s\\n" "$*" >> "$FIXTURE_CALLS"',
+            "curl": "printf '%s\\n' 'printf installed > \"$FIXTURE_INSTALLED\"'",
+        }
+        for name, body in stubs.items():
+            path = binaries / name
+            path.write_text("#!/bin/sh\n" + body + "\n")
+            path.chmod(0o755)
+        env = dict(os.environ, PATH=f"{binaries}:/usr/bin:/bin",
+                   FIXTURE_CALLS=str(self.root / "calls"), FIXTURE_INSTALLED=str(self.root / "installed"))
+        for arch in ("amd64", "arm64"):
+            source = self.text("home/run_before_00-install-homebrew.sh.tmpl", headless=True,
+                               chezmoi=dict(os="linux", arch=arch))
+            source = source.replace("/home/linuxbrew/.linuxbrew/bin/brew", str(self.root / "absent-brew"))
+            result = subprocess.run(["/bin/bash"], input=source, env=env, text=True,
+                                    capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((self.root / "installed").read_text(), "installed")
+            (self.root / "installed").unlink()
+        self.assertEqual((self.root / "calls").read_text().splitlines(),
+                         ["update", "install -y build-essential procps curl file git"] * 2)
+
+    def test_preferences_override_legacy_role_independently(self):
+        source = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=True,
+                           docker_backend="docker-desktop", personal_apps=True)
+        self.assertIn('cask "docker-desktop"', source)
+        self.assertIn('cask "obsidian"', source)
+        self.assertNotIn('brew "colima"', source)
+        git = self.text("home/dot_gitconfig.tmpl", work=True, git_identity="personal")
+        self.assertIn("email = ci@example.com", git)
+        git = self.text("home/dot_gitconfig.tmpl", work=False, git_identity="work")
+        self.assertIn("email = work@example.com", git)
+
+    def test_migration_persists_explicit_answers(self):
+        result = self.render("home/.chezmoi.toml.tmpl", init=True, work=True,
+                             docker_backend="none", personal_apps=True, work_extensions=False,
+                             git_identity="personal", environment_role="managed", release_posture="preview")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = tomllib.loads(result.stdout)["data"]
+        self.assertEqual({key: data[key] for key in ("docker_backend", "personal_apps", "work_extensions", "git_identity")},
+                         dict(docker_backend="none", personal_apps=True, work_extensions=False, git_identity="personal"))
+        self.assertTrue(data["work"])
+        self.assertEqual(data["release_posture"], "preview")
+
+    def test_invalid_preferences_fail_before_rendering_a_manifest(self):
+        for values in (dict(docker_backend="typo"), dict(personal_apps="false"), dict(git_identity="typo")):
+            result = self.render("home/dot_config/homebrew/Brewfile.tmpl", **values)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+
+    def test_docker_config_merge_preserves_credentials_context_and_plugins(self):
+        brew = self.root / "brew"
+        brew.write_text("#!/bin/sh\nprintf '%s\\n' '/fixture/homebrew'\n")
+        brew.chmod(0o755)
+        source = self.text("home/dot_docker/modify_private_config.json.tmpl")
+        source = source.replace('Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")', f'Path({str(brew)!r}),')
+        script = self.root / "modify.py"
+        script.write_text(source)
+        original = {"credsStore": "desktop", "currentContext": "desktop-linux", "cliPluginsExtraDirs": ["/my/plugins"], "auths": {"example.test": {}}, "custom": "私の設定"}
+        command = ["python3", str(script)]
+        result = subprocess.run(command, input=json.dumps(original), text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        merged = json.loads(result.stdout)
+        for key in ("credsStore", "currentContext", "auths", "custom"):
+            self.assertEqual(merged[key], original[key])
+        self.assertIn("/my/plugins", merged["cliPluginsExtraDirs"])
+        again = subprocess.run(command, input=result.stdout, text=True, capture_output=True, timeout=15)
+        self.assertEqual(json.loads(again.stdout), merged)
+        bad = subprocess.run(command, input="malformed", text=True, capture_output=True, timeout=15)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertEqual(bad.stdout, "")
+
+
+if __name__ == "__main__":
+    unittest.main()

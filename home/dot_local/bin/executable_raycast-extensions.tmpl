@@ -2,7 +2,7 @@
 set -euo pipefail
 
 catalog="${GROUNDWORK_RAYCAST_EXTENSIONS_CATALOG:-$HOME/.local/share/groundwork/raycast-extensions.tsv}"
-work_machine="{{ .work }}"
+work_machine="{{ $developer := includeTemplate "developer-settings" . | fromJson }}{{ not (get $developer "personal_apps") }}"
 tier="recommended"
 open_links="false"
 
