@@ -111,6 +111,21 @@ class CommonSetupTests(unittest.TestCase):
         git = self.text("home/dot_gitconfig.tmpl", work=False, git_identity="work")
         self.assertIn("email = work@example.com", git)
 
+    def test_remote_desktop_hook_excludes_headless_and_wsl(self):
+        for system, headless, kernel, invokes in [
+            ('darwin', False, '', True), ('darwin', True, '', False),
+            ('linux', False, '7.1.12', True), ('linux', True, '7.1.12', False),
+            ('linux', False, '6.6.87-microsoft-standard-WSL2', False),
+        ]:
+            with self.subTest(system=system, headless=headless, kernel=kernel):
+                data = dict(headless=headless, chezmoi=dict(os=system, arch='arm64', kernel=dict(osrelease=kernel)))
+                source = self.text('home/run_after_32-remote-desktop.sh.tmpl', **data)
+                parsed = subprocess.run(['bash', '-n'], input=source, text=True, capture_output=True, timeout=5)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr)
+                self.assertEqual('groundwork-remote-desktop" prepare' in source, invokes)
+                ignored = self.text('home/.chezmoiignore', **data)
+                self.assertEqual('.local/bin/groundwork-remote-desktop' in ignored, not invokes)
+
     def test_migration_persists_explicit_answers(self):
         result = self.render("home/.chezmoi.toml.tmpl", init=True, work=True,
                              docker_backend="none", personal_apps=True, work_extensions=False,

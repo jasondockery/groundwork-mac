@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Exercise public ownership reports and real zsh reminder decisions in isolation."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+LIB = REPO / 'home/dot_local/share/groundwork/lib/coding-cli-ownership.sh'
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='groundwork-diagnostics-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.home = self.root / 'home'
+        self.bin = self.home / '.local/bin'
+        self.bin.mkdir(parents=True)
+        self.prefix = self.root / 'brew'
+        (self.prefix / 'bin').mkdir(parents=True)
+        for name in ('dirname', 'basename', 'readlink', 'ps', 'sed', 'cat'):
+            (self.bin / name).symlink_to(shutil.which(name))
+        supervisor = shutil.which('timeout') or shutil.which('gtimeout')
+        self.assertIsNotNone(supervisor, 'coreutils timeout is a declared prerequisite')
+        (self.bin / 'timeout').symlink_to(supervisor)
+        self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.bin),
+                        REVIEW_BREW_PREFIX=str(self.prefix))
+        self.script(self.bin / 'brew', 'printf "%s\\n" "$REVIEW_BREW_PREFIX"')
+        share = self.home / '.local/share/groundwork/lib'
+        share.mkdir(parents=True)
+        shutil.copy(LIB, share / LIB.name)
+        self.lock = self.home / '.local/state/groundwork/update-all.lock'
+        self.lock.parent.mkdir(parents=True)
+        self.pending = self.lock.parent / 'update-all-pending/homebrew-upgrade'
+        self.pending.parent.mkdir()
+        self.pending.write_text('2001-01-01T00:00:00Z Homebrew upgrade started\n')
+        locklib = self.home / '.local/lib/groundwork'
+        locklib.mkdir(parents=True)
+        shutil.copy(REPO / 'home/dot_local/lib/groundwork/update-lock.sh', locklib)
+
+    def script(self, path, body):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('#!/bin/bash\n' + body + '\n')
+        path.chmod(0o755)
+
+    def install_claude(self, version, native=False):
+        if native:
+            target = self.home / '.local/share/claude/versions' / version
+            link = self.bin / 'claude'
+        else:
+            target = self.prefix / 'Caskroom/claude-code@latest' / version / 'claude'
+            link = self.prefix / 'bin/claude'
+        self.script(target, 'printf "%s (Claude Code)\\n" ' + version)
+        link.symlink_to(target)
+        return link
+
+    def report(self, entry=None):
+        command = ['/bin/bash', str(entry)] if entry else [
+            '/bin/bash', '-c', '. "$1"; gw_claude_ownership_report', 'test', str(LIB)]
+        return subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
+
+    def test_stale_native_is_reported_without_mutation_on_reapply(self):
+        native = self.install_claude('2.4.1', native=True)
+        self.install_claude('2.4.2')
+        before = os.readlink(native)
+        for _ in range(2):
+            result = self.report(REPO / 'home/run_after_22-cli-ownership.sh')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('older command shadows the newer Homebrew', result.stdout)
+            self.assertIn('owner: native installer', result.stdout)
+            self.assertIn(str(native.resolve()), result.stdout)
+            self.assertEqual(os.readlink(native), before)
+
+    def test_native_current_or_newer_preserves_separate_ownership(self):
+        for version in ('2.4.2', '3.0.0'):
+            with self.subTest(version=version):
+                native = self.install_claude(version, native=True)
+                self.install_claude('2.4.2')
+                result = self.report()
+                self.assertIn('at least its observed version', result.stdout)
+                self.assertNotIn('older command', result.stdout)
+                native.unlink()
+                (self.prefix / 'bin/claude').unlink()
+
+    def test_homebrew_only_and_same_file_alias(self):
+        managed = self.install_claude('2.4.2')
+        self.env['PATH'] += ':' + str(self.prefix / 'bin')
+        self.assertIn('effective command is the selected Homebrew', self.report().stdout)
+        self.assertIn('owner: Homebrew', self.report().stdout)
+        (self.bin / 'claude').symlink_to(managed)
+        self.assertIn('effective command is the selected Homebrew', self.report().stdout)
+        self.assertIn('owner: Homebrew', self.report().stdout)
+
+    def test_manual_command_and_unknown_version(self):
+        self.install_claude('2.4.2')
+        self.script(self.bin / 'claude', 'echo "2.0.0 (manual)"')
+        result = self.report()
+        self.assertIn('owner: manual or separately managed', result.stdout)
+        self.assertIn('older command shadows', result.stdout)
+        self.script(self.bin / 'claude', 'exit 7')
+        self.assertIn('version comparison is unknown', self.report().stdout)
+
+    def test_no_command_or_no_verified_managed_installation(self):
+        self.assertIn('no effective claude command', self.report().stdout)
+        self.script(self.bin / 'claude', 'echo "2.0.0"')
+        self.script(self.prefix / 'bin/claude', 'echo "2.4.2"')
+        self.assertIn('unknown ownership; no freshness claim', self.report().stdout)
+
+    def test_doctor_ai_tools_help_and_invalid_arguments(self):
+        self.install_claude('2.4.2', native=True)
+        self.install_claude('2.4.2')
+        command = ['/bin/bash', str(REPO / 'home/dot_local/bin/executable_groundwork-doctor')]
+        result = subprocess.run(command + ['--ai-tools'], env=self.env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('== AI tools ==', result.stdout)
+        self.assertIn('at least its observed version', result.stdout)
+        for args, expected in ((['--help'], 0), (['--ai-tools', '--invalid'], 2)):
+            result = subprocess.run(command + args, env=self.env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, expected)
+            self.assertNotIn('Claude Code effective command:', result.stdout)
+
+    def reminder(self, metadata):
+        if metadata is not None:
+            self.lock.mkdir(exist_ok=True)
+            for path in self.lock.iterdir():
+                path.unlink()
+            for name, value in metadata.items():
+                (self.lock / name).write_text(str(value) + '\n')
+        zdot = self.root / 'zdot'
+        zdot.mkdir(exist_ok=True)
+        source = (REPO / 'home/dot_zshrc.tmpl').read_text()
+        start = source.index('groundwork-update-reminder() {')
+        end = source.index('unfunction groundwork-update-reminder', start)
+        # This function contains no template expressions; exercise it in real zsh.
+        (zdot / '.zshrc').write_text(source[start:end])
+        env = dict(self.env, PATH=os.environ['PATH'], ZDOTDIR=str(zdot),
+                   GROUNDWORK_UPDATE_REMINDER='1')
+        env.pop('CI', None)
+        (self.lock.parent / 'update-reminder-last-shown').unlink(missing_ok=True)
+        return subprocess.run([shutil.which('zsh'), '-d', '-i', '-c', 'true'],
+                              env=env, capture_output=True, text=True, timeout=10)
+
+    def test_live_update_is_quiet_without_clearing_pending_evidence(self):
+        started = subprocess.check_output(['ps', '-o', 'lstart=', '-p', str(os.getpid())], text=True).strip()
+        result = self.reminder({'pid': os.getpid(), 'process-start': started, 'operation': 'update-all'})
+        self.assertNotIn('could not finish', result.stdout + result.stderr)
+        self.assertNotIn('Run update-all again', result.stdout + result.stderr)
+        self.assertTrue(self.pending.exists())
+
+    def test_interrupted_pid_reuse_and_incomplete_locks_keep_reminder(self):
+        cases = ({'pid': '99999999', 'process-start': 'past', 'operation': 'update-all'},
+                 {'pid': os.getpid(), 'process-start': 'past', 'operation': 'update-all'},
+                 {'pid': os.getpid(), 'operation': 'update-all'},
+                 {'pid': 'invalid', 'process-start': 'past', 'operation': 'update-all'})
+        for metadata in cases:
+            with self.subTest(metadata=metadata):
+                result = self.reminder(metadata)
+                self.assertIn('could not finish a required Homebrew upgrade', result.stdout + result.stderr)
+                self.assertTrue(self.pending.exists())
+
+    def test_completed_update_is_quiet(self):
+        self.pending.unlink()
+        (self.lock.parent / 'last-update-all').write_text('completed\n')
+        result = self.reminder(None)
+        self.assertNotIn('could not finish', result.stdout + result.stderr)
+        self.assertNotIn('Run update-all', result.stdout + result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()

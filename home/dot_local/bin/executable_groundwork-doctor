@@ -12,6 +12,7 @@ Options:
   --shell       run only the shell runtime section
   --runtimes    run only the runtime release-age section
   --node-toolchain  run only the Node/pnpm ownership section
+  --ai-tools    run only the Claude Code command-ownership section
   --browser     run only the managed-browser section
   --karabiner   run only the Karabiner compatibility and process section
   --always-on-apps  run only the always-on-app relaunch section
@@ -34,6 +35,8 @@ Sections (all run by default):
                 whether mise owns Node, Corepack owns repository-pinned pnpm,
                 and a pnpm global-tool directory is bypassing Groundwork's
                 project-local or mise-managed CLI lanes.
+  AI tools      effective Claude Code executable, native/manual ownership, and
+                comparison with the selected Homebrew installation.
   Browser       selected Chrome channel versus the installed official Homebrew
                 casks. Preview requires Chrome Beta and keeps stable Chrome as
                 a compatibility fallback; device policy remains authoritative.
@@ -1272,10 +1275,23 @@ storage_section() {
   note "project caches (.turbo, node_modules, dist, target) belong to each repository's own clean command; Docker has its own section and tidy commands."
 }
 
+ai_tools_section() {
+  heading "AI tools"
+  local ownership_lib="$HOME/.local/share/groundwork/lib/coding-cli-ownership.sh"
+  if [[ ! -r "$ownership_lib" ]]; then
+    warn "Groundwork's coding CLI ownership probe is missing: $ownership_lib"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  . "$ownership_lib"
+  gw_claude_ownership_report
+}
+
 section=""
 
 while (($#)); do
   case "$1" in
+    --ai-tools) section="ai-tools" ;;
     --browser) section="browser" ;;
     --docker) section="docker" ;;
     --shell) section="shell" ;;
@@ -1307,6 +1323,7 @@ case "$section" in
     shell_section
     runtimes_section
     node_toolchain_section
+    ai_tools_section
     browser_section
     karabiner_section
     always_on_apps_section
@@ -1316,6 +1333,7 @@ case "$section" in
   shell) shell_section ;;
   runtimes) runtimes_section ;;
   node-toolchain) node_toolchain_section ;;
+  ai-tools) ai_tools_section ;;
   browser) browser_section ;;
   karabiner) karabiner_section ;;
   always-on-apps) always_on_apps_section ;;
