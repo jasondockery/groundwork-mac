@@ -68,10 +68,11 @@ def plain_parents(path):
             fail(f"Inspect the parent owner before retrying: {parent}")
 
 
-def native_link(path, versions):
+def native_link(path, versions, origin=None):
     if not path.is_symlink():
         fail(f"Only a confirmed native symlink can be moved: {path}")
-    target = resolve(path)
+    link = Path(os.readlink(path))
+    target = resolve(link if link.is_absolute() else (origin or path.parent) / link)
     # Resolve the versions directory too; a redirected native tree is unknown.
     plain_parents(versions / "placeholder")
     if target.parent != versions or not re.fullmatch(r"\d+\.\d+\.\d+", target.name):
@@ -120,6 +121,8 @@ def main(args):
     if not valid:
         print(HELP, file=sys.stderr)
         return 64
+    if sys.platform not in ("darwin", "linux"):
+        fail("This helper supports macOS and Linux only; no ownership change was made.")
     home = Path.home()
     native = home / ".local/bin/claude"
     versions = home / ".local/share/claude/versions"
@@ -137,7 +140,7 @@ def main(args):
         private_directory(backups)
         private_directory(backup)
         saved = backup / "claude"
-        snapshot = native_link(saved, versions)
+        snapshot = native_link(saved, versions, origin=native.parent)
         plain_parents(native)
         if os.path.lexists(native):
             fail(f"Rollback path is occupied; preserve and inspect it first: {native}")
@@ -153,9 +156,10 @@ def main(args):
         return 0
     effective = shutil.which("claude")
     print(f"Effective command: {effective or 'unavailable'}")
-    effective_real = resolve(Path(effective)) if effective else None
+    snapshot = native_link(native, versions) if effective == str(native) else None
+    effective_real = snapshot[2] if snapshot else resolve(Path(effective)) if effective else None
     print(f"Resolved executable: {effective_real or 'unavailable'}")
-    effective_version = version(Path(effective)) if effective else None
+    effective_version = version(effective_real) if effective_real else None
     print(f"Effective version: {effective_version or 'unavailable'}")
     brew = shutil.which("brew")
     if not brew:
@@ -177,7 +181,9 @@ def main(args):
     if args[0] == "status":
         return 0
     plain_parents(native)
-    snapshot = native_link(native, versions)
+    if snapshot is None:
+        fail("The effective command is not a confirmed native symlink; inspect PATH first.")
+    unchanged(native, snapshot)
     if effective != str(native):
         fail("The effective command is not the native symlink; inspect PATH first.")
     if managed_version < effective_version:
@@ -195,12 +201,13 @@ def main(args):
     backup = Path(tempfile.mkdtemp(prefix="native-", dir=backups))
     saved = backup / "claude"
     unchanged(native, snapshot)
-    # Store an absolute native target so rollback is independent of directory.
-    os.symlink(str(snapshot[2]), saved)
     print(f"Backup directory: {backup}", flush=True)
     print(f"Rollback: groundwork-claude-owner rollback {shlex.quote(str(backup))} --yes", flush=True)
     unchanged(native, snapshot)
-    native.unlink()
+    # Rename preserves the actual entry even if an updater replaced it after
+    # the last check. Never unlink a command selected only by its pathname.
+    os.rename(native, saved)
+    unchanged(saved, snapshot)
     fresh_command(managed_real)
     print("Homebrew ownership verified. Update through update-all or Homebrew.")
     return 0
