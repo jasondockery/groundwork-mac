@@ -3626,6 +3626,53 @@ EOF
     || fail "the exec'd runner did not release the adopted update lock"
   rm -f "$update_all_stamp"
 
+  # Configuration-only applies share synchronization, drift handling, and the
+  # lock, but cannot claim that the machine maintenance lanes succeeded.
+  : >"$update_all_log"
+  printf 'previous-maintenance\n' >"$update_all_stamp"
+  mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
+  printf 'pending\n' >"$update_all_home/.local/state/groundwork/update-all-pending/config-only-proof"
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' \
+    CHEZMOI_INSTALL_RUNNER=1 FRESH_RUNNER="$update_all_fixture/rendered-runner" \
+    "$update_all_fixture/old-launcher" --config-only >"$update_all_fixture/config-only" 2>&1 \
+    || fail "configuration-only launcher-to-runner apply failed"
+  assert_not_contains '^brew-update$|^brew upgrade|^mise upgrade|^npm |^docker-' \
+    "$update_all_log" "configuration-only apply entered a routine maintenance lane"
+  grep -qxF 'previous-maintenance' "$update_all_stamp" \
+    || fail "configuration-only apply changed the full-maintenance timestamp"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/config-only-proof" \
+    || fail "configuration-only apply cleared pending maintenance"
+  grep -qxF $'configuration\tapplied' \
+    "$update_all_home/.local/state/groundwork/receipts/groundwork-update-latest.tsv" \
+    || fail "configuration-only apply did not publish its own receipt"
+  rm -f "$update_all_home/.local/state/groundwork/update-all-pending/config-only-proof" "$update_all_stamp"
+  rmdir "$update_all_home/.local/state/groundwork/update-all-pending" 2>/dev/null || true
+  for entry in "$update_all_fixture/old-launcher" "$update_all_fixture/rendered-runner"; do
+    : >"$update_all_log"
+    set +e
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+      "$entry" --config-only --skip-maintenance >/dev/null 2>&1
+    update_all_status=$?
+    set -e
+    [[ "$update_all_status" -eq 64 ]] || fail "a mixed configuration/maintenance scope was accepted"
+    test ! -s "$update_all_log" || fail "mixed scopes invoked external commands"
+  done
+  for argument in --help --unknown extra; do
+    : >"$update_all_log"
+    set +e
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+      /bin/bash home/dot_local/bin/executable_groundwork-update "$argument" >/dev/null 2>&1
+    update_all_status=$?
+    set -e
+    if [[ "$argument" == --help ]]; then
+      [[ "$update_all_status" -eq 0 ]] || fail "groundwork-update help failed"
+    else
+      [[ "$update_all_status" -eq 64 ]] || fail "groundwork-update accepted an invalid argument"
+    fi
+    test ! -s "$update_all_log" || fail "groundwork-update help/invalid input invoked external commands"
+  done
+
   # --help and hostile arguments are resolved before sync or any mutation.
   : >"$update_all_log"
   HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \

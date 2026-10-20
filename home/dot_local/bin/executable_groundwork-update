@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Keep synchronization, drift handling, and the transaction lock in update-all.
+if [[ $# -gt 1 ]]; then
+  echo "groundwork-update: expected no arguments or --help; nothing changed." >&2
+  exit 64
+fi
+case "${1:-}" in
+  -h | --help)
+    echo "Usage: groundwork-update"
+    echo "Synchronize and apply Groundwork configuration using your saved settings."
+    echo "Install hooks may add newly declared tools. Routine upgrades and maintenance use update-all."
+    exit 0
+    ;;
+  "") ;;
+  *)
+    echo "groundwork-update: unknown argument: $1; nothing changed." >&2
+    exit 64
+    ;;
+esac
+
+if command -v omarchy >/dev/null 2>&1 || [[ -d /usr/share/omarchy ]]; then
+  echo "Use groundwork-omarchy-mac-arm64's updater on Omarchy; this is the Mac/Linux/WSL engine." >&2
+  exit 1
+fi
+exec "$HOME/.local/bin/update-all" --config-only

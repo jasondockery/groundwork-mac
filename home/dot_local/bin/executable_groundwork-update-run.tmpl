@@ -18,6 +18,7 @@ Complete the post-sync half of update-all.
 
 Usage:
   groundwork-update-run                    apply and refresh with maintenance
+  groundwork-update-run --config-only      apply configuration without routine upgrades
   groundwork-update-run --skip-maintenance apply and refresh without routine maintenance
   groundwork-update-run --no-app-quit      keep a running app open instead of
                                             letting Homebrew quit it for cask
@@ -41,8 +42,10 @@ EOF
 
 skip_maintenance=0
 allow_app_quit=1
+config_only=0
 while (($#)); do
   case "$1" in
+    --config-only) config_only=1 ;;
     --skip-maintenance) skip_maintenance=1 ;;
     --no-app-quit) allow_app_quit=0 ;;
     -h | --help)
@@ -61,6 +64,10 @@ while (($#)); do
   esac
   shift
 done
+if [[ "$config_only" -eq 1 && ( "$skip_maintenance" -eq 1 || "$allow_app_quit" -eq 0 ) ]]; then
+  echo "groundwork-update-run: --config-only cannot be combined with upgrade or maintenance options." >&2
+  exit 64
+fi
 
 # Preserve only an invocation that began with real interactive stdin and
 # stderr. Earlier bounded updater stages may temporarily detach fd 0; keeping
@@ -295,6 +302,9 @@ export GROUNDWORK_UPDATE_RECEIPT_DIR="$runner_receipt_dir"
 
 durable_receipt_dir="$HOME/.local/state/groundwork/receipts"
 maintenance_receipt_final="$durable_receipt_dir/update-all-maintenance-latest.tsv"
+if [[ "$config_only" -eq 1 ]]; then
+  maintenance_receipt_final="$durable_receipt_dir/groundwork-update-latest.tsv"
+fi
 action_receipt_final="$durable_receipt_dir/update-all-actions-latest.tsv"
 maintenance_receipt_work="$runner_receipt_dir/maintenance.tsv"
 mkdir -p "$durable_receipt_dir"
@@ -306,6 +316,9 @@ update_invocation_id="${update_started_at//[-:]/}-$$-${RANDOM}${RANDOM}"
   exit 1
 }
 maintenance_receipt_named="$durable_receipt_dir/update-all-maintenance-$update_invocation_id.tsv"
+if [[ "$config_only" -eq 1 ]]; then
+  maintenance_receipt_named="$durable_receipt_dir/groundwork-update-$update_invocation_id.tsv"
+fi
 action_receipt_named="$durable_receipt_dir/update-all-actions-$update_invocation_id.tsv"
 maintenance_receipt_digest=""
 printf 'schema\t2\ninvocation-id\t%s\nstarted-at\t%s\nplatform\t%s\n' \
@@ -482,6 +495,15 @@ if [[ -e "$chatgpt_classic_app" || -L "$chatgpt_classic_app" ]]; then
 fi
 {{- end }}
 chezmoi apply
+
+if [[ "$config_only" -eq 1 ]]; then
+  append_maintenance_receipt configuration applied
+  append_maintenance_receipt upgrades not-requested
+  append_maintenance_receipt maintenance not-requested
+  echo "Groundwork configuration applied using saved settings."
+  echo "Routine upgrades and maintenance were not requested. Run update-all for those."
+  exit 0
+fi
 
 brew_lane_status="skipped"
 brew_cask_review_count=0
