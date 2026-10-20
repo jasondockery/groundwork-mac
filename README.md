@@ -116,6 +116,14 @@ GROUNDWORK_REPO_URL=git@github.com:jasondockery/groundwork-mac.git bash ~/code/g
 
 ## Updating Later
 
+Run `update-all` from any directory for normal maintenance. Run
+`groundwork-update` to synchronize and apply only Groundwork configuration using
+your saved settings. Configuration applies can install newly declared tools;
+they do not request routine upgrades or cleanup, clear pending maintenance, or
+mark full maintenance successful. Use `groundwork-configure` to change
+preferences. Existing installations receive the new command on their next
+successful `update-all`.
+
 Desktop setup also prepares [native screen sharing](docs/remote-access.md#automatic-startup-and-local-desktop-permission). macOS needs one local Sharing approval; GNOME needs its native sharing credentials/permission. Their OS services own startup after that step. Use `groundwork-remote-desktop` to finish it and your OS's supported client to connect over Tailscale. Headless/WSL profiles do not configure a desktop server.
 
 `chezmoi update` runs `git pull` from this repo and applies the result. If the repo changes an install hook, such as the Brewfile bundle, that hook can add newly declared tools; it still does not chase newer Homebrew or mise releases for tools already installed. Public HTTPS pulls need no GitHub login. A private fork still requires an account that can read it.
