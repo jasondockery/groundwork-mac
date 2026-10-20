@@ -494,6 +494,11 @@ if [[ -e "$chatgpt_classic_app" || -L "$chatgpt_classic_app" ]]; then
   machine_app_action_count=$((machine_app_action_count + 1))
 fi
 {{- end }}
+if [[ "$config_only" -eq 1 ]]; then
+  export GROUNDWORK_UPDATE_SCOPE=configuration
+else
+  export GROUNDWORK_UPDATE_SCOPE=maintenance
+fi
 chezmoi apply
 
 if [[ "$config_only" -eq 1 ]]; then
