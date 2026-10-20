@@ -197,3 +197,4 @@ tmux Alt+6	key	tmux-binding	all	all	tmux	tmux.html
 tmux Alt+7	key	tmux-binding	all	all	tmux	tmux.html
 tmux Alt+8	key	tmux-binding	all	all	tmux	tmux.html
 tmux Alt+9	key	tmux-binding	all	all	tmux	tmux.html
+groundwork-claude-owner <action>	command	executable	all	all	python3	troubleshooting.html
