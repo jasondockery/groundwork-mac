@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Preview or explicitly change the known Claude native/Homebrew ownership."""
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+HELP = """Usage:
+  groundwork-claude-owner status
+  groundwork-claude-owner homebrew [--yes]
+  groundwork-claude-owner native
+  groundwork-claude-owner rollback BACKUP_DIRECTORY [--yes]
+
+Preview is the default. --yes explicitly authorizes moving the verified native
+symlink into a private backup, or restoring it into an unoccupied command path.
+Native version files, settings, credentials, and PATH are preserved.
+Probes have a cumulative 45-second deadline. Interrupting preserves the backup;
+use the printed rollback command after inspecting any partial result.
+"""
+DEADLINE = time.monotonic() + 45
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+def probe(args):
+    remaining = DEADLINE - time.monotonic()
+    if remaining <= 0:
+        fail("The observation deadline expired; inspect the backup before retrying.")
+    try:
+        return subprocess.run(args, check=True, capture_output=True, text=True,
+                              timeout=min(10, remaining)).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        fail(f"Command probe failed: {shlex.join(map(str, args))}: {error}")
+
+
+def resolve(path):
+    target = path.resolve(strict=True)
+    if not target.is_file() or not os.access(target, os.X_OK):
+        fail(f"Not an executable file: {path}")
+    return target
+
+
+def version(path):
+    output = probe([str(path), "--version"])
+    match = re.match(r"^(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:\s|$)", output)
+    if not match:
+        fail(f"Cannot compare the version from {path}; no ownership change was made.")
+    return tuple(map(int, match.groups()))
+
+
+def plain_parents(path):
+    # Reject redirected or externally writable parents before moving a command.
+    for parent in reversed(path.parents):
+        metadata = parent.lstat()
+        if not stat.S_ISDIR(metadata.st_mode):
+            fail(f"Inspect the redirected parent before retrying: {parent}")
+        if metadata.st_mode & 0o022:
+            fail(f"Inspect the writable parent before retrying: {parent}")
+        if metadata.st_uid not in (0, os.getuid()):
+            fail(f"Inspect the parent owner before retrying: {parent}")
+
+
+def native_link(path, versions):
+    if not path.is_symlink():
+        fail(f"Only a confirmed native symlink can be moved: {path}")
+    target = resolve(path)
+    # Resolve the versions directory too; a redirected native tree is unknown.
+    plain_parents(versions / "placeholder")
+    if target.parent != versions or not re.fullmatch(r"\d+\.\d+\.\d+", target.name):
+        fail(f"Unknown native executable target; inspect it manually: {target}")
+    return path.lstat(), os.readlink(path), target
+
+
+def unchanged(path, snapshot):
+    metadata, link, _ = snapshot
+    current = path.lstat()
+    if ((current.st_dev, current.st_ino, current.st_mtime_ns) !=
+            (metadata.st_dev, metadata.st_ino, metadata.st_mtime_ns)
+            or not path.is_symlink() or os.readlink(path) != link):
+        fail(f"Command changed during preview; retry after inspecting {path}.")
+
+
+def private_directory(path):
+    plain_parents(path)
+    metadata = path.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o077):
+        fail(f"Expected a private directory owned by you: {path}")
+
+
+def fresh_command(expected):
+    shell = shutil.which("zsh")
+    if not shell:
+        fail("Fresh login verification needs zsh; the printed backup remains available.")
+    output = probe([shell, "-lic", 'printf "\nGROUNDWORK_CLAUDE=%s\n" "$(command -v claude)"'])
+    lines = [line.removeprefix("GROUNDWORK_CLAUDE=") for line in output.splitlines()
+             if line.startswith("GROUNDWORK_CLAUDE=")]
+    if len(lines) != 1 or resolve(Path(lines[0])) != expected:
+        fail("Fresh login shell did not select the expected command. Inspect shell overrides; use the printed rollback command if needed.")
+    print(f"Fresh login shell verified: {lines[0]}")
+
+
+def main(args):
+    # Argument validation precedes filesystem access and all external commands.
+    if args in (["--help"], ["-h"]):
+        print(HELP)
+        return 0
+    valid = (args in (["status"], ["native"], ["homebrew"], ["homebrew", "--yes"])
+             or (len(args) in (2, 3) and args[0] == "rollback"
+                 and not args[1].startswith("-")
+                 and (len(args) == 2 or args[2] == "--yes")))
+    if not valid:
+        print(HELP, file=sys.stderr)
+        return 64
+    home = Path.home()
+    native = home / ".local/bin/claude"
+    versions = home / ".local/share/claude/versions"
+    backups = home / ".local/state/groundwork/claude-handover"
+    confirmed = args[-1] == "--yes"
+    if args[0] == "native":
+        native_link(native, versions)
+        print(f"Native ownership preserved: {native} (version {version(native)}).")
+        print("Update through the native owner with: claude update")
+        return 0
+    if args[0] == "rollback":
+        backup = Path(args[1])
+        if not backup.is_absolute() or backup.parent != backups:
+            fail(f"Use the exact backup directory printed during handover beneath {backups}.")
+        private_directory(backups)
+        private_directory(backup)
+        saved = backup / "claude"
+        snapshot = native_link(saved, versions)
+        plain_parents(native)
+        if os.path.lexists(native):
+            fail(f"Rollback path is occupied; preserve and inspect it first: {native}")
+        print(f"Restore native link: {saved} -> {native}")
+        if not confirmed:
+            print("Preview only. Repeat with --yes to restore native ownership.")
+            return 0
+        unchanged(saved, snapshot)
+        # Exclusive link creation cannot overwrite a concurrently created path.
+        os.symlink(snapshot[1], native)
+        print("Native link restored. The private backup remains available.")
+        fresh_command(snapshot[2])
+        return 0
+    effective = shutil.which("claude")
+    print(f"Effective command: {effective or 'unavailable'}")
+    effective_real = resolve(Path(effective)) if effective else None
+    print(f"Resolved executable: {effective_real or 'unavailable'}")
+    effective_version = version(Path(effective)) if effective else None
+    print(f"Effective version: {effective_version or 'unavailable'}")
+    brew = shutil.which("brew")
+    if not brew:
+        fail("Homebrew is unavailable. Keep the current owner and inspect PATH.")
+    prefix = Path(probe([brew, "--prefix"]))
+    if not prefix.is_absolute():
+        fail("Homebrew returned an invalid prefix.")
+    managed = prefix / "bin/claude"
+    managed_real = resolve(managed)
+    if not managed_real.is_relative_to(prefix / "Caskroom/claude-code@latest"):
+        fail(f"Unrecognized Homebrew executable ownership: {managed_real}")
+    managed_version = version(managed)
+    print(f"Homebrew command: {managed} (version {managed_version})")
+    if effective_real == managed_real:
+        print("Homebrew already owns the effective command; no change needed.")
+        return 0
+    print(f"Proposed ownership change: move only {native} to a private backup.")
+    print("To keep native ownership, run groundwork-claude-owner native.")
+    if args[0] == "status":
+        return 0
+    plain_parents(native)
+    snapshot = native_link(native, versions)
+    if effective != str(native):
+        fail("The effective command is not the native symlink; inspect PATH first.")
+    if managed_version < effective_version:
+        fail("Homebrew is older than the native command. Update Homebrew first or keep native ownership.")
+    if not confirmed:
+        print("Preview only. Repeat with --yes to select Homebrew explicitly.")
+        return 0
+    # Validate the full existing parent chain before creating any backup state.
+    ancestor = backups
+    while not ancestor.exists() and not ancestor.is_symlink():
+        ancestor = ancestor.parent
+    plain_parents(ancestor / "placeholder")
+    backups.mkdir(mode=0o700, parents=True, exist_ok=True)
+    private_directory(backups)
+    backup = Path(tempfile.mkdtemp(prefix="native-", dir=backups))
+    saved = backup / "claude"
+    unchanged(native, snapshot)
+    # Store an absolute native target so rollback is independent of directory.
+    os.symlink(str(snapshot[2]), saved)
+    print(f"Backup directory: {backup}", flush=True)
+    print(f"Rollback: groundwork-claude-owner rollback {shlex.quote(str(backup))} --yes", flush=True)
+    unchanged(native, snapshot)
+    native.unlink()
+    fresh_command(managed_real)
+    print("Homebrew ownership verified. Update through update-all or Homebrew.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (OSError, RuntimeError) as error:
+        print(f"groundwork-claude-owner: {error}", file=sys.stderr)
+        sys.exit(1)
