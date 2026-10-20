@@ -197,3 +197,4 @@ tmux	tmux Alt+6	key	Switch to window 6, matching Omarchy.
 tmux	tmux Alt+7	key	Switch to window 7, matching Omarchy.
 tmux	tmux Alt+8	key	Switch to window 8, matching Omarchy.
 tmux	tmux Alt+9	key	Switch to window 9, matching Omarchy.
+maintenance	groundwork-claude-owner <action>	command	Preview Claude installer ownership; explicitly select Homebrew with homebrew --yes, preserve native ownership with native, or restore the private native-link backup with rollback BACKUP_DIRECTORY --yes. Verifies command selection in a fresh login shell and preserves settings and credentials.
