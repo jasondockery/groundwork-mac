@@ -14,19 +14,31 @@ if [[ "$(uname -s)" == Darwin && "$(uname -m)" == x86_64 ]]; then
 fi
 # The desktop cask owns the app, but does not link or update a standalone CLI.
 # Reconcile that CLI on desktop Macs too, including earlier Stable installs.
-installer="$(mktemp)"
-trap 'rm -f "$installer"' EXIT
-curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
-  -fsSL https://t3.codes/install.sh -o "$installer"
 deadline=timeout
 [[ "$(uname -s)" != Darwin ]] || deadline=gtimeout
 command -v "$deadline" >/dev/null || {
   echo "GNU timeout is required for the T3 Code installer; apply the Brewfile first." >&2
   exit 1
 }
+installed_t3="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}/t3"
+if [[ "${GROUNDWORK_UPDATE_SCOPE:-}" == configuration && -x "$installed_t3" ]] && command -v t3 >/dev/null; then
+  effective_t3="$(command -v t3)"
+  if [[ ! "$effective_t3" -ef "$installed_t3" ]]; then
+    printf 'T3 command shadowing: effective=%s, installed=%s. Reconcile PATH before applying.\n' "$effective_t3" "$installed_t3" >&2
+    exit 1
+  fi
+  existing_version="$("$deadline" --kill-after=5s 15 t3 --version)"
+  if [[ "$existing_version" == *-nightly.* ]]; then
+    echo "Configuration-only apply: keeping the existing T3 Code Nightly CLI. Run update-all for upgrades."
+    exit 0
+  fi
+fi
+installer="$(mktemp)"
+trap 'rm -f "$installer"' EXIT
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+  -fsSL https://t3.codes/install.sh -o "$installer"
 echo "Installing T3 Code Nightly (five-minute deadline; installer output follows)."
 env -u T3CODE_VERSION T3CODE_CHANNEL=nightly "$deadline" --kill-after=5s 300 sh "$installer"
-installed_t3="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}/t3"
 [[ -x "$installed_t3" ]] || { echo "The official installer did not create $installed_t3." >&2; exit 1; }
 hash -r
 effective_t3="$(command -v t3 || true)"
