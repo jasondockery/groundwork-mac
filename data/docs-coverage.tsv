@@ -33,6 +33,7 @@ daily	groundwork-profile set <current|preview>	command	executable	home/dot_local
 daily	groundwork-profile show	command	executable	home/dot_local/share/groundwork/commands.tsv	platforms.html	yes	no	all
 daily	groundwork-remote-desktop	command	executable	home/dot_local/share/groundwork/commands.tsv	commands.html	no	no	all desktop
 daily	groundwork-restore	command	executable	home/dot_local/share/groundwork/commands.tsv	troubleshooting.html	no	yes	all
+daily	groundwork-update	command	executable	home/dot_local/share/groundwork/commands.tsv	commands.html	no	no	all; requires chezmoi
 daily	groundwork-yazi-config diff	command	executable	home/dot_local/share/groundwork/commands.tsv	customizing.html	no	yes	all; requires yazi
 daily	groundwork-yazi-config edit	command	executable	home/dot_local/share/groundwork/commands.tsv	customizing.html	no	yes	all; requires yazi
 daily	groundwork-yazi-config remove --yes	command	executable	home/dot_local/share/groundwork/commands.tsv	customizing.html	no	yes	all; requires yazi
