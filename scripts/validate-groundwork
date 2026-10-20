@@ -3413,7 +3413,7 @@ SH
     "$update_all_home/.local/share/groundwork/lib/reset-signals.c"
   cp home/dot_local/share/groundwork/vendor-updater-casks.txt \
     "$update_all_home/.local/share/groundwork/vendor-updater-casks.txt"
-  install_fixture_watchdog_runner \
+  install_fixture_policy_runner \
     "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
   install_fixture_policy_clock "$update_all_bin/date"
   cat >"$update_all_bin/groundwork-docker-tidy" <<'SH'
@@ -4535,6 +4535,7 @@ EOF
   grep -qxF 'mise upgrade --minimum-release-age 5d' "$update_all_log" \
     || fail "a malformed mas JSON stream suppressed the independent mise lane"
 
+  check "update-all Mac App Store authorization and process-tree runtime"
   install_fixture_runtime_runner \
     "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
   if ! run_fixture_pty "$update_all_fixture/darwin-mas-exact" \
@@ -4911,7 +4912,8 @@ EOF
   grep -qxF 'previous-success' "$update_all_stamp" \
     || fail "the sanitized partial failure replaced the prior success timestamp"
   rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
-  install_fixture_watchdog_runner \
+  check "update-all remaining transaction policy matrices"
+  install_fixture_policy_runner \
     "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
 
   printf 'previous-success\n' >"$update_all_stamp"
@@ -5974,6 +5976,8 @@ EOF
   rm -f "$docker_pending"
   : >"$update_all_log"
   update_all_status=0
+  install_fixture_runtime_runner \
+    "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
   run_fixture_pty_after "$update_all_fixture/docker-signal" \
     'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
     HOME="$update_all_home" PATH="$update_all_path" \
@@ -5988,6 +5992,9 @@ EOF
   grep -qxF 'docker-desktop-stop' "$update_all_log"
   grep -qxF 'previous-success' "$update_all_stamp"
   rm -f "$docker_pending"
+
+  install_fixture_policy_runner \
+    "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
 
   # The runner snapshots Karabiner before the full apply, because that apply can
   # run a changed Brewfile hook before the explicit upgrade lane. The observed
