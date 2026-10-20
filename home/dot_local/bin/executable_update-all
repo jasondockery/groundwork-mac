@@ -14,6 +14,8 @@ Synchronize Groundwork, upgrade managed tools, and run safe routine maintenance.
 
 Usage:
   update-all                    run the complete refresh and maintenance contract
+  update-all --config-only      synchronize and apply configuration only;
+                                normally invoked through groundwork-update
   update-all --skip-maintenance exceptional fast refresh; skip package-manager
                                 and Docker scratch maintenance
   update-all --no-app-quit      keep a running app open instead of letting
@@ -52,9 +54,12 @@ EOF
 # or any package operation. The freshly installed runner parses again because
 # it is also a directly invocable entry point.
 forward_args=("$@")
+config_only=0
+other_scope=0
 while (($#)); do
   case "$1" in
-    --skip-maintenance | --no-app-quit) ;;
+    --config-only) config_only=1 ;;
+    --skip-maintenance | --no-app-quit) other_scope=1 ;;
     -h | --help)
       usage
       exit 0
@@ -71,6 +76,10 @@ while (($#)); do
   esac
   shift
 done
+if [[ "$config_only" -eq 1 && "$other_scope" -eq 1 ]]; then
+  echo "update-all: --config-only cannot be combined with upgrade or maintenance options." >&2
+  exit 64
+fi
 
 # One color decision for the whole refresh, made here while the user's
 # terminal is still what stdout points at. Every stage and hook script keys
