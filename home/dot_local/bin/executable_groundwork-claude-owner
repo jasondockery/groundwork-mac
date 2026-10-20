@@ -69,15 +69,19 @@ def plain_parents(path):
 
 
 def native_link(path, versions, origin=None):
-    if not path.is_symlink():
+    metadata = path.lstat()
+    if not stat.S_ISLNK(metadata.st_mode):
         fail(f"Only a confirmed native symlink can be moved: {path}")
-    link = Path(os.readlink(path))
+    link_text = os.readlink(path)
+    link = Path(link_text)
     target = resolve(link if link.is_absolute() else (origin or path.parent) / link)
     # Resolve the versions directory too; a redirected native tree is unknown.
     plain_parents(versions / "placeholder")
     if target.parent != versions or not re.fullmatch(r"\d+\.\d+\.\d+", target.name):
         fail(f"Unknown native executable target; inspect it manually: {target}")
-    return path.lstat(), os.readlink(path), target
+    snapshot = metadata, link_text, target
+    unchanged(path, snapshot)
+    return snapshot
 
 
 def unchanged(path, snapshot):

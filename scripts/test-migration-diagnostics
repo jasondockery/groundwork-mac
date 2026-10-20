@@ -299,6 +299,23 @@ class HandoverTests(unittest.TestCase):
         self.assertEqual(os.readlink(native), '../share/claude/versions/2.4.1')
         self.assertEqual(native.resolve(), target)
 
+    def test_native_snapshot_rejects_replacement_during_target_resolution(self):
+        native = self.install_claude('2.4.1', native=True)
+        newer = self.home / '.local/share/claude/versions/3.0.0'
+        self.script(newer, 'echo 3.0.0')
+        module = runpy.run_path(str(self.helper))
+        capture = module['native_link']
+        original = capture.__globals__['resolve']
+        def replacing_resolve(path):
+            target = original(path)
+            native.unlink()
+            native.symlink_to(newer)
+            return target
+        with mock.patch.dict(capture.__globals__, resolve=replacing_resolve):
+            with self.assertRaisesRegex(RuntimeError, 'changed during preview'):
+                capture(native, newer.parent)
+        self.assertEqual(native.resolve(), newer)
+
     def test_native_update_during_brew_probe_invalidates_version_comparison(self):
         native = self.install_claude('2.4.1', native=True)
         self.install_claude('2.4.2')
