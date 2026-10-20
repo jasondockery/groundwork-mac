@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Exercise public ownership reports and real zsh reminder decisions in isolation."""
 import os
+import contextlib
+import io
+import runpy
+from unittest import mock
 from pathlib import Path
 import shutil
+import shlex
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -13,7 +19,8 @@ LIB = REPO / 'home/dot_local/share/groundwork/lib/coding-cli-ownership.sh'
 
 class DiagnosticsTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='groundwork-diagnostics-')
+        # Hardened handover rejects world-writable ancestors such as Linux /tmp.
+        self.temp = tempfile.TemporaryDirectory(prefix='.groundwork-diagnostics-', dir=Path.home())
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.home = self.root / 'home'
@@ -167,6 +174,194 @@ class DiagnosticsTests(unittest.TestCase):
         result = self.reminder(None)
         self.assertNotIn('could not finish', result.stdout + result.stderr)
         self.assertNotIn('Run update-all', result.stdout + result.stderr)
+
+
+class HandoverTests(unittest.TestCase):
+    script = DiagnosticsTests.script
+    install_claude = DiagnosticsTests.install_claude
+
+    def setUp(self):
+        DiagnosticsTests.setUp(self)
+        (self.bin / 'zsh').symlink_to(shutil.which('zsh'))
+        self.env['PATH'] += ':' + str(self.prefix / 'bin')
+        zdot = self.root / 'login'
+        zdot.mkdir()
+        (zdot / '.zprofile').write_text('export PATH=' + shlex.quote(self.env['PATH']) + '\n')
+        self.env['ZDOTDIR'] = str(zdot)
+        self.env['SHELL'] = shutil.which('zsh')
+        self.helper = REPO / 'home/dot_local/bin/executable_groundwork-claude-owner'
+
+    def run_owner(self, *args):
+        return subprocess.run([sys.executable, '-B', str(self.helper), *args],
+                              env=self.env, capture_output=True, text=True, timeout=50)
+
+    def snapshot(self):
+        return sorted((str(p.relative_to(self.home)), os.readlink(p) if p.is_symlink()
+                       else p.read_bytes() if p.is_file() else None)
+                      for p in self.home.rglob('*'))
+
+    def test_handover_preview_apply_repeat_and_guarded_rollback(self):
+        native = self.install_claude('2.4.1', native=True)
+        target = native.resolve()
+        self.install_claude('2.4.2')
+        before = self.snapshot()
+        preview = self.run_owner('homebrew')
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertIn('Preview only', preview.stdout)
+        self.assertEqual(before, self.snapshot())
+        result = self.run_owner('homebrew', '--yes')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Fresh login shell verified', result.stdout)
+        self.assertFalse(native.is_symlink())
+        self.assertTrue(target.is_file())
+        backup = next((self.home / '.local/state/groundwork/claude-handover').iterdir())
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(self.run_owner('homebrew', '--yes').returncode, 0)
+        self.assertEqual(self.run_owner('rollback', str(backup)).returncode, 0)
+        self.assertFalse(native.is_symlink())
+        restored = self.run_owner('rollback', str(backup), '--yes')
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertEqual(native.resolve(), target)
+        occupied = self.run_owner('rollback', str(backup), '--yes')
+        self.assertNotEqual(occupied.returncode, 0)
+        self.assertIn('occupied', occupied.stderr)
+        self.assertEqual(native.resolve(), target)
+
+    def test_help_and_invalid_arguments_do_not_probe_or_mutate(self):
+        log = self.root / 'external.log'
+        self.script(self.bin / 'brew', 'echo called >> ' + shlex.quote(str(log)))
+        before = self.snapshot()
+        for args, status in ((['--help'], 0), ([], 64), (['--bad'], 64),
+                             (['homebrew', '--yes', 'extra'], 64),
+                             (['rollback', '--yes'], 64), (['native', '--yes'], 64)):
+            result = self.run_owner(*args)
+            self.assertEqual(result.returncode, status, result.stderr)
+            self.assertFalse(log.exists())
+            self.assertEqual(before, self.snapshot())
+
+    def test_equal_native_is_explicit_and_newer_native_is_preserved(self):
+        native = self.install_claude('2.4.2', native=True)
+        self.install_claude('2.4.2')
+        self.assertEqual(self.run_owner('homebrew').returncode, 0)
+        self.assertTrue(native.is_symlink())
+        native.unlink()
+        self.install_claude('3.0.0', native=True)
+        before = self.snapshot()
+        result = self.run_owner('homebrew', '--yes')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('older than', result.stderr)
+        self.assertEqual(before, self.snapshot())
+        result = self.run_owner('native')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('claude update', result.stdout)
+        self.assertEqual(before, self.snapshot())
+
+    def test_manual_and_failed_probes_preserve_every_file(self):
+        self.install_claude('2.4.2')
+        self.script(self.bin / 'claude', 'echo 2.4.1')
+        for body in ('echo 2.4.1', 'exit 7', 'echo unknown'):
+            self.script(self.bin / 'claude', body)
+            before = self.snapshot()
+            result = self.run_owner('homebrew', '--yes')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(before, self.snapshot())
+
+    def test_redirected_backup_parent_and_unknown_brew_fail_before_mutation(self):
+        self.install_claude('2.4.1', native=True)
+        managed = self.install_claude('2.4.2')
+        root = self.home / '.local/state/groundwork/claude-handover'
+        external = self.root / 'external'
+        external.mkdir()
+        root.symlink_to(external, target_is_directory=True)
+        before = self.snapshot()
+        self.assertNotEqual(self.run_owner('homebrew', '--yes').returncode, 0)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(list(external.iterdir()), [])
+        root.unlink()
+        managed.unlink()
+        self.script(managed, 'echo 2.4.2')
+        before = self.snapshot()
+        self.assertNotEqual(self.run_owner('homebrew', '--yes').returncode, 0)
+        self.assertEqual(before, self.snapshot())
+
+
+    def test_relative_native_link_round_trips_without_rewriting_it(self):
+        native = self.install_claude('2.4.1', native=True)
+        target = native.resolve()
+        native.unlink()
+        native.symlink_to('../share/claude/versions/2.4.1')
+        self.install_claude('2.4.2')
+        result = self.run_owner('homebrew', '--yes')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        backup = next((self.home / '.local/state/groundwork/claude-handover').iterdir())
+        result = self.run_owner('rollback', str(backup), '--yes')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(os.readlink(native), '../share/claude/versions/2.4.1')
+        self.assertEqual(native.resolve(), target)
+
+    def test_native_snapshot_rejects_replacement_during_target_resolution(self):
+        native = self.install_claude('2.4.1', native=True)
+        newer = self.home / '.local/share/claude/versions/3.0.0'
+        self.script(newer, 'echo 3.0.0')
+        module = runpy.run_path(str(self.helper))
+        capture = module['native_link']
+        original = capture.__globals__['resolve']
+        def replacing_resolve(path):
+            target = original(path)
+            native.unlink()
+            native.symlink_to(newer)
+            return target
+        with mock.patch.dict(capture.__globals__, resolve=replacing_resolve):
+            with self.assertRaisesRegex(RuntimeError, 'changed during preview'):
+                capture(native, newer.parent)
+        self.assertEqual(native.resolve(), newer)
+
+    def test_native_update_during_brew_probe_invalidates_version_comparison(self):
+        native = self.install_claude('2.4.1', native=True)
+        self.install_claude('2.4.2')
+        newer = self.home / '.local/share/claude/versions/3.0.0'
+        self.script(newer, 'echo 3.0.0')
+        module = runpy.run_path(str(self.helper))
+        main = module['main']
+        original = main.__globals__['probe']
+        def updating_probe(args):
+            if args[-1] == '--prefix':
+                native.unlink()
+                native.symlink_to(newer)
+            return original(args)
+        with mock.patch.dict(os.environ, self.env), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.dict(main.__globals__, probe=updating_probe):
+                with self.assertRaisesRegex(RuntimeError, 'changed during preview'):
+                    main(['homebrew', '--yes'])
+        self.assertEqual(native.resolve(), newer)
+        self.assertFalse((self.home / '.local/state/groundwork/claude-handover').exists())
+
+    def test_replacement_during_rename_is_preserved_in_backup(self):
+        native = self.install_claude('2.4.1', native=True)
+        self.install_claude('2.4.2')
+        main = runpy.run_path(str(self.helper))['main']
+        original = os.rename
+        def replacing_rename(source, destination):
+            native.unlink()
+            self.script(native, 'echo replacement-command')
+            original(source, destination)
+        with mock.patch.dict(os.environ, self.env), contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch('os.rename', side_effect=replacing_rename):
+                with self.assertRaisesRegex(RuntimeError, 'changed during preview'):
+                    main(['homebrew', '--yes'])
+        backup = next((self.home / '.local/state/groundwork/claude-handover').iterdir())
+        self.assertEqual((backup / 'claude').read_text(), '#!/bin/bash\necho replacement-command\n')
+
+    def test_failed_login_keeps_usable_backup_and_never_claims_success(self):
+        self.install_claude('2.4.1', native=True)
+        self.install_claude('2.4.2')
+        (self.root / 'login/.zprofile').write_text('export PATH=/unavailable\n')
+        result = self.run_owner('homebrew', '--yes')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Rollback:', result.stdout)
+        self.assertNotIn('Homebrew ownership verified', result.stdout)
+        backup = next((self.home / '.local/state/groundwork/claude-handover').iterdir())
+        self.assertTrue((backup / 'claude').is_symlink())
 
 
 if __name__ == '__main__':

@@ -380,7 +380,7 @@ jobs:
           if brew tap | grep -qxF aws/tap; then
             brew untap --force aws/tap
           fi
-          brew install tmux chezmoi ripgrep jq
+          brew install tmux chezmoi ripgrep jq coreutils
 
       - name: Verify tmux feature floor
         run: home/dot_local/bin/executable_tmux-copy-last --check-tmux-version
@@ -564,7 +564,9 @@ jobs:
             dev.roost.ephemeral=true
             dev.roost.built=${{ steps.scratch.outputs.built }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # PRs read the default-branch cache; exporting each PR's full image
+          # duplicated minutes of transfer without seeding later PR builds.
+          cache-to: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && 'type=gha,mode=max' || '' }}
           secrets: |
             github_token=${{ github.token }}
 
