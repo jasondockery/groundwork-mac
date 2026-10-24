@@ -32,7 +32,11 @@ What Renovate manages here:
 - The primary Python version in `home/dot_config/mise/config.toml`. Renovate's
   mise manager updates only the first array entry, so `python = ["3.13", "3.12"]`
   can move `3.13` and leave `3.12` pinned for Aider (`audioop`). A local rule
-  also refuses a bump if `3.12` is ever the extracted value. `node = "lts"` in
+  sets `versioning` to `semver-partial`, so the written request stays two
+  components, such as `3.15`. mise treats that request as fuzzy, and a later
+  patch stays under the five-day machine floor. An exact tag is exempt from that
+  floor. A local rule also refuses a bump if `3.12` is ever the extracted
+  value. `node = "lts"` in
   that file is extracted and then disabled, so it does not become a numbered
   release. `.nvmrc` and the repository `mise.toml` stay ignored because
   `tools/sync-toolchain.mjs` rewrites them from `.node-version`. With
@@ -51,9 +55,10 @@ What Renovate manages here:
 packages, checksum-coupled ShellCheck/shfmt assets, the Corepack compatibility
 pin, Aider's Python compatibility choice, the tmux theme release, and headless
 install-time release discovery. `update-all` still applies the five-day mise
-floor on the machine, including the `node = "lts"` alias and patch movement
-inside a Python line. Those lanes are not silently assumed to be Renovate
-coverage.
+floor to fuzzy machine requests, including the `node = "lts"` alias and a
+two-component Python line. The `semver-partial` rule keeps that line fuzzy,
+so a later patch stays under the floor. An exact tag is exempt. Those lanes
+are not silently assumed to be Renovate coverage.
 
 Operating notes:
 

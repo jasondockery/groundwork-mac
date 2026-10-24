@@ -131,8 +131,8 @@
       "paths": ["home/dot_config/mise/config.toml", "home/dot_local/bin/executable_groundwork-update-run.tmpl"],
       "canonical": "home/dot_local/bin/executable_groundwork-update-run.tmpl",
       "agePolicy": "external-tool-policy",
-      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy before changing a machine runtime, including the node lts alias and patch movement inside a Python line.",
-      "note": "Renovate reads home/dot_config/mise/config.toml for the primary Python version. update-all remains the machine upgrade path and still floats node = \"lts\" under the five-day floor. The file's version tokens are owned by the mise-node-alias and mise-python surfaces."
+      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy to fuzzy machine requests, including the node lts alias and a two-component Python line. Renovate's semver-partial rule keeps the primary Python request at major.minor, so a later patch stays fuzzy and the floor can float it. An exact tag is exempt.",
+      "note": "Renovate reads home/dot_config/mise/config.toml for the primary Python version and writes it as major.minor. update-all remains the machine upgrade path and still floats fuzzy requests, including node = \"lts\" and that Python line, under the five-day floor. The file's version tokens are owned by the mise-node-alias and mise-python surfaces."
     },
     {
       "id": "mise-node-alias",
@@ -172,7 +172,7 @@
           "linePattern": "^python\\s*="
         }
       ],
-      "note": "Renovate's mise manager updates only the first array entry. python = [\"3.13\", \"3.12\"] therefore proposes movement of 3.13 and leaves 3.12 pinned for Aider."
+      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.13\", \"3.12\"] therefore proposes movement of 3.13, such as to 3.15, and leaves 3.12 pinned for Aider."
     },
     {
       "id": "corepack-runtime",

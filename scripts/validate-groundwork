@@ -14763,11 +14763,27 @@ if node_alias_rules != [{
     "enabled": False,
 }]:
     raise SystemExit("the node lts alias must stay disabled in the managed mise config")
-python_pin_rules = [
+python_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
     if rule.get("matchDepNames") == ["python"]
 ]
+python_versioning_rules = [rule for rule in python_rules if rule.get("versioning") == "semver-partial"]
+python_pin_rules = [
+    rule
+    for rule in python_rules
+    if rule.get("matchCurrentValue") == r"/^3\.12(?:\..*)?$/"
+]
+if python_rules != python_versioning_rules + python_pin_rules:
+    raise SystemExit("Python package rules must be the semver-partial request rule and the 3.12 pin rule")
+if python_versioning_rules != [{
+    "description": "Keep the managed Python request at major.minor. semver-partial writes the two-component request 3.15 when the selected release is 3.15.0, so mise still treats the request as fuzzy and update-all's five-day floor can float patches inside the line. An exact pin would skip that floor.",
+    "matchManagers": ["mise"],
+    "matchDepNames": ["python"],
+    "matchFileNames": ["home/dot_config/mise/config.toml"],
+    "versioning": "semver-partial",
+}]:
+    raise SystemExit("the Python request must stay on semver-partial so mise can float patches inside the line")
 if python_pin_rules != [{
     "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.13\", \"3.12\"] must stay pinned. Renovate's mise manager (44.23.0) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
     "matchManagers": ["mise"],
@@ -14777,7 +14793,7 @@ if python_pin_rules != [{
     "enabled": False,
 }]:
     raise SystemExit("the Python 3.12 pin rule must stay exact and must not add local line-bump approval")
-if any("dependencyDashboardApproval" in rule for rule in python_pin_rules):
+if any("dependencyDashboardApproval" in rule for rule in python_rules):
     raise SystemExit("Python line-bump approval belongs to preset 1.1.0, not this repo")
 gitleaks_age_rules = [
     rule
