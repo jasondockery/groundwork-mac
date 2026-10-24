@@ -299,9 +299,70 @@ imessage_gateway = "yes"
             with patch.object(gw, 'run', side_effect=invoke) as run:
                 self.assertEqual(gw.main(['prepare']), 1)
         self.assertNotIn(gw.PMSET_WRITE, [call.args[0] for call in run.call_args_list])
-        self.assertEqual(recorded.read_bytes(), planted)
-        self.assertIn('appeared during the password prompt', stderr.getvalue())
+        self.assertFalse(recorded.exists() or recorded.is_symlink())
+        asides = list(recorded.parent.glob(f'.{recorded.name}.aside.*'))
+        self.assertEqual([item.read_bytes() for item in asides], [planted])
+        self.assertIn(str(asides[0]), stderr.getvalue())
         self.assertIn('AC sleep was not changed', stderr.getvalue())
+        self.assert_narrow(run)
+
+    def test_planted_zero_is_set_aside_so_the_next_prepare_records_real_sleep(self):
+        recorded = self.state_file()
+        sudo_calls = {'count': 0}
+
+        def invoke(command, **_kwargs):
+            if command == ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]:
+                sudo_calls['count'] += 1
+                if sudo_calls['count'] == 1:
+                    recorded.parent.mkdir(parents=True, exist_ok=True)
+                    recorded.write_bytes(b'0\n')
+                return self.completed(0)
+            if command == gw.SSH_SERVICE:
+                return self.completed(0)
+            if command == gw.PMSET_READ:
+                return self.completed(0, AC_SLEEP_10)
+            if command == gw.PMSET_WRITE:
+                self.assertEqual(recorded.read_text(encoding='utf-8'), '10\n')
+                return self.completed(0)
+            self.fail(f'unexpected command {command}')
+
+        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
+            with patch.object(gw, 'run', side_effect=invoke) as first:
+                self.assertEqual(gw.main(['prepare']), 1)
+        self.assertNotIn(gw.PMSET_WRITE, [call.args[0] for call in first.call_args_list])
+        self.assertFalse(recorded.exists() or recorded.is_symlink())
+        self.assertIn('AC sleep was not changed', stderr.getvalue())
+        asides = list(recorded.parent.glob(f'.{recorded.name}.aside.*'))
+        self.assertEqual([item.read_bytes() for item in asides], [b'0\n'])
+
+        with self.desktop({'headless': False, 'imessage_gateway': True}):
+            with patch.object(gw, 'run', side_effect=invoke) as second:
+                self.assertEqual(gw.main(['prepare']), 0)
+        self.assertEqual(recorded.read_text(encoding='utf-8'), '10\n')
+        self.assertEqual(
+            [call.args[0] for call in second.call_args_list],
+            [gw.SSH_SERVICE, gw.PMSET_READ, ['bash', '-c', gw.SUDO_PREPARE_SCRIPT], gw.PMSET_WRITE],
+        )
+        self.assert_narrow(second)
+
+    def test_existing_invalid_record_blocks_pmset(self):
+        recorded = self.state_file()
+        recorded.parent.mkdir(parents=True)
+        recorded.write_text('nope\n', encoding='utf-8')
+        effects = [
+            self.completed(0),
+            self.completed(0, AC_SLEEP_10),
+            self.completed(0),
+        ]
+        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
+            with patch.object(gw, 'run', side_effect=effects) as run:
+                self.assertEqual(gw.main(['prepare']), 1)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [gw.SSH_SERVICE, gw.PMSET_READ, ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]],
+        )
+        self.assertEqual(recorded.read_text(encoding='utf-8'), 'nope\n')
+        self.assertIn('cannot be restored', stderr.getvalue())
         self.assert_narrow(run)
 
     def test_directory_record_blocks_sudo(self):

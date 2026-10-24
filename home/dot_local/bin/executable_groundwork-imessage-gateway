@@ -175,7 +175,21 @@ def ensure_record_destination(path):
         raise RuntimeError(f'the state directory is not a directory: {parent}.')
 
 
+def move_record_aside(path):
+    # Rename the final component. os.replace does not follow a symlink there,
+    # so a planted path cannot redirect the move onto another file.
+    for attempt in range(100):
+        candidate = path.with_name(f'.{path.name}.aside.{os.getpid()}.{attempt}')
+        if candidate.exists() or candidate.is_symlink():
+            continue
+        os.replace(path, candidate)
+        return candidate
+    raise RuntimeError(f'could not move the recorded AC sleep path aside: {path}.')
+
+
 def record_previous(path, value):
+    # False means this call did not create the undo file. An existing path is
+    # left as it is, and sleep must not change unless that file is already valid.
     if path.exists() or path.is_symlink():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -363,9 +377,8 @@ def prepare():
     else:
         print('Remote Login is on.')
     if need_sleep:
-        # The password prompt is a gap. A symlink or a new file created while
-        # it waits must fail here, before pmset. record_previous skips an
-        # existing path and the sleep change would still run.
+        # The password prompt is a gap. A new file created while it waits is
+        # not the previous sleep value, even when its text looks valid.
         try:
             ensure_record_destination(destination)
         except RuntimeError as error:
@@ -374,14 +387,32 @@ def prepare():
                 file=sys.stderr,
             )
             return 1
-        if record_absent_before_prompt and (destination.exists() or destination.is_symlink()):
+        planted = destination.is_file() and not destination.is_symlink()
+        if record_absent_before_prompt and planted:
+            aside = move_record_aside(destination)
             print(
-                f'iMessage gateway: the recorded AC sleep path appeared during the password prompt: {destination}. '
+                f'iMessage gateway: a file appeared at the sleep record during the password prompt and was moved to {aside}. '
                 'AC sleep was not changed. Battery sleep was not changed.',
                 file=sys.stderr,
             )
             return 1
+        if not record_absent_before_prompt:
+            recorded = read_recorded(destination)
+            if not (isinstance(recorded, str) and RECORDED_VALUE.match(recorded)):
+                print(
+                    f'iMessage gateway: the recorded AC sleep value at {destination} cannot be restored. '
+                    'AC sleep was not changed. Battery sleep was not changed.',
+                    file=sys.stderr,
+                )
+                return 1
         wrote = record_previous(destination, ac_sleep)
+        if record_absent_before_prompt and not wrote:
+            print(
+                f'iMessage gateway: the previous AC sleep value was not recorded at {destination}. '
+                'AC sleep was not changed. Battery sleep was not changed.',
+                file=sys.stderr,
+            )
+            return 1
         result = run(PMSET_WRITE)
         if result.returncode != 0:
             print('AC sleep was not changed. Battery sleep was not changed.', file=sys.stderr)
