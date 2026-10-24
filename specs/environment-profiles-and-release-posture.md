@@ -82,9 +82,6 @@ environment:
   release_posture: preview    # posture: seeds defaults, does not name a channel
 
 tools:
-  primary_editor:
-    family: vscode
-    variant: insiders
   primary_browser:
     family: chrome
     variant: beta
@@ -100,7 +97,7 @@ system:
 Two vocabularies, deliberately separate:
 
 - **Posture** — `current` or `preview`. An attitude that seeds defaults.
-- **Variant** — `stable`, `insiders`, `beta`, `dev`, `canary`. A
+- **Variant** — `stable`, `beta`, `dev`, `canary`. A
   real upstream channel named by its vendor.
 
 Collapsing them loses intent: Chrome has Beta, Dev, and Canary, and calling all
@@ -210,8 +207,8 @@ owns — there must not be one answer in chezmoi and a second copy elsewhere.
 ## Tool catalog
 
 One canonical record per tool family. Channel variants are **separate products**
-with different cask tokens, application bundles, CLI commands, and settings
-directories — values that cannot be derived from the token.
+with different cask tokens, application bundles, bundle identifiers, and
+settings locations — values that cannot be derived from the token.
 
 The canonical catalog is a **machine-readable, schema-validated file**
 (`data/tool-channels.yaml` or equivalent). It is not this document. Any table
@@ -222,17 +219,15 @@ Shape:
 
 ```yaml
 families:
-  vscode:
-    defaults: { current: stable, preview: insiders }
+  chrome:
+    defaults: { current: stable, preview: beta }
     variants:
       stable:
-        cask: visual-studio-code
-        app_bundle: Visual Studio Code.app
-        cli: code
-      insiders:
-        cask: visual-studio-code@insiders
-        app_bundle: Visual Studio Code - Insiders.app
-        cli: code-insiders
+        cask: google-chrome
+        app_bundle: Google Chrome.app
+      beta:
+        cask: google-chrome@beta
+        app_bundle: Google Chrome Beta.app
 ```
 
 `defaults` is how a posture becomes a variant, and why posture and variant stay
@@ -258,7 +253,7 @@ cannot say that.
 ```text
 bundle_identifier              (prefer over literal /Applications paths)
 application discovery strategy
-native settings directory
+native preference domain
 coexistence group
 installed-version probe
 available-version probe
@@ -283,9 +278,10 @@ path, or shadows a vendor command.** Doing so breaks code signing, bundle
 identity and LaunchServices registration, the vendor's own updater,
 side-by-side installation, and rollback.
 
-Concretely: `code` always means Stable and `code-insiders` always means
-Insiders, exactly as Microsoft intends. Normalization, if any, happens in
-Groundwork's own invocation layer — never in the application bundle.
+Concretely: `Google Chrome.app` always means Stable and
+`Google Chrome Beta.app` always means Beta, exactly as Google intends.
+Normalization, if any, happens in Groundwork's own invocation layer — never in
+the application bundle.
 
 ### Deferred: role-based resolver commands
 
@@ -294,28 +290,32 @@ but is **not** in this specification. It adds indirection on the most
 critical path a developer has, breaks muscle memory and anything that shells
 out to `code`, and introduces a failure point between the user and their
 editor. Setting `$EDITOR`/`$VISUAL` to a resolver is the lower-risk half and
-can come first if a real need appears. Build the catalog and rendered settings
-first; add resolvers when something demonstrably needs them.
+can come first if a real need appears. Build the catalog and per-channel
+preference-domain writes first; add resolvers when something demonstrably
+needs them.
 
 ## Settings: primary channel only
 
-Rendering shared settings to *every* installed channel doubles the chezmoi
-drift surface for a fallback the user rarely opens.
+Writing shared preferences to *every* installed channel's preference domain
+doubles the drift surface for a fallback the user rarely opens.
 
 **Only the primary channel receives Groundwork-managed configuration.** A
 retained stable fallback is installed but unmanaged. If the user later promotes
-the fallback to primary, the profile change plan renders settings then.
+the fallback to primary, the profile change plan writes its preference domain
+then.
 
-Where a family needs channel-specific values, use a common file plus an
-overlay, rendered to that channel's native path:
+Where a family needs channel-specific values, write them to that channel's own
+preference domain, the way Groundwork already configures Chrome with
+`defaults write`:
 
 ```text
-Stable:    ~/Library/Application Support/Code/User/settings.json
-Insiders:  ~/Library/Application Support/Code - Insiders/User/settings.json
+Stable:  com.google.Chrome
+Beta:    com.google.Chrome.beta
 ```
 
-Render real files. Do not symlink two channels to one live file — schemas,
-extensions, and migrations differ between them.
+Groundwork never writes into a browser's profile data directories under
+`~/Library/Application Support`; the browser owns those. Do not point two
+channels at one domain — policies, schemas, and migrations differ between them.
 
 Promotion and demotion are explicit, never incidental:
 
