@@ -16253,6 +16253,57 @@ PY
       assert_not_contains 'obsidian-plugins|Library/Mobile Documents' "$out_dir/$case_name/obsidian-plugins.sh" "Obsidian plugins body leaked into $case_name"
       assert_not_contains 'SSH_AUTH_SOCK' "$out_dir/$case_name/zshrc" "SSH_AUTH_SOCK leaked into $case_name zshrc"
     fi
+
+    # Chrome's password-manager override follows Brewfile.browser: Stable on
+    # every desktop Mac, Beta only when that manifest selects google-chrome@beta.
+    # One key, because it differs from Chrome's default (the built-in manager
+    # on) and would otherwise compete with the chosen third-party manager.
+    # Backup follows the managed browser, including when password_manager is
+    # none and the write itself is skipped. Headless and Linux select neither.
+    chrome_defaults="$out_dir/$case_name/run_onchange_after_30-macos-defaults.sh"
+    chrome_backup="$out_dir/$case_name/run_before_05-backup-current-settings.sh"
+    manages_chrome=false
+    manages_beta=false
+    if [[ "$os" == "darwin" && "$headless" == "false" ]]; then
+      manages_chrome=true
+      if [[ "$release_posture" == "preview" ]]; then
+        manages_beta=true
+      fi
+    fi
+    if [[ "$manages_chrome" == true && "$password_manager" != "none" ]]; then
+      grep -qxF 'defaults write com.google.Chrome PasswordManagerEnabled -bool false' "$chrome_defaults" \
+        || fail "$case_name must disable Stable Chrome's built-in password manager"
+      if [[ "$manages_beta" == true ]]; then
+        grep -qxF 'defaults write com.google.Chrome.beta PasswordManagerEnabled -bool false' "$chrome_defaults" \
+          || fail "$case_name must disable Chrome Beta's built-in password manager"
+      else
+        assert_not_contains '^defaults write com\.google\.Chrome\.beta ' "$chrome_defaults" \
+          "$case_name current posture wrote the Chrome Beta preference domain"
+      fi
+      chrome_domain_writes="$(grep -cE '^defaults write com\.google\.Chrome(\.beta)? ' "$chrome_defaults" || true)"
+      chrome_password_writes="$(grep -cF 'PasswordManagerEnabled -bool false' "$chrome_defaults" || true)"
+      if [[ "$manages_beta" == true ]]; then
+        [[ "$chrome_domain_writes" -eq 2 && "$chrome_password_writes" -eq 2 ]] \
+          || fail "$case_name preview must write only PasswordManagerEnabled on Stable and Beta (domains=$chrome_domain_writes keys=$chrome_password_writes)"
+      else
+        [[ "$chrome_domain_writes" -eq 1 && "$chrome_password_writes" -eq 1 ]] \
+          || fail "$case_name must write only PasswordManagerEnabled on Stable Chrome (domains=$chrome_domain_writes keys=$chrome_password_writes)"
+      fi
+    else
+      assert_not_contains 'PasswordManagerEnabled' "$chrome_defaults" \
+        "Chrome password-manager override leaked into $case_name"
+    fi
+    if [[ "$manages_beta" == true ]]; then
+      grep -qF $'com.google.Chrome.beta\tPasswordManagerEnabled' "$chrome_backup" \
+        || fail "$case_name must back up Chrome Beta PasswordManagerEnabled before writing it"
+    else
+      assert_not_contains 'com\.google\.Chrome\.beta' "$chrome_backup" \
+        "Chrome Beta backup leaked into $case_name"
+    fi
+    if [[ "$manages_chrome" == true ]]; then
+      grep -qF $'com.google.Chrome\tPasswordManagerEnabled' "$chrome_backup" \
+        || fail "$case_name must back up Stable Chrome PasswordManagerEnabled"
+    fi
   done <data/render-profiles.tsv
 
   # performance-contract: rendered-shellcheck-matrix-batched
