@@ -83,17 +83,14 @@ killall Dock 2>/dev/null || true
 # location applies only after the next login.
 killall SystemUIServer 2>/dev/null || true
 
-# Chrome enables its built-in password manager by default. This is the only
-# Chrome preference Groundwork writes: turn that one key off so it does not
-# compete with the third-party manager chosen at setup. Stable uses
-# com.google.Chrome. Chrome Beta uses com.google.Chrome.beta when the profile
-# manages Beta, the same decision as Brewfile.browser. Verify at chrome://policy.
+# Chrome enables its built-in password manager by default. The only Chrome
+# preference Groundwork writes is PasswordManagerEnabled=false, and only when
+# setup chose a third-party manager. Upstream leaves that manager on; turning
+# this one key off keeps it from competing with Bitwarden or 1Password.
+# The domain is Stable's com.google.Chrome. Verify at chrome://policy.
 # Safari and iOS stay manual.
 {{ if ne .password_manager "none" -}}
 defaults write com.google.Chrome PasswordManagerEnabled -bool false
-{{- if contains "google-chrome@beta" (includeTemplate "browser-brewfile" .) }}
-defaults write com.google.Chrome.beta PasswordManagerEnabled -bool false
-{{- end }}
 {{- end }}
 
 # Personal preference — uncomment if you want it:

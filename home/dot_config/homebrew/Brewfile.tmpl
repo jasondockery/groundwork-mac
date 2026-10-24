@@ -111,10 +111,10 @@ cask "bitwarden"
 cask "karabiner-elements"
 cask "tailscale-app"          # standalone app owns its service and MagicDNS integration
 brew "defaultbrowser"
-# Chrome is selected by release posture in Brewfile.browser. Both official
-# Google casks ship `sha256 :no_check`, so the main Brewfile stays entirely
-# checksummed and the browser manifest is handled by the explicit exception
-# lane in run_onchange_after_10-brew-bundle.sh.
+# Chrome stable is installed from Brewfile.browser on every desktop Mac.
+# The official cask ships `sha256 :no_check`, so the main Brewfile stays
+# entirely checksummed and the browser manifest is handled by the explicit
+# exception lane in run_onchange_after_10-brew-bundle.sh.
 cask "zoom"
 cask "slack"
 cask "raycast"                # keyboard-first launcher; Quicklinks jump to daily links

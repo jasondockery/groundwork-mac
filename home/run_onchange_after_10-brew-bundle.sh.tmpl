@@ -381,18 +381,19 @@ fi
 # License agreement remains a local human action, never automatic consent.
 groundwork_check_xcode_license
 
-# ---- Chrome checksum exceptions, and ONLY after the safe lane succeeded ----
+# ---- Chrome checksum exception, and ONLY after the safe lane succeeded ----
 #
-# Chrome stable and Beta ship `sha256 :no_check` upstream (Google's own updater
-# owns the binaries), so neither can satisfy the --require-sha policy the main
-# Brewfile is installed under. The selected casks live in Brewfile.browser and
-# are installed here only after every checksum-verified package succeeded: a
-# failed safe lane must never trigger an unchecked exception lane.
+# Chrome stable ships `sha256 :no_check` upstream (Google's own updater owns
+# the binary), so it cannot satisfy the --require-sha policy the main Brewfile
+# is installed under. Brewfile.browser names that one cask, and this lane
+# installs it only after every checksum-verified package succeeded: a failed
+# safe lane must never trigger an unchecked exception lane.
 #
-# Failure is real: `run_onchange` must retry until the profile's browser set is
-# present. Validate the rendered manifest completely before the first install,
-# then act on that exact bounded token list. Posture changes never uninstall a
-# former channel or touch browser data.
+# Failure is real: `run_onchange` must retry until Chrome stable is present.
+# Validate the rendered manifest completely before the first install, then act
+# on that exact token. This lane never uninstalls a browser or touches browser
+# data. A browser cask that is already installed and is not in the manifest
+# stays installed.
 browser_manifest="$HOME/.config/homebrew/Brewfile.browser"
 [[ -f "$browser_manifest" ]] || {
   echo "Groundwork: browser manifest is missing: $browser_manifest" >&2
@@ -403,7 +404,6 @@ while IFS= read -r browser_line; do
   case "$browser_line" in
     "" | \#*) ;;
     'cask "google-chrome"') browser_casks+=(google-chrome) ;;
-    'cask "google-chrome@beta"') browser_casks+=(google-chrome@beta) ;;
     *)
       printf 'Groundwork: unsupported browser manifest entry: %s\n' "$browser_line" >&2
       exit 1
@@ -417,8 +417,8 @@ done <"$browser_manifest"
 
 if [[ "$user_cask_opts" == *--require-sha* ]]; then
   cat >&2 <<'CONFLICT'
-Groundwork selected its managed Chrome channel, but your own HOMEBREW_CASK_OPTS
-requires checksummed casks and Google's official Chrome casks ship none.
+Groundwork selected Google Chrome stable, but your own HOMEBREW_CASK_OPTS
+requires checksummed casks and Google's official Chrome stable cask ships none.
 
 Chrome was NOT installed and this apply is incomplete. Keep your policy and
 manage the browser outside Groundwork, or remove your own --require-sha before
