@@ -58,19 +58,140 @@ class CommonSetupTests(unittest.TestCase):
                             if headless:
                                 for app in ("chatgpt", "claude", "cursor", "docker-desktop"):
                                     self.assertNotIn(f'cask "{app}"\n', source)
-                            if platform == "darwin" and not headless:
-                                self.assertIn('cask "freetube"', source)
-                            else:
-                                self.assertNotIn('cask "freetube"', source)
+                            self.assertNotIn('cask "freetube"', source)
                             if platform == "linux":
                                 self.assertNotIn('cask "chatgpt"', source)
                                 self.assertNotIn('cask "claude"\n', source)
 
-    def test_freetube_is_installed_when_personal_apps_are_off(self):
-        source = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=False, personal_apps=False)
-        self.assertIn('cask "freetube"', source)
-        self.assertNotIn('cask "obsidian"', source)
-        self.assertNotIn('cask "iina"', source)
+    def freetube_pin(self):
+        return json.loads((REPO / "home/.chezmoitemplates/freetube-release.json").read_text())
+
+    def test_freetube_pin_locks_the_verified_release(self):
+        pin = self.freetube_pin()
+        self.assertEqual(pin["version"], "0.25.3")
+        self.assertEqual(
+            pin["assets"]["arm64"],
+            {
+                "url": "https://github.com/FreeTubeApp/FreeTube/releases/download/v0.25.3-beta/freetube-0.25.3-beta-mac-arm64.dmg",
+                "sha256": "2b445d64f5e56a873debea50c785cd41400bdabc387f0d67fc7be745b2b9146e",
+            },
+        )
+        self.assertEqual(
+            pin["assets"]["amd64"],
+            {
+                "url": "https://github.com/FreeTubeApp/FreeTube/releases/download/v0.25.3-beta/freetube-0.25.3-beta-mac-x64.dmg",
+                "sha256": "40fb6c671ec75905e035968ec0c14bfe717643730af80536e625d191455f49bf",
+            },
+        )
+
+    def test_freetube_dmg_renders_for_desktop_macs_before_personal_apps(self):
+        pin = self.freetube_pin()
+        desktop = self.text("home/run_onchange_after_15-freetube-dmg.sh.tmpl", personal_apps=False)
+        self.assertIn(pin["assets"]["arm64"]["url"], desktop)
+        self.assertIn(pin["assets"]["arm64"]["sha256"], desktop)
+        self.assertNotIn(pin["assets"]["amd64"]["url"], desktop)
+        self.assertIn("com.apple.quarantine", desktop)
+        self.assertNotIn('cask "freetube"', desktop)
+        for line in desktop.splitlines():
+            if "Application Support/FreeTube" in line:
+                self.assertTrue(line.lstrip().startswith("#"), line)
+        intel = self.text(
+            "home/run_onchange_after_15-freetube-dmg.sh.tmpl",
+            chezmoi=dict(os="darwin", arch="amd64"),
+        )
+        self.assertIn(pin["assets"]["amd64"]["url"], intel)
+        self.assertIn(pin["assets"]["amd64"]["sha256"], intel)
+        self.assertNotIn(pin["assets"]["arm64"]["url"], intel)
+        for headless, platform in ((True, "darwin"), (False, "linux"), (True, "linux")):
+            with self.subTest(platform=platform, headless=headless):
+                skipped = self.text(
+                    "home/run_onchange_after_15-freetube-dmg.sh.tmpl",
+                    headless=headless,
+                    chezmoi=dict(os=platform, arch="arm64"),
+                )
+                self.assertNotIn("freetube-0.25.3-beta", skipped)
+                self.assertNotIn("hdiutil", skipped)
+                self.assertNotIn(pin["version"], skipped)
+        brewfile = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=False, personal_apps=False)
+        self.assertNotIn('cask "freetube"', brewfile)
+        self.assertNotIn('cask "obsidian"', brewfile)
+        self.assertNotIn('cask "iina"', brewfile)
+
+    def write_executable(self, name, body):
+        path = self.root / "bin" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(body)
+        path.chmod(0o755)
+        return path
+
+    def test_freetube_dmg_checksum_failure_does_not_install(self):
+        script = self.text("home/run_onchange_after_15-freetube-dmg.sh.tmpl")
+        apps = self.root / "Applications"
+        apps.mkdir()
+        hdiutil_calls = self.root / "hdiutil-calls"
+        xattr_calls = self.root / "xattr-calls"
+        self.write_executable("curl", '''#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+printf 'not-a-dmg' > "$out"
+''')
+        self.write_executable("hdiutil", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_HDIUTIL"\nexit 99\n')
+        self.write_executable("ditto", '#!/bin/sh\nprintf ditto >> "$FIXTURE_XATTR"\nexit 99\n')
+        self.write_executable("xattr", '#!/bin/sh\nprintf xattr >> "$FIXTURE_XATTR"\nexit 99\n')
+        environment = dict(
+            os.environ,
+            PATH=f"{self.root / 'bin'}:/usr/bin:/bin",
+            HOME=str(self.root),
+            GROUNDWORK_APPLICATIONS_DIR=str(apps),
+            FIXTURE_HDIUTIL=str(hdiutil_calls),
+            FIXTURE_XATTR=str(xattr_calls),
+        )
+        result = subprocess.run(["/bin/bash"], input=script, env=environment, text=True,
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("checksum did not match", result.stderr)
+        self.assertIn("not installed", result.stderr)
+        self.assertFalse(hdiutil_calls.exists())
+        self.assertFalse(xattr_calls.exists())
+        self.assertFalse((apps / "FreeTube.app").exists())
+        self.assertEqual(list(apps.iterdir()), [])
+
+    def test_freetube_dmg_skips_when_installed_version_matches_pin(self):
+        pin = self.freetube_pin()
+        script = self.text("home/run_onchange_after_15-freetube-dmg.sh.tmpl")
+        apps = self.root / "Applications"
+        bundle = apps / "FreeTube.app" / "Contents"
+        bundle.mkdir(parents=True)
+        (bundle / "Info.plist").write_text("fixture")
+        curl_calls = self.root / "curl-calls"
+        hdiutil_calls = self.root / "hdiutil-calls"
+        self.write_executable("curl", '#!/bin/sh\nprintf curl >> "$FIXTURE_CURL"\nexit 1\n')
+        self.write_executable("hdiutil", '#!/bin/sh\nprintf hdiutil >> "$FIXTURE_HDIUTIL"\nexit 99\n')
+        self.write_executable("plutil", '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_VERSION"\n')
+        self.write_executable("xattr", "#!/bin/sh\nexit 0\n")
+        environment = dict(
+            os.environ,
+            PATH=f"{self.root / 'bin'}:/usr/bin:/bin",
+            HOME=str(self.root),
+            GROUNDWORK_APPLICATIONS_DIR=str(apps),
+            FIXTURE_CURL=str(curl_calls),
+            FIXTURE_HDIUTIL=str(hdiutil_calls),
+            FIXTURE_VERSION=pin["version"],
+        )
+        result = subprocess.run(["/bin/bash"], input=script, env=environment, text=True,
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("already installed", result.stdout)
+        self.assertFalse(curl_calls.exists())
+        self.assertFalse(hdiutil_calls.exists())
+        self.assertTrue((apps / "FreeTube.app").is_dir())
 
     def test_configuration_only_apply_keeps_existing_nightly_but_installs_missing_cli(self):
         hook = self.text('home/run_after_21-t3-code.sh.tmpl')
