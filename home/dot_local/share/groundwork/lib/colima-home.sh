@@ -11,10 +11,15 @@
 # After that, macOS uses ~/.colima even when the directory is absent. Other
 # systems use ${XDG_CONFIG_HOME:-$HOME/.config}/colima, which is what Go's
 # os.UserConfigDir returns when XDG_CONFIG_HOME is unset. Profile names match
-# config/profile.go. LIMA_HOME, when non-empty, replaces the _lima directory.
+# config.ProfileFromName: "", "colima", and "default" select instance colima
+# and config directory default. Any other name drops one leading "colima-"
+# only after that switch, and the --profile flag keeps the original string so
+# Colima applies the same rule. LIMA_HOME, when non-empty, replaces the _lima
+# directory.
 
 GW_COLIMA_HOME=""
 GW_COLIMA_PROFILE=""
+GW_COLIMA_PROFILE_SHORT=""
 GW_COLIMA_PROFILE_ID=""
 GW_COLIMA_LIMA_HOME=""
 GW_COLIMA_CONFIG=""
@@ -64,30 +69,34 @@ gw_colima_shell_single() {
   return 0
 }
 
-# Set GW_COLIMA_PROFILE and GW_COLIMA_PROFILE_ID. Return 1 when the short
-# name is not one safe path segment.
+# Set the --profile flag, the config directory, and the Lima instance id.
+# Return 1 when the short name is not one safe path segment.
 gw_colima_apply_profile() {
-  local name="${1-}"
+  local name="${1-}" short
   case "$name" in
     "" | colima | default)
       GW_COLIMA_PROFILE="default"
+      GW_COLIMA_PROFILE_SHORT="default"
       GW_COLIMA_PROFILE_ID="colima"
       return 0
       ;;
   esac
-  if [[ "$name" == colima-* ]]; then
-    name="${name#colima-}"
+  short="$name"
+  if [[ "$short" == colima-* ]]; then
+    short="${short#colima-}"
   fi
-  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-  [[ "$name" != "." && "$name" != ".." && "$name" != -* ]] || return 1
+  [[ "$short" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  [[ "$short" != "." && "$short" != ".." && "$short" != -* ]] || return 1
   GW_COLIMA_PROFILE="$name"
-  GW_COLIMA_PROFILE_ID="colima-$name"
+  GW_COLIMA_PROFILE_SHORT="$short"
+  GW_COLIMA_PROFILE_ID="colima-$short"
 }
 
 gw_colima_resolve() {
   local home
   GW_COLIMA_HOME=""
   GW_COLIMA_PROFILE=""
+  GW_COLIMA_PROFILE_SHORT=""
   GW_COLIMA_PROFILE_ID=""
   GW_COLIMA_LIMA_HOME=""
   GW_COLIMA_CONFIG=""
@@ -101,7 +110,7 @@ gw_colima_resolve() {
   else
     GW_COLIMA_LIMA_HOME="$home/_lima"
   fi
-  GW_COLIMA_CONFIG="$home/$GW_COLIMA_PROFILE/colima.yaml"
+  GW_COLIMA_CONFIG="$home/$GW_COLIMA_PROFILE_SHORT/colima.yaml"
   GW_COLIMA_DATADISK="$GW_COLIMA_LIMA_HOME/_disks/$GW_COLIMA_PROFILE_ID/datadisk"
   return 0
 }
@@ -121,10 +130,12 @@ gw_colima_instance_lacks_data_disk() {
 }
 
 # Print the recovery command for the home, profile, and Lima directory just
-# resolved. colima delete --force removes the instance. It does not remove the
-# Lima data disk, so the command deletes that disk next and tolerates one that
-# is already gone. Return 1 instead of printing a command that would expand in
-# another shell.
+# resolved. colima delete --force removes the instance and can leave the Lima
+# data disk, including a lock that still names that instance. limactl disk
+# delete --force removes the disk even when that lock remains. Lima 2.2.1
+# ignores a disk that is already gone and exits 0. Any other failure stays
+# visible so the && chain stops before colima start. Return 1 instead of
+# printing a command that would expand in another shell.
 gw_colima_recovery_command() {
   local one disk
   gw_colima_resolve || return 1
@@ -133,6 +144,6 @@ gw_colima_recovery_command() {
   gw_colima_shell_single "$GW_COLIMA_LIMA_HOME" || return 1
   gw_colima_shell_single "$GW_COLIMA_PROFILE_ID" || return 1
   one="LIMA_HOME=\"$GW_COLIMA_LIMA_HOME\" COLIMA_HOME=\"$GW_COLIMA_HOME\" colima --profile=\"$GW_COLIMA_PROFILE\""
-  disk="LIMA_HOME=\"$GW_COLIMA_LIMA_HOME\" limactl disk delete \"$GW_COLIMA_PROFILE_ID\" || true"
-  printf '%s\n' "${one} delete --force && (${disk}) && ${one} start --disk 100"
+  disk="LIMA_HOME=\"$GW_COLIMA_LIMA_HOME\" limactl disk delete --force \"$GW_COLIMA_PROFILE_ID\""
+  printf '%s\n' "${one} delete --force && ${disk} && ${one} start --disk 100"
 }
