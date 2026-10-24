@@ -42,10 +42,10 @@ exit $?
 MANUAL_STEPS = (
     '1. Sign in to Messages with the Apple ID, and turn on Messages in iCloud.',
     '2. Approve the Tailscale app, its network extension, and this device. Add an owner-scoped tailnet grant that lets only the client machine reach this Mac on TCP port 22. See the shared Tailscale guide.',
-    '3. Authorize the client\'s everyday SSH key for the gateway account. Groundwork does not edit authorized_keys. blip-setup replaces only its own confined line.',
+    '3. Authorize the client\'s everyday SSH key for the gateway account. Groundwork does not edit authorized_keys. blip-setup replaces only its own confined line. Limit Remote Login to the gateway account alone. Groundwork reports that list and does not change it.',
     '4. While blip-setup waits at the client: in Privacy & Security → Full Disk Access, add /usr/libexec/sshd-keygen-wrapper (Command-Shift-G in the file picker). Then click Allow on the Messages automation prompt within about two minutes. An unanswered prompt is stored as a denial.',
     '5. If that prompt was missed, run `tccutil reset AppleEvents` on this Mac. That resets Automation grants for every app, not only sshd. Then run blip-setup again while you are at the Mac.',
-    '6. Optional, at the Mac: run `python3 ~/.blip/bin/blip-check --markread` and allow Accessibility plus Automation for System Events. Those grants are for mark-read and experimental tapbacks. Contacts is optional and is only for saving contacts.',
+    '6. Optional mark-read and experimental tapbacks: from the client, run `ssh <host> \'python3 "$HOME/.blip/bin/blip-check" --markread\'`. This Mac is only where the Allow prompt is clicked. That prompt asks for Accessibility and Automation for System Events. Contacts is optional and is only for saving contacts.',
     '7. Keep the Mac on power, with the lid open or an external display attached, and at a logged-in desktop. A closed lid sleeps anyway. Sleep, the login window, and the lock screen fail in three different ways; the gateway page explains them.',
 )
 
@@ -339,12 +339,14 @@ def prepare():
         print('Remote Login is on.')
         print(f'AC sleep is already 0. Battery sleep was not changed ({minutes(battery_sleep)}).')
         return 0
+    record_absent_before_prompt = False
     if need_sleep:
         try:
             ensure_record_destination(destination)
         except RuntimeError as error:
             print(f'iMessage gateway: {error} Nothing was changed.', file=sys.stderr)
             return 1
+        record_absent_before_prompt = not (destination.exists() or destination.is_symlink())
     sudo_status = sudo_prepare()
     if sudo_status == 10:
         print('Groundwork: changing Remote Login or AC sleep needs an administrator password.')
@@ -361,14 +363,21 @@ def prepare():
     else:
         print('Remote Login is on.')
     if need_sleep:
-        # The password prompt is a gap. A symlink created while it waits must
-        # fail here, before pmset. record_previous would skip the write and
-        # the sleep change would still run.
+        # The password prompt is a gap. A symlink or a new file created while
+        # it waits must fail here, before pmset. record_previous skips an
+        # existing path and the sleep change would still run.
         try:
             ensure_record_destination(destination)
         except RuntimeError as error:
             print(
                 f'iMessage gateway: {error} AC sleep was not changed. Battery sleep was not changed.',
+                file=sys.stderr,
+            )
+            return 1
+        if record_absent_before_prompt and (destination.exists() or destination.is_symlink()):
+            print(
+                f'iMessage gateway: the recorded AC sleep path appeared during the password prompt: {destination}. '
+                'AC sleep was not changed. Battery sleep was not changed.',
                 file=sys.stderr,
             )
             return 1

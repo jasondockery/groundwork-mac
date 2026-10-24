@@ -21,7 +21,6 @@ With the role off, an apply does not call the helper. With it on, a desktop appl
 | Setting | macOS default | This role | Reason |
 | --- | --- | --- | --- |
 | Remote Login (OpenSSH) | off | on | Blip's only transport. The Tailscale app cannot serve Tailscale SSH. |
-| Remote Login allowed users | whatever you already chose | report only | Recommend the gateway account alone. Full Disk Access on `sshd` covers every SSH login, so fewer accounts means less exposure. Groundwork does not change the list. |
 | `pmset -c sleep` (on power) | the system sleeps after idle | `0` | A sleeping gateway takes Blip offline. `-c` leaves battery sleep unchanged, so a laptop off the charger does not drain flat. |
 
 `prepare` reads the current on-power sleep value and, the first time it changes it, writes that integer to `~/.local/state/groundwork/imessage-gateway-ac-sleep` (or `$XDG_STATE_HOME/groundwork/` when that variable is set). A later run keeps the original number. `status` prints it.
@@ -61,12 +60,12 @@ After `blip-setup` and the two clicks below, `blip-check` should be all green, a
 
 1. Sign in to Messages with the Apple ID, and turn on Messages in iCloud.
 2. Approve the Tailscale app, its network extension, and the device. Add an owner-scoped grant that lets only the client machine reach this Mac on TCP port 22. Policy lives in the [shared Tailscale guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/tailscale.md).
-3. Authorize the client's everyday SSH key for the gateway account. Groundwork does not manage `authorized_keys`. `blip-setup` owns its confined line (`restrict`, no shell, no forwarding, no pty, and a fixed command).
+3. Authorize the client's everyday SSH key for the gateway account. Groundwork does not manage `authorized_keys`. `blip-setup` owns its confined line (`restrict`, no shell, no forwarding, no pty, and a fixed command). Limit Remote Login to the gateway account alone. Groundwork reports that list and does not change it.
 4. While `blip-setup` waits on the client:
    - Full Disk Access: add `/usr/libexec/sshd-keygen-wrapper`. In the file picker, press Command-Shift-G and paste that path.
    - Automation → Messages: click Allow within about two minutes. An unanswered prompt is stored as a denial. Recovery is `tccutil reset AppleEvents`, which resets Automation grants for every app, then run `blip-setup` again while you are at the Mac.
-5. Optional, at the Mac:
-   - `python3 ~/.blip/bin/blip-check --markread` for mark-read and Blip's experimental tapbacks. That asks for Accessibility and Automation → System Events. Leave tapbacks off unless you want that extra grant.
+5. Optional:
+   - From the client, run `ssh <host> 'python3 "$HOME/.blip/bin/blip-check" --markread'` for mark-read and Blip's experimental tapbacks. This Mac is only where the Allow prompt is clicked. The prompt asks for Accessibility and Automation → System Events. Leave tapbacks off unless you want that extra grant.
    - Contacts, if you want Blip to save contacts.
 6. Keep the Mac on power, lid open or with an external display attached, at a logged-in desktop.
 
@@ -84,16 +83,37 @@ Full Disk Access is per `sshd-keygen-wrapper`, not per key. After you grant it, 
 
 ## Undo
 
-Restore the recorded on-power sleep value, then turn Remote Login off in System Settings → General → Sharing if you no longer want it:
+Turn the role off and apply before restoring sleep. An apply with the role still on sets on-power sleep back to 0.
+
+1. In `groundwork-configure`, turn the iMessage gateway role off.
+2. Run `chezmoi apply`.
+3. Restore the recorded on-power sleep value with the checks below.
+4. Turn Remote Login off in System Settings → General → Sharing if you no longer want it.
+
+The record must be a regular file and not a symlink. Do not use `cat`; it follows symlinks. Read the file only after that check. Its text, without the recorder's single trailing newline, must match `^(0|[1-9][0-9]{0,5})$`. Pass only that integer to `sudo pmset -c sleep`.
 
 ```bash
-recorded="$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/groundwork/imessage-gateway-ac-sleep")"
-sudo pmset -c sleep "$recorded"
+record="${XDG_STATE_HOME:-$HOME/.local/state}/groundwork/imessage-gateway-ac-sleep"
+if [[ -L "$record" || ! -f "$record" ]]; then
+  printf 'Refusing to restore sleep: %s must be a regular file and not a symlink.\n' "$record" >&2
+else
+  value=""
+  extra_present=0
+  {
+    IFS= read -r value || true
+    if IFS= read -r _; then
+      extra_present=1
+    fi
+  } < "$record"
+  if [[ "$extra_present" -ne 0 || ! "$value" =~ ^(0|[1-9][0-9]{0,5})$ ]]; then
+    printf 'Refusing to restore sleep: %s must contain one integer matching ^(0|[1-9][0-9]{0,5})$.\n' "$record" >&2
+  else
+    sudo pmset -c sleep "$value"
+  fi
+fi
 ```
 
 To revoke the privacy grants, open Privacy & Security and remove the `sshd-keygen-wrapper` entries under Full Disk Access and Automation. Also remove Accessibility and Contacts entries if you added them. Groundwork does not edit the privacy database. `tccutil reset AppleEvents` is the broad Automation reset above; it is not limited to this role.
-
-Turn the role off in `groundwork-configure` so the next apply does not set sleep back to 0 or turn Remote Login on again.
 
 Removing the client is Blip's own procedure: [Removing Blip](https://github.com/nixfred/blip/blob/main/README.md#removing-blip). That removes Blip's confined `authorized_keys` line and `~/.blip`. It does not remove your everyday key, and it does not revoke the `sshd` privacy grants.
 

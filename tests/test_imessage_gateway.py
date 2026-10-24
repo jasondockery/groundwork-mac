@@ -280,6 +280,30 @@ imessage_gateway = "yes"
         self.assertIn('AC sleep was not changed', stderr.getvalue())
         self.assert_narrow(run)
 
+    def test_regular_file_planted_during_password_prompt_skips_pmset(self):
+        recorded = self.state_file()
+        planted = b'planted-sentinel\n'
+
+        def invoke(command, **_kwargs):
+            if command == ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]:
+                recorded.parent.mkdir(parents=True, exist_ok=True)
+                recorded.write_bytes(planted)
+                return self.completed(0)
+            if command == gw.SSH_SERVICE:
+                return self.completed(0)
+            if command == gw.PMSET_READ:
+                return self.completed(0, AC_SLEEP_10)
+            self.fail(f'unexpected command {command}')
+
+        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
+            with patch.object(gw, 'run', side_effect=invoke) as run:
+                self.assertEqual(gw.main(['prepare']), 1)
+        self.assertNotIn(gw.PMSET_WRITE, [call.args[0] for call in run.call_args_list])
+        self.assertEqual(recorded.read_bytes(), planted)
+        self.assertIn('appeared during the password prompt', stderr.getvalue())
+        self.assertIn('AC sleep was not changed', stderr.getvalue())
+        self.assert_narrow(run)
+
     def test_directory_record_blocks_sudo(self):
         recorded = self.state_file()
         recorded.mkdir(parents=True)
@@ -319,7 +343,7 @@ imessage_gateway = "yes"
         self.assert_narrow(run)
         self.assertFalse(self.state_file().exists())
 
-    def test_status_runs_blip_check_without_markread(self):
+    def test_status_reports_installed_blip_check_without_running_it(self):
         blip = self.home / '.blip' / 'bin' / 'blip-check'
         blip.parent.mkdir(parents=True)
         blip.write_text('print("ok")\n', encoding='utf-8')
@@ -389,6 +413,16 @@ imessage_gateway = "yes"
         run.assert_not_called()
         self.assertIn('Nothing was opened.', stderr.getvalue())
         self.assertIn('Manual steps', stdout.getvalue())
+
+    def test_markread_uses_the_client_command(self):
+        command = 'ssh <host> \'python3 "$HOME/.blip/bin/blip-check" --markread\''
+        local = 'python3 ~/.blip/bin/blip-check --markread'
+        doc = (REPO / 'docs/imessage-gateway.md').read_text(encoding='utf-8')
+        steps = '\n'.join(gw.MANUAL_STEPS)
+        for text in (steps, doc):
+            self.assertIn(command, text)
+            self.assertIn('This Mac is only where the Allow prompt is clicked.', text)
+            self.assertNotIn(local, text)
 
     def test_help_and_rejected_arguments_do_not_run_commands(self):
         stdout = io.StringIO()
