@@ -83,15 +83,12 @@ schema_version: 1
 
 environment:
   role: personal              # personal | managed | disposable
-  release_posture: preview    # posture: seeds defaults, does not name a channel
+  release_posture: preview    # current | preview; seeds defaults, does not name a channel
 
 tools:
   primary_browser:
     family: chrome
-    variant: beta
-  compatibility_browser:
-    family: chrome
-    variant: stable
+    variant: stable           # current and preview both persist stable
 
 system:
   declared_channel: developer-beta   # INTENT
@@ -101,13 +98,13 @@ system:
 Two vocabularies, deliberately separate:
 
 - **Posture** — `current` or `preview`. An attitude that seeds defaults.
-- **Variant** — `stable`, `beta`, `dev`, `canary`. A
-  real upstream channel named by its vendor.
+- **Variant** — the concrete product a family installs. Chrome persists
+  `stable` for both postures.
 
-Collapsing them loses intent: Chrome has Beta, Dev, and Canary, and calling all
-three "preview" throws away which one the user picked. Posture selects a default
-variant through the catalog; the user may override any single tool without
-changing posture.
+The two words stay separate so a later family can map its preview posture to
+a different variant without renaming posture. That split does not select
+another Chrome channel. Posture seeds the catalog default, and Chrome's
+default is stable on every desktop Mac.
 
 `system.declared_channel` records **intent**. Detected OS state is a separate
 observation made by `groundwork-doctor`, never stored as if Groundwork set it —
@@ -166,7 +163,8 @@ AI-native developer up to succeed, for two reasons:
 1. **The AI layer already supplies the variance.** DORA's 2024 data found
    delivery stability dropping about 7.2% for every 25-point rise in AI
    adoption. A workflow that has taken on that much new variance should not
-   also be absorbing pre-release breakage in its browser, editor, and OS.
+   also be absorbing pre-release breakage in its editor and operating system.
+   The managed browser stays Chrome stable in every posture.
 2. **Agents work better against a documented substrate.** When an agent
    debugs a machine, it reasons from how the tool is documented to behave.
    Preview channels move behavior ahead of its documentation, so the developer
@@ -487,8 +485,10 @@ preset, show resulting changes, let the user accept or edit, then persist.
 Migration preserves installed applications and their settings. The Homebrew
 upgrade scope now follows the rendered Groundwork Brewfile without a prompt:
 that narrows mutation to declared software and leaves independently installed
-applications and their data alone. A posture change may add a selected Chrome
-channel, but never removes a former channel or its profile data.
+applications and their data alone. A posture change does not add or remove a
+browser. Chrome stable stays selected on every desktop Mac, and an existing
+Chrome Beta cask and its profile data stay until the owner runs
+`brew uninstall --cask google-chrome@beta`.
 
 ```text
 interactive, unmigrated     → show the recommended profile and plan; require a
