@@ -29,12 +29,25 @@ What Renovate manages here:
   only `ghcr.io/gitleaks/gitleaks`; its tag and digest, required CI, and owner
   review remain the delivery controls. Without that exception, strict age
   checking would leave every newer Gitleaks tag pending forever.
+- The primary Python version in `home/dot_config/mise/config.toml`. Renovate's
+  mise manager updates only the first array entry, so `python = ["3.13", "3.12"]`
+  can move `3.13` and leave `3.12` pinned for Aider (`audioop`). A local rule
+  also refuses a bump if `3.12` is ever the extracted value. `node = "lts"` in
+  that file is extracted and then disabled, so it does not become a numbered
+  release. `.nvmrc` and the repository `mise.toml` stay ignored because
+  `tools/sync-toolchain.mjs` rewrites them from `.node-version`. The same task
+  still runs after a managed mise edit and does not rewrite the Python array.
+  Python line-bump Dependency Dashboard approval is not a local rule. It
+  depends on preset `github>jasondockery/renovate-config#1.1.0`, which is not
+  tagged yet, so this repo still extends `#1.0.0`.
 
 `dependency-coverage.json` also records the intentional manual lanes: Homebrew
 packages, checksum-coupled ShellCheck/shfmt assets, the Corepack compatibility
 pin, Aider's Python compatibility choice, the tmux theme release, and headless
-install-time release discovery, and the managed mise runtimes applied by
-`update-all`. Those are not silently assumed to be Renovate coverage.
+install-time release discovery. `update-all` still applies the five-day mise
+floor on the machine, including the `node = "lts"` alias and patch movement
+inside a Python line. Those lanes are not silently assumed to be Renovate
+coverage.
 
 Operating notes:
 
