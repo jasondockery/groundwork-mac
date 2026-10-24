@@ -8,9 +8,10 @@
 # exists, then ~/.colima when it exists, then $XDG_CONFIG_HOME/colima when
 # that variable is set and non-empty. An empty XDG_CONFIG_HOME would make
 # Colima look at a relative "colima" directory, so it is treated as unset.
-# The last fallback is ~/.colima, including when the directory is absent,
-# which is Colima's macOS result. Profile names match config/profile.go.
-# LIMA_HOME, when non-empty, replaces the _lima directory.
+# After that, macOS uses ~/.colima even when the directory is absent. Other
+# systems use ${XDG_CONFIG_HOME:-$HOME/.config}/colima, which is what Go's
+# os.UserConfigDir returns when XDG_CONFIG_HOME is unset. Profile names match
+# config/profile.go. LIMA_HOME, when non-empty, replaces the _lima directory.
 
 GW_COLIMA_HOME=""
 GW_COLIMA_PROFILE=""
@@ -42,7 +43,11 @@ gw_colima_config_home() {
     printf '%s\n' "${XDG_CONFIG_HOME%/}/colima"
     return 0
   fi
-  printf '%s\n' "$home"
+  if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+    printf '%s\n' "$home"
+    return 0
+  fi
+  printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/colima"
 }
 
 # Reject a value that could expand or break out of the double quotes in the
@@ -74,7 +79,7 @@ gw_colima_apply_profile() {
     name="${name#colima-}"
   fi
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-  [[ "$name" != "." && "$name" != ".." ]] || return 1
+  [[ "$name" != "." && "$name" != ".." && "$name" != -* ]] || return 1
   GW_COLIMA_PROFILE="$name"
   GW_COLIMA_PROFILE_ID="colima-$name"
 }
@@ -115,19 +120,19 @@ gw_colima_instance_lacks_data_disk() {
   return 1
 }
 
-# Print the recovery command for the home and profile just resolved.
-# Include LIMA_HOME only when that variable selected the disk directory.
-# Return 1 instead of printing a command that would expand in another shell.
+# Print the recovery command for the home, profile, and Lima directory just
+# resolved. colima delete --force removes the instance. It does not remove the
+# Lima data disk, so the command deletes that disk next and tolerates one that
+# is already gone. Return 1 instead of printing a command that would expand in
+# another shell.
 gw_colima_recovery_command() {
-  local one prefix
+  local one disk
   gw_colima_resolve || return 1
   gw_colima_shell_single "$GW_COLIMA_HOME" || return 1
   gw_colima_shell_single "$GW_COLIMA_PROFILE" || return 1
-  prefix="COLIMA_HOME=\"$GW_COLIMA_HOME\" "
-  if [[ -n "${LIMA_HOME:-}" ]]; then
-    gw_colima_shell_single "$LIMA_HOME" || return 1
-    prefix="LIMA_HOME=\"$LIMA_HOME\" ${prefix}"
-  fi
-  one="${prefix}colima --profile \"$GW_COLIMA_PROFILE\""
-  printf '%s\n' "${one} delete --force && ${one} start --disk 100"
+  gw_colima_shell_single "$GW_COLIMA_LIMA_HOME" || return 1
+  gw_colima_shell_single "$GW_COLIMA_PROFILE_ID" || return 1
+  one="LIMA_HOME=\"$GW_COLIMA_LIMA_HOME\" COLIMA_HOME=\"$GW_COLIMA_HOME\" colima --profile=\"$GW_COLIMA_PROFILE\""
+  disk="LIMA_HOME=\"$GW_COLIMA_LIMA_HOME\" limactl disk delete \"$GW_COLIMA_PROFILE_ID\" || true"
+  printf '%s\n' "${one} delete --force && (${disk}) && ${one} start --disk 100"
 }
