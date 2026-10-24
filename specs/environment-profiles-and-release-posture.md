@@ -253,7 +253,7 @@ cannot say that.
 ```text
 bundle_identifier              (prefer over literal /Applications paths)
 application discovery strategy
-native settings directory
+native preference domain
 coexistence group
 installed-version probe
 available-version probe
@@ -290,17 +290,19 @@ but is **not** in this specification. It adds indirection on the most
 critical path a developer has, breaks muscle memory and anything that shells
 out to `code`, and introduces a failure point between the user and their
 editor. Setting `$EDITOR`/`$VISUAL` to a resolver is the lower-risk half and
-can come first if a real need appears. Build the catalog and rendered settings
-first; add resolvers when something demonstrably needs them.
+can come first if a real need appears. Build the catalog and per-channel
+preference-domain writes first; add resolvers when something demonstrably
+needs them.
 
 ## Settings: primary channel only
 
-Rendering shared settings to *every* installed channel doubles the chezmoi
-drift surface for a fallback the user rarely opens.
+Writing shared preferences to *every* installed channel's preference domain
+doubles the drift surface for a fallback the user rarely opens.
 
 **Only the primary channel receives Groundwork-managed configuration.** A
 retained stable fallback is installed but unmanaged. If the user later promotes
-the fallback to primary, the profile change plan renders settings then.
+the fallback to primary, the profile change plan writes its preference domain
+then.
 
 Where a family needs channel-specific values, write them to that channel's own
 preference domain, the way Groundwork already configures Chrome with
