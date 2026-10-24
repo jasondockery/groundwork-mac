@@ -6273,18 +6273,44 @@ EOF
       grep -qxF "$3" "$disk_file" || fail "Colima data disk bytes under $root changed"
     fi
   }
+  # Colima 0.10.3 ProfileFromName. The argument is the original profile
+  # string. "", "colima", and "default" are the default instance. One leading
+  # "colima-" is removed only after that switch.
+  colima_profile_short() {
+    local name="$1"
+    case "$name" in
+      "" | colima | default)
+        printf '%s\n' default
+        return
+        ;;
+    esac
+    if [[ "$name" == colima-* ]]; then
+      name="${name#colima-}"
+    fi
+    printf '%s\n' "$name"
+  }
+  colima_profile_id() {
+    local name="$1"
+    case "$name" in
+      "" | colima | default)
+        printf '%s\n' colima
+        return
+        ;;
+    esac
+    if [[ "$name" == colima-* ]]; then
+      name="${name#colima-}"
+    fi
+    printf '%s\n' "colima-$name"
+  }
   write_colima_profile() {
     local root="$1" profile="$2" disk_value="$3" datadisk_bytes="$4" lima_root="${5:-}"
-    local id disk_file
-    if [[ "$profile" == "default" ]]; then
-      id="colima"
-    else
-      id="colima-$profile"
-    fi
+    local id short disk_file
+    short="$(colima_profile_short "$profile")"
+    id="$(colima_profile_id "$profile")"
     [[ -n "$lima_root" ]] || lima_root="$root/_lima"
-    mkdir -p "$root/$profile" "$lima_root/_disks/$id"
+    mkdir -p "$root/$short" "$lima_root/_disks/$id"
     if [[ -n "$disk_value" ]]; then
-      printf 'runtime: docker\ndisk: %s\n' "$disk_value" >"$root/$profile/colima.yaml"
+      printf 'runtime: docker\ndisk: %s\n' "$disk_value" >"$root/$short/colima.yaml"
     fi
     disk_file="$lima_root/_disks/$id/datadisk"
     if [[ "$datadisk_bytes" == "absent" ]]; then
@@ -6295,15 +6321,11 @@ EOF
   }
   colima_recovery_line() {
     local home="$1" profile="$2" lima="${3:-}" id one disk
-    if [[ "$profile" == "default" ]]; then
-      id="colima"
-    else
-      id="colima-$profile"
-    fi
+    id="$(colima_profile_id "$profile")"
     [[ -n "$lima" ]] || lima="$home/_lima"
     one="LIMA_HOME=\"$lima\" COLIMA_HOME=\"$home\" colima --profile=\"$profile\""
-    disk="LIMA_HOME=\"$lima\" limactl disk delete \"$id\" || true"
-    printf '%s\n' "${one} delete --force && (${disk}) && ${one} start --disk 100"
+    disk="LIMA_HOME=\"$lima\" limactl disk delete --force \"$id\""
+    printf '%s\n' "${one} delete --force && ${disk} && ${one} start --disk 100"
   }
   colima_clean_env=(-u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME)
 
@@ -6539,6 +6561,81 @@ EOF
     || dash_status=$?
   [[ "$dash_status" -eq 2 ]] \
     || fail "a profile name starting with '-' was accepted (status $dash_status)"
+
+  # The flag, config directory, and disk id name one Lima instance.
+  # colima-default and colima-colima stay distinct from the default instance.
+  # work and colima-work share the config directory and disk id, and the
+  # printed --profile keeps whichever string was set.
+  profile_map_root="$colima_disk_root/profile-map"
+  rm -rf "$profile_map_root"
+  mkdir -p \
+    "$profile_map_root/default" \
+    "$profile_map_root/work" \
+    "$profile_map_root/colima" \
+    "$profile_map_root/_lima/_disks/colima" \
+    "$profile_map_root/_lima/_disks/colima-default" \
+    "$profile_map_root/_lima/_disks/colima-work" \
+    "$profile_map_root/_lima/_disks/colima-colima"
+  printf 'runtime: docker\ndisk: 100\n' >"$profile_map_root/default/colima.yaml"
+  printf 'runtime: docker\ndisk: 100\n' >"$profile_map_root/work/colima.yaml"
+  printf 'runtime: docker\ndisk: 100\n' >"$profile_map_root/colima/colima.yaml"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima/datadisk"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-default/datadisk"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-work/datadisk"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-colima/datadisk"
+  assert_profile_reads() {
+    local input="$1" flag="$2" short="$3" id="$4" lack="$5"
+    local status=0 config disk cmd
+    config="$(
+      env -u LIMA_HOME -u XDG_CONFIG_HOME \
+        HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+        bash -c ". home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_resolve && printf '%s\n' \"\$GW_COLIMA_CONFIG\""
+    )"
+    [[ "$config" == "$profile_map_root/$short/colima.yaml" ]] \
+      || fail "COLIMA_PROFILE=$input config was '$config', expected $short/colima.yaml"
+    disk="$(
+      env -u LIMA_HOME -u XDG_CONFIG_HOME \
+        HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+        bash -c ". home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_resolve && printf '%s\n' \"\$GW_COLIMA_DATADISK\""
+    )"
+    [[ "$disk" == "$profile_map_root/_lima/_disks/$id/datadisk" ]] \
+      || fail "COLIMA_PROFILE=$input datadisk was '$disk', expected disk $id"
+    status=0
+    env -u LIMA_HOME -u XDG_CONFIG_HOME \
+      HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+      bash -c '. home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_instance_lacks_data_disk' \
+      || status=$?
+    [[ "$status" -eq "$lack" ]] \
+      || fail "COLIMA_PROFILE=$input disk status was $status, expected $lack"
+    if [[ "$lack" -eq 0 ]]; then
+      cmd="$(
+        env -u LIMA_HOME -u XDG_CONFIG_HOME \
+          HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+          bash -c '. home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_recovery_command'
+      )"
+      [[ "$cmd" == "$(colima_recovery_line "$profile_map_root" "$flag")" ]] \
+        || fail "COLIMA_PROFILE=$input recovery was '$cmd'"
+      case "$cmd" in
+        *"|| true"*) fail "COLIMA_PROFILE=$input recovery hid a disk-delete failure" ;;
+      esac
+    fi
+  }
+  : >"$profile_map_root/_lima/_disks/colima-default/datadisk"
+  assert_profile_reads colima-default colima-default default colima-default 0
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-default/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima/datadisk"
+  assert_profile_reads colima-default colima-default default colima-default 1
+  printf 'x' >"$profile_map_root/_lima/_disks/colima/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima-colima/datadisk"
+  assert_profile_reads colima-colima colima-colima colima colima-colima 0
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-colima/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima/datadisk"
+  assert_profile_reads colima-colima colima-colima colima colima-colima 1
+  printf 'x' >"$profile_map_root/_lima/_disks/colima/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima-work/datadisk"
+  assert_profile_reads work work work colima-work 0
+  assert_profile_reads colima-work colima-work work colima-work 0
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-work/datadisk"
   rm -rf "$update_all_home/.colima" "$colima_disk_root"
 
   doctor_colima_home="$update_all_fixture/colima-doctor-home"
@@ -13389,7 +13486,7 @@ SH
     >"$out_dir/doctor-down-colima-disk" 2>&1
   grep -qF 'This Colima instance has no Docker data disk.' "$out_dir/doctor-down-colima-disk" \
     || fail "doctor did not report a zero Colima disk while the daemon was down"
-  grep -qF "LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" delete --force && (LIMA_HOME=\"$docker_home/.colima/_lima\" limactl disk delete \"colima\" || true) && LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" start --disk 100" \
+  grep -qF "LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" delete --force && LIMA_HOME=\"$docker_home/.colima/_lima\" limactl disk delete --force \"colima\" && LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" start --disk 100" \
     "$out_dir/doctor-down-colima-disk" \
     || fail "doctor did not print the Colima home, profile, and data-disk delete it read"
   grep -qF 'Docker daemon not reachable; skipping Docker checks.' "$out_dir/doctor-down-colima-disk"
