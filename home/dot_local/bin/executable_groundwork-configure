@@ -140,10 +140,10 @@ config_digest_open="$(cksum <"$config_path")"
 # key                  label                 kind    clearable
 # Every mutable field is offered here even when bootstrap deliberately does not
 # ask it. home/.chezmoi.toml.tmpl preserves stored values on every platform.
-fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode obsidian_vault_name signingkey git_identity personal_apps work_extensions)
-fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions")
-fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool string string identity bool bool)
-fields_clear=(no no no no no no no no no no yes no no yes yes no no no)
+fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway)
+fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway")
+fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool string string identity bool bool bool)
+fields_clear=(no no no no no no no no no no yes no no yes yes no no no no)
 
 posture_values=(current preview)
 posture_labels=("Stable channels (managed browser: Google Chrome stable)" "Preview channels (managed browser stays Google Chrome stable)")
@@ -310,6 +310,9 @@ edit_field() { # index
   cur="$(current_value "$key")"
   echo
   echo "Changing: ${fields_label[i]}  (currently: $(display_of "$key" "$kind"))"
+  if [[ "$key" == "imessage_gateway" ]]; then
+    echo "  This applies only on a desktop Mac. Linux, WSL, a headless Mac, and Omarchy keep the saved answer and do not change Remote Login or sleep."
+  fi
   case "$kind" in
     bool)
       local defword
@@ -397,7 +400,7 @@ data.pop("chezmoi", None)
 pending = {}
 for arg in sys.argv[4:]:
     k, _, v = arg.partition("=")
-    if k in ("personal_apps", "work_extensions") or isinstance(data.get(k), bool):
+    if k in ("personal_apps", "work_extensions", "imessage_gateway") or isinstance(data.get(k), bool):
         pending[k] = (v == "true")
     else:
         pending[k] = v

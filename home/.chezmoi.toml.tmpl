@@ -185,6 +185,17 @@ bootstrap. Preserve an existing answer; a fresh install stays stable. */ -}}
 {{- if hasKey . "beta" -}}
 {{- $beta = .beta -}}
 {{- end -}}
+{{- /* iMessage gateway is a mutable desktop-Mac role. groundwork-configure owns
+the change, so bootstrap never asks, including on Linux, WSL, and headless
+profiles. Default false, which is also what an existing machine gets before
+the key exists. A stored bool is copied through on every platform; apply hooks
+honor it only on a graphical Mac. */ -}}
+{{- $imessageGateway := false -}}
+{{- if hasKey . "imessage_gateway" -}}
+{{- if kindIs "bool" .imessage_gateway -}}
+{{- $imessageGateway = .imessage_gateway -}}
+{{- end -}}
+{{- end -}}
 
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 
@@ -214,6 +225,7 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     game_dev = {{ $gameDev }}
     xcode = {{ $xcode }}
     beta = {{ $beta }}
+    imessage_gateway = {{ $imessageGateway }}
 
 [edit]
     command = "nvim"
