@@ -4812,6 +4812,69 @@ PY
     || fail "a verified unindexed App Store update left the Mac App Store lane pending"
   rm -f "$update_all_home"/.mas-updated-*
 
+  check "update-all verifies a Data-volume Spotlight path from the applications directory"
+  # mas 7 emits kMDItemPath as /System/Volumes/Data plus the applications
+  # directory. The bundle exists only at the applications-directory child.
+  mas_ddg_data_path="/System/Volumes/Data${GROUNDWORK_APPLICATIONS_DIR}/DuckDuckGo.app"
+  mas_ddg_data_pre="$(python3 -c 'import json,sys; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":sys.argv[1]}))' "$mas_ddg_data_path")"
+  [[ ! -e "$mas_ddg_data_path" ]] \
+    || fail "the Data-volume fixture must not create the Spotlight path"
+  test -d "$ddg_app" \
+    || fail "the Data-volume fixture lost the applications-directory bundle"
+  : >"$update_all_log"
+  if ! run_fixture_pty "$update_all_fixture/darwin-mas-data-volume" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_data_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    ; then
+    cat "$update_all_fixture/darwin-mas-data-volume" >&2
+    fail "a Data-volume Spotlight path was not verified from the applications directory"
+  fi
+  grep -qF 'changed from 1.211.0 to 1.212.0; the bundle identifier matches and the Mac App Store receipt is a non-empty regular file.' \
+    "$update_all_fixture/darwin-mas-data-volume" \
+    || fail "a Data-volume Spotlight path was not verified from its bundle"
+  [[ "$(grep -c "^mdimport $ddg_app$" "$update_all_log")" -eq 1 ]] \
+    || fail "a Data-volume Spotlight path was not reindexed at the applications-directory child"
+  assert_not_contains "^mdimport /System/Volumes/Data" "$update_all_log" \
+    "bundle verification opened the Spotlight Data-volume path"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a verified Data-volume path left the Mac App Store lane pending"
+  rm -f "$update_all_home"/.mas-updated-*
+
+  check "update-all rejects a Data-volume path outside the applications directory"
+  # The applications-directory bundle is a valid target-version app. Accepting
+  # any Data-volume parent and then opening that basename would verify it.
+  mas_ddg_other_pre="$(python3 -c 'import json; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":"/System/Volumes/Data/Other/DuckDuckGo.app"}))')"
+  : >"$update_all_log"
+  mas_data_other_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-data-volume-other" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_other_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_data_other_exit=$?
+  [[ "$mas_data_other_exit" -ne 0 ]] \
+    || fail "a Data-volume path outside the applications directory produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-data-volume-other" \
+    || fail "a Data-volume path outside the applications directory was not lost identity"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-data-volume-other" \
+    "a Data-volume path outside the applications directory was verified"
+  assert_not_contains '^mdimport ' "$update_all_log" \
+    "a Data-volume path outside the applications directory was opened"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a rejected Data-volume path left no Mac App Store retry record"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
   rm -rf -- "$ddg_app"
   : >"$update_all_log"
   mas_missing_bundle_exit=0
@@ -4905,6 +4968,34 @@ PY
     "a mismatched bundle version failed package-manager maintenance"
   test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
     || fail "a mismatched bundle version left no Mac App Store retry record"
+  rm -rf -- "$ddg_app"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  check "update-all rejects an unindexed bundle still at its previous version"
+  rm -rf -- "$ddg_app"
+  write_mas_bundle "$ddg_app" com.duckduckgo.macos.browser 1.211.0
+  : >"$update_all_log"
+  mas_previous_version_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-previous-version" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_previous_version_exit=$?
+  [[ "$mas_previous_version_exit" -ne 0 ]] \
+    || fail "a bundle still at its previous version produced a false complete result"
+  grep -qF 'is still at 1.211.0; the bundle was not updated to 1.212.0.' \
+    "$update_all_fixture/darwin-mas-bundle-previous-version" \
+    || fail "a bundle still at its previous version did not keep the still-at failure"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-bundle-previous-version" \
+    "a bundle still at its previous version was reported as verified"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a bundle still at its previous version left no Mac App Store retry record"
   rm -rf -- "$ddg_app"
   rm -f "$update_all_home"/.mas-updated-* \
     "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"

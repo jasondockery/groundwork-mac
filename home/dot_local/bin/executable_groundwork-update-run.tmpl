@@ -1456,18 +1456,28 @@ if command -v mas >/dev/null 2>&1; then
     fi
   }
   # A bundle path is usable only when mas recorded a safe bundle id and an
-  # absolute .app directly inside the applications directory. This rejects
-  # traversal, a symlink, and any path outside the directory Groundwork
-  # already accepted at startup.
+  # absolute .app that is the direct child of the applications directory.
+  # Spotlight's kMDItemPath names that same child through the Data volume
+  # firmlink, /System/Volumes/Data plus the applications directory. Traversal,
+  # a double slash, and every other parent stay rejected. Callers open the
+  # applications-directory child, never the mas string itself.
   mas_bundle_candidate() {
-    local bundle_id="$1" path="$2" base
+    local bundle_id="$1" path="$2" base canonical
     [[ "$bundle_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
     [[ "$path" =~ ^/[^[:cntrl:]]+$ ]] || return 1
     [[ "$path" == *.app ]] || return 1
     [[ "$path" == */../* || "$path" == */.. || "$path" == *//* ]] && return 1
     base="${path##*/}"
-    [[ "$base" == *.app && "$path" == "$applications_dir/$base" ]] || return 1
+    [[ "$base" == *.app ]] || return 1
+    canonical="$applications_dir/$base"
+    [[ "$path" == "$canonical" || "$path" == "/System/Volumes/Data$canonical" ]] || return 1
     return 0
+  }
+  mas_bundle_open_path() {
+    local path="$2" base
+    mas_bundle_candidate "$1" "$path" || return 1
+    base="${path##*/}"
+    printf '%s\n' "$applications_dir/$base"
   }
   # 0 and a version on stdout: same bundle id, and a non-empty regular
   # receipt reached without a symlink at Contents, Info.plist, _MASReceipt,
@@ -1475,10 +1485,10 @@ if command -v mas >/dev/null 2>&1; then
   # changed, 12 receipt missing, empty, or not a regular file, 13 the bundle
   # could not be read. A receipt the App Store replaced is still valid.
   mas_read_bundle_version() {
-    local expected_id="$1" path="$2" plist bundle_id version receipt contents receipt_dir
-    mas_bundle_candidate "$expected_id" "$path" || return 10
-    [[ ! -L "$path" && -d "$path" ]] || return 10
-    contents="$path/Contents"
+    local expected_id="$1" path="$2" plist bundle_id version receipt contents receipt_dir open_path
+    open_path="$(mas_bundle_open_path "$expected_id" "$path")" || return 10
+    [[ ! -L "$open_path" && -d "$open_path" ]] || return 10
+    contents="$open_path/Contents"
     [[ ! -L "$contents" && -d "$contents" ]] || return 10
     plist="$contents/Info.plist"
     [[ ! -L "$plist" && -f "$plist" ]] || return 10
@@ -1782,12 +1792,15 @@ if command -v mas >/dev/null 2>&1; then
           "$mas_installed_items")"
         mas_pre_path="$(awk -F '\t' -v wanted="$mas_id" '$1 == wanted { print $5; exit }' \
           "$mas_installed_items")"
-        if mas_bundle_candidate "$mas_pre_bundle" "$mas_pre_path" \
-          && [[ ! -L "$mas_pre_path" && -d "$mas_pre_path" ]]; then
+        mas_open_path=""
+        if mas_bundle_candidate "$mas_pre_bundle" "$mas_pre_path"; then
+          mas_open_path="$(mas_bundle_open_path "$mas_pre_bundle" "$mas_pre_path")"
+        fi
+        if [[ -n "$mas_open_path" && ! -L "$mas_open_path" && -d "$mas_open_path" ]]; then
           if command -v mdimport >/dev/null 2>&1; then
             mas_import_status=0
             run_bounded_internal "reindex $mas_name for Mac App Store verification" \
-              "$mas_observe_deadline" "" mdimport "$mas_pre_path" || mas_import_status=$?
+              "$mas_observe_deadline" "" mdimport "$mas_open_path" || mas_import_status=$?
             case "$mas_import_status" in
               125 | 129 | 130 | 143) exit "$mas_import_status" ;;
             esac
