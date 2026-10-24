@@ -3,9 +3,10 @@
 # destroys that instance's container data. See docs/docker-desktop-to-colima.md.
 #
 # Settings that differ from Colima's defaults are pinned, each with a reason.
-# runtime and disk match those defaults and are still pinned: Colima reads this
-# file as the whole configuration for a new instance, so an omitted key arrives
-# empty or zero instead of the default. Containers should run at native speed:
+# runtime, disk, and sshConfig match Colima's CLI defaults and are still
+# pinned: Colima reads this file as the whole configuration for a new instance,
+# so an omitted key arrives empty, zero, or false instead of the default.
+# Containers should run at native speed:
 # vz is Apple's virtualization framework (faster, lower energy than qemu),
 # virtiofs is the fastest bind-mount option, and Rosetta, when it is already
 # installed, accelerates the rare amd64-only image on Apple Silicon instead of
@@ -18,7 +19,12 @@ runtime: docker
 disk: 100
 vmType: vz
 mountType: virtiofs
+# Propagate inotify events into the VM. Colima's default is false, so editors
+# and test runners watching a virtiofs mount would not see host writes.
 mountInotify: true
+# Pinned to Colima's CLI default. An omitted plain bool is read as false and
+# copied over that default, which would stop generating ~/.ssh/config.
+sshConfig: true
 {{ if eq .chezmoi.arch "arm64" -}}
 {{ if stat "/Library/Apple/usr/libexec/oah/libRosettaRuntime" -}}
 rosetta: true
