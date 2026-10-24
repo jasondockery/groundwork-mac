@@ -14732,10 +14732,10 @@ if "minimumReleaseAge" in renovate_config:
 post_upgrade = renovate_config.get("postUpgradeTasks")
 if post_upgrade != {
     "commands": ["node tools/sync-toolchain.mjs"],
-    "fileFilters": [".node-version", ".nvmrc", "mise.toml", "package.json"],
+    "fileFilters": [".nvmrc", "mise.toml", "package.json"],
     "executionMode": "branch",
 }:
-    raise SystemExit("postUpgradeTasks must list only the Node adapters sync-toolchain rewrites")
+    raise SystemExit("postUpgradeTasks fileFilters must list only the files sync-toolchain writes")
 mise_config = tomllib.loads((root / "home/dot_config/mise/config.toml").read_text(encoding="utf-8"))
 if mise_config.get("tools", {}).get("node") != "lts":
     raise SystemExit("the managed mise config must keep node on the lts alias")

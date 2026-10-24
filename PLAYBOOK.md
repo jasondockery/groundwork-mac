@@ -35,8 +35,14 @@ What Renovate manages here:
   also refuses a bump if `3.12` is ever the extracted value. `node = "lts"` in
   that file is extracted and then disabled, so it does not become a numbered
   release. `.nvmrc` and the repository `mise.toml` stay ignored because
-  `tools/sync-toolchain.mjs` rewrites them from `.node-version`. That task's
-  fileFilters stay those Node adapters. A Python edit does not run it.
+  `tools/sync-toolchain.mjs` rewrites them from `.node-version`. With
+  `executionMode: "branch"`, Renovate 44.23.0 runs
+  `node tools/sync-toolchain.mjs` once on any branch that changes a package
+  file, including `home/dot_config/mise/config.toml`. `fileFilters` is only
+  the allowlist of files committed after the command runs. The command reads
+  `.node-version` and rewrites `.nvmrc`, `mise.toml`, and `package.json`. It
+  leaves the Python array alone and adds nothing when those already match.
+  The allowlist is those three files.
   Python line-bump Dependency Dashboard approval is not a local rule. It
   depends on preset `github>jasondockery/renovate-config#1.1.0`, which is not
   tagged yet, so this repo still extends `#1.0.0`.
