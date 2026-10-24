@@ -28,9 +28,10 @@ Usage:
 
 Postures:
   current   Latest stable release of each application. The default.
-  preview   Pre-release channel where an application has one (for the managed
-            browser: Chrome Beta, with stable Chrome retained as a fallback).
-            Expect occasional breakage.
+            Desktop Macs install Google Chrome stable.
+  preview   Pre-release posture for families that have a preview channel.
+            The managed browser stays Google Chrome stable.
+            Expect occasional breakage where a preview channel is selected.
 
 Fixed in every profile, and not settable here:
   - AI tools are kept current with no intentional delay.
@@ -108,12 +109,8 @@ headless={{ if .headless }}true{{ else }}false{{ end }}
 xcode={{ if and (hasKey . "xcode") .xcode }}true{{ else }}false{{ end }}
 stored_beta={{ if and (hasKey . "beta") .beta }}true{{ else }}false{{ end }}
 browser="Google Chrome stable"
-browser_fallback="none"
 if [[ "$headless" == "true" ]]; then
   browser="none (headless)"
-elif [[ "$posture" == "preview" ]]; then
-  browser="Google Chrome Beta"
-  browser_fallback="Google Chrome stable"
 fi
 
 # The system channel is DETECTED and reported, never set. A deliberate OS beta
@@ -155,7 +152,6 @@ case "$command" in
     fi
     printf '  Desktop apps      %s\n' "$([[ "$headless" == "true" ]] && echo "no (headless)" || echo yes)"
     printf '  Managed browser   %s\n' "$browser"
-    [[ "$browser_fallback" == "none" ]] || printf '  Browser fallback  %s\n' "$browser_fallback"
     printf '  System channel    %s\n' "$(detect_system_channel)"
     echo
     echo "Always current, regardless of posture:"

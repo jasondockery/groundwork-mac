@@ -140,7 +140,7 @@
       <h2 id="configuration-boundary"><span class="hash" aria-hidden="true">#</span>What Groundwork can configure</h2>
       <p>Groundwork should only automate settings that live in stable files, templates, or documented macOS defaults. Many Mac apps keep their real state in app databases, account sync, Keychain, iCloud, or per-device stores; those should stay in the app that owns them.</p>
       <table class="keytable">
-        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, the profile-selected Chrome channel, Chrome password-manager policy, browser/Raycast extension checklists, and Obsidian vault/plugin seed files.</td></tr>
+        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, Google Chrome stable, the one Chrome password-manager setting described below, browser/Raycast extension checklists, and Obsidian vault/plugin seed files.</td></tr>
         <tr><td><strong>Use app sync/export</strong></td><td>Raycast aliases, hotkeys, snippets, Quicklinks, and extensions belong in Raycast Cloud Sync if available on your plan, or Raycast export/import. Anybox links, folders, tags, Smart Lists, Quick Links, snippets, and Anydock profiles sync through iCloud. Chrome Sync is optional and owned by your Google account.</td></tr>
         <tr><td><strong>Manual by design</strong></td><td>App Store purchases, sign-in, password-manager unlock, API keys, SSH-agent approval, default-browser confirmation, macOS privacy prompts, display presets, and app-level hotkeys that depend on your hands, monitors, and existing shortcuts.</td></tr>
       </table>
@@ -162,14 +162,17 @@
       </table>
       <p>The daily loop is short: save a page to Anybox with <code>as</code> or the browser extension, leave it in Unsorted when you are busy, and retrieve it with <code>ab</code>. Once a week, empty Unsorted, remove dead or duplicated links, and demote anything that no longer deserves space in Chrome or a Raycast Quicklink.</p>
 
-      <h2><span class="hash" aria-hidden="true">#</span>Browsers</h2>
+      <h2 id="browsers"><span class="hash" aria-hidden="true">#</span>Browsers</h2>
       <table class="keytable">
-        <tr><td><strong>Chrome stable</strong></td><td>The managed default for Personal Current and Work Managed. Preview profiles retain it as a compatibility fallback.</td></tr>
-        <tr><td><strong>Chrome Beta</strong></td><td>The managed primary browser for Personal Preview and Disposable Experimental on a desktop Mac. It installs beside stable Chrome.</td></tr>
+        <tr><td><strong>Chrome stable</strong></td><td>The managed browser on every desktop Mac posture: current, preview, Xcode, and work-managed. Headless profiles install no GUI browser. Release posture does not change this choice.</td></tr>
       </table>
       <div class="callout note">
         <span class="label">Installed is not the same as default</span>
-        <p>Groundwork installs the Chrome channel selected by your release posture. It never changes the macOS default-browser association: that confirmation remains your decision. Organization and device policy outrank the profile on managed machines.</p>
+        <p>Groundwork installs Google Chrome stable. It never changes the macOS default-browser association: that confirmation remains your decision. Organization and device policy outrank the profile on managed machines.</p>
+      </div>
+      <div class="callout note">
+        <span class="label">Chrome Beta is no longer managed</span>
+        <p>Groundwork does not install Chrome Beta, write its settings, or uninstall it. If Google Chrome Beta is already on the Mac, the app and its data stay until you remove them. To remove the Homebrew cask by hand, run <code>brew uninstall --cask google-chrome@beta</code>. That removes the app cask and leaves unrelated personal files alone. Add <code>--zap</code> only after you inspect the cask and mean to delete its preferences and caches too. <code>groundwork-doctor --browser</code> notes an installed Beta cask and does not remove it.</p>
       </div>
       <div class="callout note">
         <span class="label">Chrome Sync is optional</span>
@@ -192,7 +195,7 @@
       <table class="keytable">
         <tr><td><strong>SSH agent</strong></td><td>Sign in to the desktop app, then enable its SSH agent. Bitwarden: Settings → enable SSH agent. 1Password: Settings → Developer → Use the SSH agent. If commits stop signing, unlock the app and retry. See <a href="git.html">Git</a> for the signing flow.</td></tr>
         <tr><td><strong>macOS + Safari</strong></td><td>System Settings → General → AutoFill &amp; Passwords: turn on Bitwarden and turn off Passwords/iCloud Keychain if Bitwarden is the source of truth.</td></tr>
-        <tr><td><strong>Chrome</strong></td><td>Install the Bitwarden extension, sign in, and pin it. Groundwork turns off Chrome's built-in password manager on Stable, and on Beta when the profile manages Beta. Confirm it at chrome://policy.</td></tr>
+        <tr><td><strong>Chrome</strong></td><td>Install the Bitwarden extension, sign in, and pin it. When you chose Bitwarden or 1Password, Groundwork turns off Chrome's built-in password manager in Google Chrome stable. Chrome leaves that manager on; this is the only Chrome setting Groundwork writes, so the built-in manager does not compete with the one you chose. Confirm it at chrome://policy. Chrome Beta is not managed, so this setting is not written there.</td></tr>
         <tr><td><strong>iOS / iPadOS</strong></td><td>Install Bitwarden, sign in, then Settings → General → AutoFill &amp; Passwords: enable Bitwarden and disable Passwords if you want the same source of truth on mobile.</td></tr>
       </table>
 
@@ -231,7 +234,7 @@
       <table class="keytable">
         <tr><td><strong>Clipboard history</strong></td><td>Search Clipboard History inside the launcher; leave its global hotkey empty</td></tr>
         <tr><td><strong>Window management</strong></td><td>Search a window command inside Raycast if needed; leave global hotkeys empty</td></tr>
-        <tr><td><strong>Quicklinks</strong></td><td>Keep roughly five to ten exact destinations or parameterized searches you open constantly. Add a <code>daily</code> tag and choose <strong>Open With → the Chrome channel selected by your Groundwork profile</strong>, either Google Chrome or Google Chrome Beta. In <strong>Raycast Settings → Quicklinks</strong>, enable the global <strong>Prefer Existing Tabs</strong> setting to reuse matching open tabs instead of creating duplicates.</td></tr>
+        <tr><td><strong>Quicklinks</strong></td><td>Keep roughly five to ten exact destinations or parameterized searches you open constantly. Add a <code>daily</code> tag and choose <strong>Open With → Google Chrome</strong>. In <strong>Raycast Settings → Quicklinks</strong>, enable the global <strong>Prefer Existing Tabs</strong> setting to reuse matching open tabs instead of creating duplicates.</td></tr>
         <tr><td><strong>Aliases &amp; hotkeys</strong></td><td>Use typed aliases inside the launcher. Keep its only global hotkey on Cmd+Space</td></tr>
         <tr><td><strong>Extensions</strong></td><td>Add from the Store — Browser Bookmarks, Browser Tabs, GitHub, Homebrew, Anybox, the VS Code project opener — and search them right from the bar</td></tr>
       </table>
@@ -373,8 +376,8 @@ font-family = JetBrainsMono Nerd Font</code></pre>
       <div class="drill">
         <div class="num">2</div>
         <div class="body">
-          <h3>Confirm the managed Chrome channel</h3>
-          <p>Run <code>groundwork-profile show</code>. Current and Work Managed use Chrome stable; preview profiles use Chrome Beta and retain stable as a fallback. If you want to change the macOS default browser, run <code>defaultbrowser</code> and make that separate choice yourself.</p>
+          <h3>Confirm the managed browser</h3>
+          <p>Run <code>groundwork-profile show</code>. Every desktop Mac posture reports Google Chrome stable. If you want to change the macOS default browser, run <code>defaultbrowser</code> and make that separate choice yourself. An older Chrome Beta install stays in place; remove it with <code>brew uninstall --cask google-chrome@beta</code> when you want it gone.</p>
         </div>
       </div>
       <div class="drill">
