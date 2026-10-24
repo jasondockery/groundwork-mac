@@ -5,8 +5,9 @@ set -euo pipefail
 # fills only a missing command, into ~/.local/bin, and only when no Herdr is
 # already on PATH outside that directory. Shell startup puts ~/.local/bin
 # first, so an older fallback there would hide a newer Homebrew binary.
-# update-all sets GROUNDWORK_UPDATE_SCOPE=maintenance before chezmoi apply;
-# that is the only path that runs `herdr update`, and only for the fallback.
+# update-all sets GROUNDWORK_UPDATE_SCOPE=maintenance before chezmoi apply.
+# That is the only path that runs `herdr update`, and it runs for any regular
+# file at ~/.local/bin/herdr when Homebrew does not provide Herdr.
 
 homebrew_prefix=""
 for brew_bin in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
@@ -76,6 +77,11 @@ version_le() {
 }
 
 if [[ -n "$homebrew_herdr" ]]; then
+  if [[ -L "$local_herdr" ]]; then
+    printf 'Preserving symlink %s; it shadows Homebrew Herdr and was not removed.\n' \
+      "$local_herdr" >&2
+    exit 1
+  fi
   if [[ -x "$local_herdr" ]]; then
     require_deadline
     local_version="$(herdr_release_version "$local_herdr")"
@@ -130,8 +136,8 @@ if [[ -e "$local_herdr" || -L "$local_herdr" ]]; then
   fi
   if [[ "${GROUNDWORK_UPDATE_SCOPE:-}" == maintenance ]]; then
     require_deadline
-    echo "Updating the installer-managed Herdr in ~/.local/bin (five-minute deadline)."
-    "$deadline" --kill-after=5s 300 "$local_herdr" update
+    echo "Updating the regular file ~/.local/bin/herdr (five-minute deadline)."
+    "$deadline" --kill-after=5s 300 "$local_herdr" update </dev/null
     "$deadline" --kill-after=5s 15 "$local_herdr" --version
   fi
   exit 0

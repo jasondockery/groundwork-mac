@@ -214,7 +214,7 @@
       "canonical": "Dockerfile and headless installer scripts",
       "agePolicy": "unsupported-by-renovate",
       "compensatingControl": "Installers use bounded official release discovery, published checksum verification where available, and disposable image proof.",
-      "note": "Headless release assets are not static Renovate edit targets. Missing Herdr uses the bounded official stable installer, which requires the release manifest's SHA-256 digest, only when Homebrew cannot provide the formula. A fallback binary in ~/.local/bin is removed when a Homebrew Herdr is the same version or newer, so it cannot shadow that binary. Existing package-managed installs stay with their package manager. update-all runs herdr update only for the installer-managed fallback."
+      "note": "Headless release assets are not static Renovate edit targets. Missing Herdr uses the bounded official stable installer, which requires the release manifest's SHA-256 digest, only when Homebrew cannot provide the formula. A fallback binary in ~/.local/bin is removed when a Homebrew Herdr is the same version or newer, so it cannot shadow that binary. Existing package-managed installs stay with their package manager. update-all runs herdr update for any regular file at ~/.local/bin/herdr when Homebrew does not provide the formula."
     }
   ]
 }

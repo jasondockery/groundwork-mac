@@ -521,8 +521,9 @@ grep -qF 'Herdr (recommended; Apache-2.0)' "$repo/home/dot_local/bin/executable_
 assert_absent 'github.com/ogulcancelik/herdr' "$repo/home/.chezmoi.toml.tmpl"
 assert_absent 'AGPL-3.0' "$repo/home/dot_local/bin/executable_groundwork-configure"
 
-# Agent hooks are explicit, literal-consent operations and delegate only the
-# two supported tools detected on PATH. No apply hook invokes them.
+# Agent hooks are explicit, literal-consent operations and delegate claude,
+# codex, opencode, grok, and cursor when those tools are detected. No apply
+# hook invokes them.
 render herdr darwin "$repo/home/dot_local/bin/executable_groundwork-herdr-integrations.tmpl" "$tmp/integrations"
 chmod +x "$tmp/integrations"
 mkdir -p "$tmp/integration-bin" "$tmp/integration-home/.claude" "$tmp/integration-home/.codex"

@@ -232,6 +232,20 @@ INSTALL''')
                 self.assertFalse(local.exists(), result.stdout + result.stderr)
                 self.assertIn("Homebrew Herdr 0.9.5 stays on PATH", result.stdout)
 
+    def test_homebrew_herdr_symlink_is_not_removed(self):
+        self.herdr_stubs()
+        self.stub("curl", "exit 98")
+        local = self.home / ".local/bin/herdr"
+        target = self.home / "elsewhere/herdr"
+        self.write_versioned_herdr(target, "0.9.4")
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.symlink_to(target)
+        result = self.run_script(self.render_herdr(brew=self.brew_herdr("0.9.5")))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(local.is_symlink(), result.stdout + result.stderr)
+        self.assertEqual(local.resolve(), target.resolve())
+        self.assertIn("shadows Homebrew", result.stderr)
+
     def test_newer_direct_herdr_is_not_downgraded(self):
         self.herdr_stubs()
         self.stub("curl", "exit 98")
@@ -253,7 +267,7 @@ INSTALL''')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(local.exists())
         self.assertNotIn("update", (self.home / "brew-args").read_text())
-        self.assertNotIn("Updating the installer-managed Herdr", result.stdout)
+        self.assertNotIn("Updating the regular file ~/.local/bin/herdr", result.stdout)
 
     def test_update_all_runs_herdr_update_for_the_direct_install(self):
         self.herdr_stubs()
@@ -271,7 +285,7 @@ INSTALL''')
         result = self.run_script(rendered)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("update\n", (self.home / "herdr-args").read_text())
-        self.assertIn("Updating the installer-managed Herdr", result.stdout)
+        self.assertIn("Updating the regular file ~/.local/bin/herdr", result.stdout)
 
     def test_unusable_local_herdr_is_preserved_before_network(self):
         self.herdr_stubs()
