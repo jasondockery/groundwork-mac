@@ -253,13 +253,16 @@ cannot say that.
 ```text
 bundle_identifier              (prefer over literal /Applications paths)
 application discovery strategy
-native preference domain
+native settings location
 coexistence group
 installed-version probe
 available-version probe
 health verification command
 platform requirements
 ```
+
+The universal catalog field is a **native settings location**. Chrome's is its
+preference domain. The editor path stays rendered files.
 
 Values verified 2026-08-04 through Homebrew cask metadata: `google-chrome`
 installs `Google Chrome.app`, and `google-chrome@beta` installs `Google Chrome
@@ -290,9 +293,10 @@ but is **not** in this specification. It adds indirection on the most
 critical path a developer has, breaks muscle memory and anything that shells
 out to `code`, and introduces a failure point between the user and their
 editor. Setting `$EDITOR`/`$VISUAL` to a resolver is the lower-risk half and
-can come first if a real need appears. Build the catalog and per-channel
-preference-domain writes first; add resolvers when something demonstrably
-needs them.
+can come first if a real need appears. Build the catalog and each family's
+native settings location first; add resolvers when something demonstrably
+needs them. Chrome's native settings location is its preference domain. The
+editor path stays rendered files.
 
 ## Settings: primary channel only
 
@@ -300,13 +304,22 @@ Writing shared preferences to *every* installed channel's preference domain
 doubles the drift surface for a fallback the user rarely opens.
 
 **Only the primary channel receives Groundwork-managed configuration.** A
-retained stable fallback is installed but unmanaged. If the user later promotes
-the fallback to primary, the profile change plan writes its preference domain
-then.
+retained stable fallback is installed but unmanaged, except the one
+password-manager key below, which is written to every managed Chrome domain.
+If the user later promotes the fallback to primary, the profile change plan
+writes its preference domain then.
 
 Where a family needs channel-specific values, write them to that channel's own
-preference domain, the way Groundwork already configures Chrome with
-`defaults write`:
+native settings location. The current Chrome write uses `com.google.Chrome`:
+
+```text
+defaults write com.google.Chrome PasswordManagerEnabled -bool false
+```
+
+A Beta primary uses `com.google.Chrome.beta`. When the profile manages Chrome
+Beta, that same key is written there too. Desktop profiles also keep the Stable
+key, so a preview fallback does not leave the built-in manager on. No other
+Chrome preference is written.
 
 ```text
 Stable:  com.google.Chrome
@@ -321,11 +334,11 @@ Promotion and demotion are explicit, never incidental:
 
 ```text
 promote a fallback to primary  → preserve its existing user data; show the
-                                 Groundwork-managed files that will be written;
+                                 preference-domain keys that will be written;
                                  merge or replace only per declared ownership;
                                  require confirmation
-demote the former primary      → stop managing its settings; preserve its files
-                                 and application data; never delete
+demote the former primary      → stop managing that preference domain; keep
+                                 its plist and profile data; never delete
 ```
 
 Distinguish an **installed** fallback from a **configured** one from a
