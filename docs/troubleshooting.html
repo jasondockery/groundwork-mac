@@ -244,6 +244,10 @@
       </div>
       <p>Indexing runs in the background and can take a few minutes on a large <code>/Applications</code>. Until it finishes, Groundwork reports the Mac App Store lane as <code>no-items-observed</code> rather than claiming your App Store apps are current.</p>
 
+      <h3>A Mac App Store app updated, then update-all says its identity changed</h3>
+      <p>After <code>mas update</code>, Spotlight sometimes has not indexed the new bundle yet. <code>mas</code> prints that the app is not indexed and that indexing will finish after <code>mas</code> exits, then the post-update list omits the app. Groundwork treats the bundle as the source of truth for that gap. It may run one bounded <code>mdimport</code> of that app and read <code>mas list</code> once more. If the app is still absent, the update counts as verified when the bundle is still at the path <code>mas</code> reported, <code>CFBundleIdentifier</code> is unchanged, <code>Contents/_MASReceipt/receipt</code> is a non-empty regular file, and the bundle version changed or already matches the target.</p>
+      <p><code>lost or changed its installed identity after update</code> is reserved for a bundle that is missing or incomplete, a bundle id that changed, or a receipt that is missing or empty. Replacing the receipt during an App Store update is expected. One Mac App Store verification result does not, by itself, mark Homebrew, npm, or pnpm maintenance incomplete. Retry the App Store lane with <code>update-all</code>. Use <code>groundwork-cleanup --yes</code> only when the receipt names Homebrew, npm, pnpm, or the maintenance helper.</p>
+
       <h3>Homebrew finds an existing app inside the Caskroom</h3>
       <p>An interrupted cask operation can leave an old app inside Homebrew&apos;s Caskroom. If the upgrade prints <code>Error: ... already an App at .../Caskroom/...</code> and then purges the new version, Groundwork reports the failed cask separately from warnings, keeps the update pending, and exits nonzero. It does not remove or reinstall the app automatically. Run the cask-specific commands Groundwork prints after reviewing the name:</p>
       <div class="terminal">

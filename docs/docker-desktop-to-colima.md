@@ -50,7 +50,7 @@ Replace the example image with your own. Do not use `docker compose down --volum
 
 ## 2. Install and start the common Mac runtime
 
-In `groundwork-configure`, select **Container backend → Colima + Docker CLI**, review the preview, and apply. Groundwork installs Colima, Docker CLI, Compose, Buildx, and the macOS credential helper. It adds the Homebrew CLI plugin directory to Docker’s existing configuration while preserving other settings. Existing Docker Desktop data stays in place.
+In `groundwork-configure`, select **Container backend → Colima + Docker CLI**, review the preview, and apply. Groundwork installs Colima, Docker CLI, Compose, Buildx, and the macOS credential helper. Its Docker config modify script adds the Homebrew CLI plugin directory only when that directory is missing, and sets `credsStore` to `osxkeychain` only when the key is absent. Existing `auths`, an existing `credsStore` (including `desktop`), `currentContext`, and every other key stay. When those two requirements are already satisfied, the file bytes are left unchanged, so a routine Docker Desktop or Colima rewrite does not make `update-all` prompt. Existing Docker Desktop data stays in place.
 
 For a Mac not yet using the updated Groundwork source, the equivalent package installation is:
 
@@ -59,7 +59,7 @@ brew update
 brew install colima docker docker-compose docker-buildx docker-credential-helper
 ```
 
-Follow the formula caveats to add Homebrew’s plugin directory to `cliPluginsExtraDirs` in `~/.docker/config.json` if `docker compose version` or `docker buildx version` cannot find its plugin. Preserve existing entries. Do not replace the whole Docker configuration.
+Follow the formula caveats to add Homebrew’s plugin directory to `cliPluginsExtraDirs` in `~/.docker/config.json` if `docker compose version` or `docker buildx version` cannot find its plugin. Preserve existing entries, including `auths` and `credsStore`. Do not replace the whole Docker configuration. Groundwork’s modify script follows that same rule: it merges only the plugin directory and a missing `credsStore`, and it does not rewrite the file when those keys are already present.
 
 After backups are complete, quit Docker Desktop to avoid competing workloads or published ports, then run:
 
@@ -75,6 +75,8 @@ docker buildx version
 `colima start` normally selects its context automatically. Review existing `DOCKER_HOST` and `DOCKER_CONTEXT` environment overrides if the CLI reaches the wrong engine. Prefer explicit contexts while moving data. Colima’s default socket is `~/.colima/default/docker.sock`; confirm it with `colima status`. Configure tools that require a socket through their supported settings instead of replacing `/var/run/docker.sock` globally. [Colima’s context and socket guidance](https://colima.run/docs/faq/#docker)
 
 Groundwork’s Colima template affects new instances. Use `colima start --edit` for an existing instance; deleting an instance to pick up configuration would delete its container data.
+
+When `~/.colima` already exists, Groundwork’s own `colima` commands set `COLIMA_HOME` to that directory so Colima does not warn that it is ignoring `XDG_CONFIG_HOME`. Groundwork does not move or delete `~/.colima`. It also does not install Rosetta when Colima warns that Rosetta is missing; that warning is expected for an arm64-only install.
 
 ## 3. Restore and verify one project at a time
 
@@ -121,7 +123,7 @@ After the vendor uninstaller finishes, move a remaining Docker application bundl
 
 **Keep `~/.docker`.** Colima and the Docker CLI share its contexts, plugins, and registry configuration. The vendor’s generic cleanup instructions include removing this directory; that is inappropriate when continuing to use Docker through Colima. Review Desktop-specific leftovers individually after backup instead of applying blanket cleanup or `--zap`.
 
-If `~/.docker/config.json` still selects `credsStore: "desktop"`, use the installed `osxkeychain` helper through Docker’s supported credential-store setting and sign back in to the required registries with `docker login`. Preserve unrelated `credHelpers` entries and do not publish this file or credentials. If Desktop removal broke command links, repair the independently managed tools:
+If `~/.docker/config.json` still selects `credsStore: "desktop"`, use the installed `osxkeychain` helper through Docker’s supported credential-store setting and sign back in to the required registries with `docker login`. Groundwork will not replace a `credsStore` you or Docker already wrote. Preserve unrelated `credHelpers` entries and `auths`, and do not publish this file or credentials. If Desktop removal broke command links, repair the independently managed tools:
 
 ```bash
 brew reinstall docker docker-compose docker-buildx docker-credential-helper

@@ -3352,7 +3352,40 @@ SH
   chmod +x "$update_all_bin/cp"
   cat >"$update_all_bin/plutil" <<'SH'
 #!/usr/bin/env bash
-case "${2:-}" in
+key=""
+plist=""
+if [[ "${1:-}" == "-extract" && "${3:-}" == "raw" && $# -ge 4 ]]; then
+  key="$2"
+  plist="$4"
+fi
+# A real Info.plist wins. An empty or non-plist file keeps the ChatGPT
+# defaults the adoption fixtures already depend on.
+if [[ -n "$plist" && -s "$plist" ]]; then
+  python_status=0
+  python3 - "$key" "$plist" <<'PY' || python_status=$?
+import plistlib
+import sys
+key, path = sys.argv[1], sys.argv[2]
+try:
+    with open(path, "rb") as handle:
+        data = plistlib.load(handle)
+except Exception:
+    sys.exit(2)
+if not isinstance(data, dict):
+    sys.exit(2)
+value = data.get(key)
+if not isinstance(value, str) or value == "":
+    sys.exit(1)
+sys.stdout.write(value + "\n")
+PY
+  if [[ "$python_status" -eq 0 ]]; then
+    exit 0
+  fi
+  if [[ "$python_status" -eq 1 ]]; then
+    exit 1
+  fi
+fi
+case "$key" in
   CFBundleIdentifier) printf '%s\n' "${CHATGPT_BUNDLE_ID:-com.openai.codex}" ;;
   CFBundleShortVersionString) printf '%s\n' "${CHATGPT_SHORT_VERSION:-26.803.81509}" ;;
   CFBundleVersion) printf '%s\n' "${CHATGPT_BUILD_VERSION:-81509}" ;;
@@ -3364,7 +3397,15 @@ SH
 #!/usr/bin/env bash
 printf '%s: Mach-O 64-bit executable arm64\n' "${1:-unknown}"
 SH
-  chmod +x "$update_all_bin/plutil" "$update_all_bin/file"
+  cat >"$update_all_bin/mdimport" <<'SH'
+#!/usr/bin/env bash
+[[ "$#" -eq 1 ]] || exit 64
+if [[ -n "${GROUNDWORK_TEST_LOG:-}" ]]; then
+  printf 'mdimport %s\n' "$1" >>"$GROUNDWORK_TEST_LOG"
+fi
+exit "${MDIMPORT_STATUS:-0}"
+SH
+  chmod +x "$update_all_bin/plutil" "$update_all_bin/file" "$update_all_bin/mdimport"
   cat >"$update_all_bin/groundwork-platform" <<'SH'
 #!/usr/bin/env bash
 echo "${FAKE_PLATFORM:-linux}"
@@ -3472,6 +3513,9 @@ exit 64
 SH
   cat >"$update_all_bin/colima" <<'SH'
 #!/usr/bin/env bash
+if [[ -n "${GROUNDWORK_TEST_LOG:-}" ]]; then
+  printf 'colima-env COLIMA_HOME=%s\n' "${COLIMA_HOME:-unset}" >>"$GROUNDWORK_TEST_LOG"
+fi
 if [[ "${1:-}" == start && "${2:-}" == --help ]]; then
   exit "${COLIMA_CAPABILITY_STATUS:-0}"
 fi
@@ -4703,6 +4747,134 @@ EOF
     "$update_all_home/.local/state/groundwork/receipts/update-all-maintenance-latest.tsv"
   rm -f "$update_all_home"/.mas-updated-*
 
+  check "update-all verifies an unindexed Mac App Store update from its bundle"
+  # Spotlight can omit an app mas just updated. The bundle, its bundle id, and
+  # a non-empty Mac App Store receipt are the source of truth. A missing bundle
+  # or a changed bundle id stays a real identity failure, and that failure must
+  # not also be reported as package-manager maintenance.
+  ddg_app="$GROUNDWORK_APPLICATIONS_DIR/DuckDuckGo.app"
+  mas_ddg_pre="$(python3 -c 'import json,sys; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":sys.argv[1]}))' "$ddg_app")"
+  mas_ddg_outdated="$(python3 -c 'import json; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","newVersion":"1.212.0"}))')"
+  write_mas_bundle() {
+    python3 - "$1" "$2" "$3" "${4:-receipt}" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+app, bundle_id, version, receipt = sys.argv[1:]
+root = Path(app)
+info = root / "Contents" / "Info.plist"
+receipt_path = root / "Contents" / "_MASReceipt" / "receipt"
+info.parent.mkdir(parents=True, exist_ok=True)
+receipt_path.parent.mkdir(parents=True, exist_ok=True)
+with info.open("wb") as handle:
+    plistlib.dump({
+        "CFBundleIdentifier": bundle_id,
+        "CFBundleShortVersionString": version,
+    }, handle)
+receipt_path.write_bytes(receipt.encode())
+PY
+  }
+  rm -rf -- "$ddg_app"
+  write_mas_bundle "$ddg_app" com.duckduckgo.macos.browser 1.212.0
+  : >"$update_all_log"
+  rm -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    "$update_all_home/.local/state/groundwork/update-all-pending/homebrew" \
+    "$update_all_home/.local/state/groundwork/update-all-pending/npm" \
+    "$update_all_home/.local/state/groundwork/update-all-pending/pnpm"
+  if ! run_fixture_pty "$update_all_fixture/darwin-mas-indexed-late" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    ; then
+    cat "$update_all_fixture/darwin-mas-indexed-late" >&2
+    fail "an updated App Store bundle that Spotlight has not indexed was not verified"
+  fi
+  grep -qF 'changed from 1.211.0 to 1.212.0; the app bundle and its Mac App Store receipt match.' \
+    "$update_all_fixture/darwin-mas-indexed-late" \
+    || fail "bundle verification did not name the matched receipt"
+  grep -qF 'Verified updated        1' "$update_all_fixture/darwin-mas-indexed-late"
+  grep -qF 'Mac App Store apps      updated-and-verified' \
+    "$update_all_fixture/darwin-mas-indexed-late"
+  grep -qF 'Package-manager maintenance completed.' \
+    "$update_all_fixture/darwin-mas-indexed-late"
+  assert_not_contains 'Package-manager maintenance is incomplete|lost or changed its installed identity' \
+    "$update_all_fixture/darwin-mas-indexed-late" \
+    "a verified unindexed App Store update was treated as lost identity or failed maintenance"
+  [[ "$(grep -c "^mdimport $ddg_app$" "$update_all_log")" -eq 1 ]] \
+    || fail "bundle verification did not run exactly one bounded mdimport of the app"
+  grep -qxF 'brew autoremove' "$update_all_log" \
+    || fail "a verified unindexed App Store update skipped Homebrew maintenance"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a verified unindexed App Store update left the Mac App Store lane pending"
+  rm -f "$update_all_home"/.mas-updated-*
+
+  rm -rf -- "$ddg_app"
+  : >"$update_all_log"
+  mas_missing_bundle_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-missing" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_missing_bundle_exit=$?
+  [[ "$mas_missing_bundle_exit" -ne 0 ]] \
+    || fail "a missing App Store bundle produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-bundle-missing"
+  grep -qF 'The app bundle is missing or incomplete.' \
+    "$update_all_fixture/darwin-mas-bundle-missing"
+  assert_not_contains 'Package-manager maintenance is incomplete|^mdimport ' \
+    "$update_all_fixture/darwin-mas-bundle-missing" \
+    "a missing App Store bundle failed package-manager maintenance or indexed a path that is not there"
+  assert_not_contains '^mdimport ' "$update_all_log" \
+    "a missing App Store bundle was passed to mdimport"
+  grep -qxF 'brew autoremove' "$update_all_log" \
+    || fail "a missing App Store bundle skipped Homebrew maintenance"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a missing App Store bundle left no Mac App Store retry record"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/homebrew" \
+    || fail "a missing App Store bundle recorded a Homebrew maintenance failure"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/npm"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/pnpm"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  write_mas_bundle "$ddg_app" com.example.changed 1.212.0
+  : >"$update_all_log"
+  mas_changed_bundle_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-id-changed" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_changed_bundle_exit=$?
+  [[ "$mas_changed_bundle_exit" -ne 0 ]] \
+    || fail "a changed App Store bundle id produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-bundle-id-changed"
+  grep -qF 'Its bundle identifier changed.' \
+    "$update_all_fixture/darwin-mas-bundle-id-changed"
+  assert_not_contains 'Package-manager maintenance is incomplete' \
+    "$update_all_fixture/darwin-mas-bundle-id-changed" \
+    "a changed App Store bundle id failed package-manager maintenance"
+  grep -qxF 'brew autoremove' "$update_all_log" \
+    || fail "a changed App Store bundle id skipped Homebrew maintenance"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/homebrew"
+  rm -rf -- "$ddg_app"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
   # A visible authorization refusal is isolated to the exact app. No mutation
   # starts, the app is action-required, and later independent lanes continue.
   : >"$update_all_log"
@@ -5932,8 +6104,31 @@ EOF
   grep -qxF 'colima start --runtime docker' "$update_all_log" \
     || fail "the approved maintenance cycle did not start Colima with the exact Docker runtime"
   grep -qxF 'colima stop' "$update_all_log"
+  [[ "$(grep -c '^colima-env COLIMA_HOME=unset$' "$update_all_log")" -eq 3 ]] \
+    || fail "Colima was given COLIMA_HOME when ~/.colima does not exist"
   assert_not_contains 'docker-desktop-start|docker-desktop-stop' "$update_all_log" \
     "the work profile changed the nonselected Docker Desktop backend"
+
+  check "update-all sets COLIMA_HOME when ~/.colima already exists"
+  printf 'stopped\n' >"$docker_runtime_state"
+  rm -f "$update_all_stamp" "$docker_pending"
+  : >"$update_all_log"
+  mkdir -p "$update_all_home/.colima"
+  run_fixture_pty_after "$update_all_fixture/docker-work-colima-home" \
+    'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    || fail "an approved Colima cycle with an existing ~/.colima failed"
+  [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/.colima$" "$update_all_log")" -eq 3 ]] \
+    || fail "Groundwork did not set COLIMA_HOME for every Colima invocation, including start --help"
+  test -d "$update_all_home/.colima" \
+    || fail "Groundwork removed ~/.colima while pointing COLIMA_HOME at it"
+  assert_not_contains 'softwareupdate|install-rosetta|Rosetta' \
+    "$update_all_fixture/docker-work-colima-home" \
+    "the Colima lane tried to install Rosetta"
+  rmdir "$update_all_home/.colima"
 
   printf 'running\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
@@ -6499,6 +6694,24 @@ EOF
     "$reminder_dir/upgrade-pending-output" \
     "a Homebrew upgrade reminder recommended an ineffective cleanup-only repair"
   rm -f "$update_all_home/.local/state/groundwork/update-all-pending/homebrew-upgrade"
+  rmdir "$update_all_home/.local/state/groundwork/update-all-pending" 2>/dev/null || true
+
+  # A Mac App Store verification retry is not package-manager maintenance.
+  # The reminder must send the user back through update-all.
+  mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
+  printf '2001-01-01T00:00:00Z Mac App Store incomplete: attempted=1 verified=0 remaining=0 timed-out=0 failed=0 action-required=0 unexplained=1\n' \
+    >"$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  run_reminder "$reminder_dir/mas-pending-output"
+  grep -qF 'could not finish a required Mac App Store update' \
+    "$reminder_dir/mas-pending-output" \
+    || fail "a pending Mac App Store update was mislabeled as package maintenance"
+  grep -qF 'Run update-all again to retry the complete update transaction.' \
+    "$reminder_dir/mas-pending-output" \
+    || fail "the Mac App Store reminder omitted its update-all retry"
+  assert_not_contains 'package-manager maintenance|groundwork-cleanup' \
+    "$reminder_dir/mas-pending-output" \
+    "a Mac App Store reminder recommended package-manager cleanup"
+  rm -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
   rmdir "$update_all_home/.local/state/groundwork/update-all-pending" 2>/dev/null || true
 
   # Docker scratch maintenance has its own pending record and repair route; it
@@ -16445,6 +16658,141 @@ EOF
   grep -q '^inherit = "core"$' "$codex_config_once"
   test "$(grep -c '^\[shell_environment_policy\]$' "$codex_config_once")" = 1
   test "$(grep -c '^experimental_use_profile = true$' "$codex_config_once")" = 1
+
+  check "Docker config merge preserves app-written keys"
+  docker_config_dir="$out_dir/docker-config-merge"
+  mkdir -p "$docker_config_dir/bin"
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    docker_plugin_dir="$(/opt/homebrew/bin/brew --prefix)/lib/docker/cli-plugins"
+    docker_merge_path="$PATH"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    docker_plugin_dir="$(/usr/local/bin/brew --prefix)/lib/docker/cli-plugins"
+    docker_merge_path="$PATH"
+  else
+    docker_plugin_dir="/opt/homebrew/lib/docker/cli-plugins"
+    cat >"$docker_config_dir/bin/brew" <<'SH'
+#!/bin/sh
+[ "$1" = "--prefix" ] || exit 64
+printf '%s\n' /opt/homebrew
+SH
+    chmod +x "$docker_config_dir/bin/brew"
+    docker_merge_path="$docker_config_dir/bin:$PATH"
+  fi
+  render darwin false arm64 home/dot_docker/modify_private_config.json.tmpl \
+    "$docker_config_dir/merge.py" true
+  render darwin false arm64 home/dot_docker/modify_private_config.json.tmpl \
+    "$docker_config_dir/passthrough.py"
+  python3 -m py_compile "$docker_config_dir/merge.py" "$docker_config_dir/passthrough.py"
+  docker_settled="$docker_config_dir/settled.json"
+  docker_once="$docker_config_dir/once.json"
+  docker_twice="$docker_config_dir/twice.json"
+  docker_err="$docker_config_dir/stderr"
+  # Docker and Colima keep their own key order and spacing. When the plugin
+  # directory and some credsStore are already present, the bytes stay put.
+  python3 - "$docker_settled" "$docker_plugin_dir" <<'PY'
+import pathlib, sys
+path, plugins = sys.argv[1:]
+pathlib.Path(path).write_bytes(
+    (
+        '{ "currentContext" : "colima", "credsStore" : "desktop",\n'
+        '  "auths" : { "registry.example.test" : { "auth" : "fixture-token" } },\n'
+        f'  "cliPluginsExtraDirs" : [ "{plugins}" ], "extra" : true }}\n'
+    ).encode()
+)
+PY
+  : >"$docker_err"
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_settled" >"$docker_once" 2>"$docker_err"
+  cmp -s "$docker_settled" "$docker_once" \
+    || fail "Docker config merge rewrote a file that already had its required keys"
+  assert_not_contains 'fixture-token|registry.example.test' "$docker_err" \
+    "Docker config merge printed registry configuration"
+  docker_added="$docker_config_dir/needs-plugin.json"
+  python3 - "$docker_added" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(
+    '{"currentContext":"colima","credsStore":"desktop",'
+    '"auths":{"registry.example.test":{"auth":"fixture-token"}}}\n',
+    encoding="utf-8",
+)
+PY
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_added" >"$docker_once" 2>"$docker_err"
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_once" >"$docker_twice" 2>"$docker_err"
+  cmp -s "$docker_once" "$docker_twice" \
+    || fail "Docker config merge was not idempotent after adding the plugin directory"
+  python3 - "$docker_once" "$docker_plugin_dir" <<'PY'
+import json, sys
+path, plugins = sys.argv[1:]
+config = json.load(open(path, encoding="utf-8"))
+if config.get("credsStore") != "desktop":
+    raise SystemExit("existing credsStore was replaced")
+if config.get("currentContext") != "colima":
+    raise SystemExit("currentContext was dropped")
+auths = config.get("auths")
+if not isinstance(auths, dict) or "registry.example.test" not in auths:
+    raise SystemExit("auths were dropped")
+if auths["registry.example.test"].get("auth") != "fixture-token":
+    raise SystemExit("auth material was changed")
+if plugins not in config.get("cliPluginsExtraDirs", []):
+    raise SystemExit("Homebrew plugin directory was not added")
+PY
+  docker_creds="$docker_config_dir/needs-creds.json"
+  python3 - "$docker_creds" "$docker_plugin_dir" <<'PY'
+import pathlib, sys
+path, plugins = sys.argv[1:]
+pathlib.Path(path).write_text(
+    '{"auths":{"registry.example.test":{"auth":"fixture-token"}},'
+    f'"cliPluginsExtraDirs":["{plugins}"]}}\n',
+    encoding="utf-8",
+)
+PY
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_creds" >"$docker_once" 2>"$docker_err"
+  python3 - "$docker_once" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1], encoding="utf-8"))
+if config.get("credsStore") != "osxkeychain":
+    raise SystemExit("a missing credsStore was not set to osxkeychain")
+if "registry.example.test" not in config.get("auths", {}):
+    raise SystemExit("auths were dropped while setting credsStore")
+PY
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_once" >"$docker_twice" 2>"$docker_err"
+  cmp -s "$docker_once" "$docker_twice" \
+    || fail "Docker config merge rewrote a file after credsStore was already set"
+  docker_invalid="$docker_config_dir/invalid.json"
+  printf '%s\n' '{"auths":{"registry.example.test":{"auth":"fixture-token"}' \
+    >"$docker_invalid"
+  docker_merge_status=0
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_invalid" >"$docker_once" 2>"$docker_err" || docker_merge_status=$?
+  [[ "$docker_merge_status" -ne 0 ]] \
+    || fail "invalid Docker config JSON was accepted"
+  assert_not_contains 'fixture-token|registry.example.test' "$docker_err" \
+    "a rejected Docker config printed registry configuration"
+  printf '%s\n' '{"cliPluginsExtraDirs":"not-a-list","auths":{"registry.example.test":{"auth":"fixture-token"}}}' \
+    >"$docker_invalid"
+  docker_merge_status=0
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_invalid" >"$docker_once" 2>"$docker_err" || docker_merge_status=$?
+  [[ "$docker_merge_status" -ne 0 ]] \
+    || fail "a malformed cliPluginsExtraDirs value was accepted"
+  printf '%s\n' '{"auths":["not-an-object"],"credsStore":1}' >"$docker_invalid"
+  docker_merge_status=0
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_invalid" >"$docker_once" 2>"$docker_err" || docker_merge_status=$?
+  [[ "$docker_merge_status" -ne 0 ]] \
+    || fail "a non-object auths value or non-string credsStore was accepted"
+  assert_not_contains 'fixture-token' "$docker_err" \
+    "a rejected Docker config printed credential material"
+  # A non-Colima render does not own the file at all, even when the plugin
+  # directory Groundwork would have added is missing.
+  PATH="$docker_merge_path" python3 "$docker_config_dir/passthrough.py" \
+    <"$docker_added" >"$docker_once" 2>"$docker_err"
+  cmp -s "$docker_added" "$docker_once" \
+    || fail "a Docker Desktop render rewrote ~/.docker/config.json"
 
   check "docs coverage audit mutation tests"
   python3 tests/test_audit_docs_coverage.py

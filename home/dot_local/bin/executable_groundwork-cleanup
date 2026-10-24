@@ -333,6 +333,19 @@ has_pending() {
   return 1
 }
 
+# The read-only report lists every pending file. Failure is narrower: a Mac
+# App Store identity record or a Homebrew upgrade retry is not package-manager
+# maintenance, and must not make this helper exit as if brew, npm, or pnpm failed.
+package_manager_pending() {
+  local stage
+  [[ -f "$legacy_pending" ]] && return 0
+  [[ -d "$pending_dir" ]] || return 1
+  for stage in homebrew npm pnpm maintenance-helper; do
+    [[ -f "$pending_dir/$stage" ]] && return 0
+  done
+  return 1
+}
+
 append_review() {
   printf '%s\t%s\n' "$1" "$2" >>"$review_records"
 }
@@ -1266,7 +1279,7 @@ rm -f -- "$legacy_pending"
 if [[ "$maintenance_failed" -eq 0 ]]; then
   clear_pending "maintenance-helper"
 fi
-has_pending && maintenance_failed=1
+package_manager_pending && maintenance_failed=1
 
 if [[ -n "$cleanup_receipt_fd" ]]; then
   printf 'homebrew\t%s\nnpm\t%s\npnpm\t%s\nowner-review\t%s\n' \

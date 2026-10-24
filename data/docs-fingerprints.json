@@ -38,7 +38,7 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "2f27a214ad086502129014ee5e489f0b984fda42195abeb2cda691b4011b9154",
+      "sha256": "08c246a466eee24f09ffcd96f62c5f400b00596188e98421c6e6cda6cec75e36",
       "lastmod": "2026-10-24"
     },
     "customizing.html": {
@@ -186,8 +186,8 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "43bc4f842d18928ff78283be0f88041695b84b7d7b097f8848510314a5b8c06e",
-      "lastmod": "2026-10-20"
+      "sha256": "c65da9016396bdcf33c53b899cd289c3cb8eaedf61549a692ef92f79a8c2dd27",
+      "lastmod": "2026-10-24"
     },
     "web-dev.html": {
       "sha256": "3d8a3134a4ca5d18cae986e6dcfe41448bcb8110928f85475ea428e94a05877b",
