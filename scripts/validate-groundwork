@@ -6294,13 +6294,16 @@ EOF
     fi
   }
   colima_recovery_line() {
-    local home="$1" profile="$2" lima="${3:-}" one
-    if [[ -n "$lima" ]]; then
-      one="LIMA_HOME=\"$lima\" COLIMA_HOME=\"$home\" colima --profile \"$profile\""
+    local home="$1" profile="$2" lima="${3:-}" id one disk
+    if [[ "$profile" == "default" ]]; then
+      id="colima"
     else
-      one="COLIMA_HOME=\"$home\" colima --profile \"$profile\""
+      id="colima-$profile"
     fi
-    printf '%s\n' "${one} delete --force && ${one} start --disk 100"
+    [[ -n "$lima" ]] || lima="$home/_lima"
+    one="LIMA_HOME=\"$lima\" COLIMA_HOME=\"$home\" colima --profile=\"$profile\""
+    disk="LIMA_HOME=\"$lima\" limactl disk delete \"$id\" || true"
+    printf '%s\n' "${one} delete --force && (${disk}) && ${one} start --disk 100"
   }
   colima_clean_env=(-u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME)
 
@@ -6509,6 +6512,33 @@ EOF
     "$update_all_log" "update-all started an XDG Colima instance with disk: 0"
   assert_colima_untouched "$xdg_root/colima" 0 absent
   test ! -e "$update_all_home/.colima"
+
+  # The last fallback differs by OS. This host's uname is the same fact the
+  # resolver uses, so the expected directory follows that.
+  os_fallback_home="$colima_disk_root/os-fallback-home"
+  rm -rf "$os_fallback_home"
+  mkdir -p "$os_fallback_home"
+  os_fallback_got="$(
+    # shellcheck source=/dev/null
+    . home/dot_local/share/groundwork/lib/colima-home.sh
+    unset COLIMA_HOME COLIMA_PROFILE LIMA_HOME XDG_CONFIG_HOME
+    HOME="$os_fallback_home" gw_colima_config_home
+  )"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    os_fallback_want="$os_fallback_home/.colima"
+  else
+    os_fallback_want="$os_fallback_home/.config/colima"
+  fi
+  [[ "$os_fallback_got" == "$os_fallback_want" ]] \
+    || fail "Colima home fallback was '$os_fallback_got', expected '$os_fallback_want'"
+  mkdir -p "$os_fallback_home/.colima"
+  dash_status=0
+  env -u COLIMA_HOME -u LIMA_HOME -u XDG_CONFIG_HOME \
+    HOME="$os_fallback_home" COLIMA_PROFILE=-work \
+    bash -c '. home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_instance_lacks_data_disk' \
+    || dash_status=$?
+  [[ "$dash_status" -eq 2 ]] \
+    || fail "a profile name starting with '-' was accepted (status $dash_status)"
   rm -rf "$update_all_home/.colima" "$colima_disk_root"
 
   doctor_colima_home="$update_all_fixture/colima-doctor-home"
@@ -6554,8 +6584,8 @@ SH
   grep -qF 'never deletes anything automatically' \
     "$update_all_fixture/colima-doctor-yaml" \
     || fail "groundwork-doctor did not say that it never deletes anything"
-  assert_not_contains "Run 'colima start'" "$update_all_fixture/colima-doctor-yaml" \
-    "groundwork-doctor recommended a start that would hang"
+  # This doctor PATH has no docker, so it returns before the unreachable-daemon
+  # note. That note is proved in the docker suite, where the daemon is down.
   test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima for disk: 0"
   assert_colima_untouched "$doctor_colima_home/.colima" 0 absent
 
@@ -13359,9 +13389,9 @@ SH
     >"$out_dir/doctor-down-colima-disk" 2>&1
   grep -qF 'This Colima instance has no Docker data disk.' "$out_dir/doctor-down-colima-disk" \
     || fail "doctor did not report a zero Colima disk while the daemon was down"
-  grep -qF "COLIMA_HOME=\"$docker_home/.colima\" colima --profile \"default\" delete --force && COLIMA_HOME=\"$docker_home/.colima\" colima --profile \"default\" start --disk 100" \
+  grep -qF "LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" delete --force && (LIMA_HOME=\"$docker_home/.colima/_lima\" limactl disk delete \"colima\" || true) && LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" start --disk 100" \
     "$out_dir/doctor-down-colima-disk" \
-    || fail "doctor did not print the Colima home and profile it read"
+    || fail "doctor did not print the Colima home, profile, and data-disk delete it read"
   grep -qF 'Docker daemon not reachable; skipping Docker checks.' "$out_dir/doctor-down-colima-disk"
   assert_not_contains "Run 'colima start'" "$out_dir/doctor-down-colima-disk" \
     "doctor told a Colima user to start an instance that has no data disk"

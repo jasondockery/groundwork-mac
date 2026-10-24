@@ -74,7 +74,7 @@ docker buildx version
 
 `colima start` normally selects its context automatically. Review existing `DOCKER_HOST` and `DOCKER_CONTEXT` environment overrides if the CLI reaches the wrong engine. Prefer explicit contexts while moving data. Colima’s default socket is `~/.colima/default/docker.sock`; confirm it with `colima status`. Configure tools that require a socket through their supported settings instead of replacing `/var/run/docker.sock` globally. [Colima’s context and socket guidance](https://colima.run/docs/faq/#docker)
 
-Groundwork’s Colima template affects new instances. Use `colima start --edit` for an existing instance; deleting an instance to pick up configuration would delete its container data.
+Groundwork’s Colima template affects new instances. It writes `rosetta: true` only when Rosetta is already installed at apply time. When Rosetta is absent, that key is omitted, so a new instance does not warn that Rosetta is missing. An existing instance can still have the key. Install Rosetta if you want it, run `chezmoi apply`, then run `colima start --edit` and set `rosetta: true` on that instance. Colima still warns when `oahd` is not running. Deleting an instance to pick up configuration deletes its container data.
 
 ## 3. Restore and verify one project at a time
 
@@ -138,14 +138,12 @@ Repeat the project checks. Retain backups until you are satisfied that everythin
 
 Groundwork's Colima template pins `disk: 100`, which is Colima's normal default. Colima reads that template as the whole configuration for a new instance, so a template that omits `disk:` stores `disk: 0` and creates a 0-byte data disk. `colima start` then never finishes.
 
-`groundwork-doctor` and the `update-all` Colima start step read the same home and profile Colima 0.10.3 would use. They use `COLIMA_HOME` only when that directory exists. Otherwise they use `~/.colima` when it exists, and otherwise `$XDG_CONFIG_HOME/colima`. `COLIMA_PROFILE` selects the instance (`default` when it is unset). `LIMA_HOME`, when set, replaces the `_lima` directory that holds the data disk. They look for `disk: 0` in that profile's `colima.yaml`, or a 0-byte datadisk for that profile. They print a recovery command that names the home and profile they actually read, and they skip the start. They never delete the instance.
+`groundwork-doctor` and the `update-all` Colima start step read the same home and profile Colima 0.10.3 would use. They use `COLIMA_HOME` only when that directory exists. Otherwise they use `~/.colima` when it exists, and otherwise `$XDG_CONFIG_HOME/colima` when that variable is set. If it is unset, macOS uses `~/.colima` and other systems use `$HOME/.config/colima`. `COLIMA_PROFILE` selects the instance (`default` when it is unset). `LIMA_HOME`, when set, replaces the `_lima` directory that holds the data disk. They look for `disk: 0` in that profile's `colima.yaml`, or a 0-byte datadisk for that profile. They print a recovery command that names the home, profile, and Lima directory they actually read, and they skip the start. They never delete the instance.
 
-Deleting destroys that instance's containers and images. Run the printed command only after you accept that loss. It has this shape, with the directory and profile that were read:
+The printed command deletes that instance's containers, images, and data disk. Run it only after you accept that loss. `colima delete --force` removes the instance and leaves the Lima data disk in place, including the 0-byte disk from a start that never finished. The command then deletes that disk and starts a new instance with a 100 GiB disk. A disk that is already gone does not stop the command. `$profile_id` is `colima` for the default profile and `colima-$profile` otherwise. `$lima_home` is the `_lima` directory that was read:
 
 ```bash
-COLIMA_HOME="$colima_home" colima --profile "$profile" delete --force && COLIMA_HOME="$colima_home" colima --profile "$profile" start --disk 100
+LIMA_HOME="$lima_home" COLIMA_HOME="$colima_home" colima --profile="$profile" delete --force && (LIMA_HOME="$lima_home" limactl disk delete "$profile_id" || true) && LIMA_HOME="$lima_home" COLIMA_HOME="$colima_home" colima --profile="$profile" start --disk 100
 ```
-
-When `LIMA_HOME` was set, the printed command includes that directory on both parts as well.
 
 Groundwork does not install Rosetta. The template writes `rosetta: true` only when Rosetta is already installed at apply time. Otherwise the key is omitted and a new instance does not warn that Rosetta is missing. An instance created earlier can still have the key. Install Rosetta if you want it, run `chezmoi apply`, then run `colima start --edit` and set `rosetta: true` on that existing instance. Colima still warns when `oahd` is not running. Do not delete the instance just to change this setting.
