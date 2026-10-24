@@ -1,5 +1,6 @@
 # item	kind	origin	platforms	profiles	requires	canonical_page
 groundwork-remote-desktop	command	executable	all	desktop	-	commands.html
+groundwork-imessage-gateway	command	executable	macos	desktop	-	commands.html
 groundwork-help [query]	command	executable	all	all	-	commands.html
 groundwork-update	command	executable	all	all	chezmoi	commands.html
 groundwork-help --pick [query]	command	executable	all	all	fzf	commands.html

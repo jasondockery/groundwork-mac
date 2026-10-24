@@ -10,6 +10,10 @@ For inbound terminal access, enable System Settings → General → Sharing → 
 
 Do not install the headless formula alongside the desktop cask. Use the app to diagnose sign-in and DNS, then test `tailscale status` and a connection from another approved machine before relying on remote recovery.
 
+### Optional iMessage gateway
+
+A desktop Mac can stay reachable for [Blip](https://github.com/nixfred/blip) over ordinary OpenSSH. The role stays off until you turn it on with `groundwork-configure`. An apply then enables Remote Login and stops system sleep while the Mac is on power. It does not grant privacy permissions, write SSH keys, or turn off System Integrity Protection. The recorded sleep value, manual grants, and undo steps are in [iMessage gateway](imessage-gateway.md).
+
 ### Automatic startup and local desktop permission
 
 Desktop applies run `groundwork-remote-desktop prepare`. On a Mac, it checks native Screen Sharing registration and opens Sharing settings from an interactive setup when local approval is still needed. Run `groundwork-remote-desktop` yourself to open that setup, or `groundwork-remote-desktop status` for a read-only registration check. Registration is not proof of permitted users or a successful screen session.

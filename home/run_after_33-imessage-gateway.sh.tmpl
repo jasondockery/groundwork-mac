@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+{{ if and (eq .chezmoi.os "darwin") (not .headless) -}}
+{{ if hasKey . "imessage_gateway" -}}
+{{ if and (kindIs "bool" .imessage_gateway) .imessage_gateway }}
+# Opt-in desktop Mac gateway. Privacy grants and authorized_keys stay manual.
+"$HOME/.local/bin/groundwork-imessage-gateway" prepare
+{{ end -}}
+{{ end -}}
+{{ end -}}

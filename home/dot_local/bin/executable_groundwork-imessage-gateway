@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""Prepare an opt-in desktop Mac as an iMessage gateway for Blip.
+
+The role is off until groundwork-configure stores imessage_gateway = true.
+prepare enables Remote Login and sets sleep to 0 while on power. It does not
+grant privacy permissions, edit authorized_keys, or change battery sleep.
+"""
+import argparse
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import sys
+
+
+SHARING_URL = 'x-apple.systempreferences:com.apple.Sharing-Settings.extension'
+PRIVACY_URL = 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension'
+SSH_SERVICE = ['launchctl', 'print', 'system/com.openssh.sshd']
+PMSET_READ = ['pmset', '-g', 'custom']
+PMSET_WRITE = ['sudo', 'pmset', '-c', 'sleep', '0']
+SYSTEMSETUP = ['sudo', '/usr/sbin/systemsetup', '-setremotelogin', 'on']
+ACCESS_GROUP = ['dscl', '.', '-read', '/Groups/com.apple.access_ssh', 'GroupMembership']
+TAILSCALE_PROCESS = ['pgrep', '-x', 'Tailscale']
+STATE_FILENAME = 'imessage-gateway-ac-sleep'
+RECORDED_VALUE = re.compile(r'^(0|[1-9][0-9]{0,5})$')
+DATA_BOOL = re.compile(r'^(headless|imessage_gateway)\s*=\s*(true|false)\s*(?:#.*)?$')
+
+SUDO_PREPARE_SCRIPT = r'''
+lib="${HOME}/.local/share/groundwork/lib/sudo-preflight.sh"
+if [[ ! -r "$lib" ]]; then
+  printf 'Groundwork: administrator-permission helper is missing: %s\n' "$lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$lib"
+groundwork_sudo_prepare
+exit $?
+'''
+
+MANUAL_STEPS = (
+    '1. Sign in to Messages with the Apple ID, and turn on Messages in iCloud.',
+    '2. Approve the Tailscale app, its network extension, and this device. Add an owner-scoped tailnet grant that lets only the client machine reach this Mac on TCP port 22. See the shared Tailscale guide.',
+    '3. Authorize the client\'s everyday SSH key for the gateway account. Groundwork does not edit authorized_keys. blip-setup replaces only its own confined line. Limit Remote Login to the gateway account alone. Groundwork reports that list and does not change it.',
+    '4. While blip-setup waits at the client: in Privacy & Security → Full Disk Access, add /usr/libexec/sshd-keygen-wrapper (Command-Shift-G in the file picker). Then click Allow on the Messages automation prompt within about two minutes. An unanswered prompt is stored as a denial.',
+    '5. If that prompt was missed, run `tccutil reset AppleEvents` on this Mac. That resets Automation grants for every app, not only sshd. Then run blip-setup again while you are at the Mac.',
+    '6. Optional mark-read and experimental tapbacks: from the client, run `ssh <host> \'python3 "$HOME/.blip/bin/blip-check" --markread\'`. This Mac is only where the Allow prompt is clicked. That prompt asks for Accessibility and Automation for System Events. Contacts is optional and is only for saving contacts.',
+    '7. Keep the Mac on power, with the lid open or an external display attached, and at a logged-in desktop. A closed lid sleeps anyway. Sleep, the login window, and the lock screen fail in three different ways; the gateway page explains them.',
+)
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f'{self.prog}: error: {message}', file=sys.stderr)
+        self.exit(64)
+
+
+def run(command, *, timeout=15, capture=True):
+    kwargs = {'text': True, 'env': dict(os.environ, LC_ALL='C')}
+    if timeout is not None:
+        kwargs['timeout'] = timeout
+    if capture:
+        kwargs['capture_output'] = True
+    return subprocess.run(command, **kwargs)
+
+
+def is_wsl():
+    path = Path('/proc/sys/kernel/osrelease')
+    return path.exists() and 'microsoft' in path.read_text(encoding='utf-8', errors='replace').lower()
+
+
+def config_path():
+    root = Path(os.environ['XDG_CONFIG_HOME']) if os.environ.get('XDG_CONFIG_HOME') else Path.home() / '.config'
+    return root / 'chezmoi' / 'chezmoi.toml'
+
+
+def state_path():
+    root = Path(os.environ['XDG_STATE_HOME']) if os.environ.get('XDG_STATE_HOME') else Path.home() / '.local' / 'state'
+    return root / 'groundwork' / STATE_FILENAME
+
+
+def blip_check_path():
+    return Path.home() / '.blip' / 'bin' / 'blip-check'
+
+
+def parse_settings(text):
+    section = None
+    found = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith('[') and line.endswith(']') and '#' not in line:
+            section = line[1:-1].strip()
+            continue
+        if section != 'data':
+            continue
+        match = DATA_BOOL.match(line)
+        if match:
+            found[match.group(1)] = match.group(2) == 'true'
+    return found
+
+
+def load_settings():
+    path = config_path()
+    try:
+        text = path.read_text(encoding='utf-8')
+    except OSError:
+        return {}
+    return parse_settings(text)
+
+
+def parse_pmset(text):
+    section = None
+    ac_sleep = None
+    battery_sleep = None
+    for raw in text.splitlines():
+        line = raw.strip().lstrip('*').strip()
+        if line in {'AC Power:', 'Battery Power:'}:
+            section = 'ac' if line.startswith('AC') else 'battery'
+            continue
+        if line.endswith(':') and not raw.startswith((' ', '\t')):
+            section = None
+            continue
+        parts = line.split()
+        if section and len(parts) >= 2 and parts[0] == 'sleep' and parts[1].isdigit():
+            value = int(parts[1])
+            if section == 'ac':
+                ac_sleep = value
+            else:
+                battery_sleep = value
+    return ac_sleep, battery_sleep
+
+
+def platform_block():
+    if is_wsl():
+        return 1, 'WSL does not configure a Mac iMessage gateway. Nothing was changed.'
+    if shutil.which('omarchy'):
+        return 1, 'Use groundwork-omarchy-mac-arm64; never apply this engine on Omarchy. Nothing was changed.'
+    if platform.system() != 'Darwin':
+        return 1, 'The iMessage gateway role applies only on a desktop Mac. Nothing was changed.'
+    return None
+
+
+def desktop_settings(settings):
+    return settings.get('headless') is False and settings.get('imessage_gateway') is True
+
+
+def read_remote_login():
+    result = run(SSH_SERVICE)
+    return result.returncode == 0
+
+
+def read_sleep():
+    result = run(PMSET_READ)
+    if result.returncode != 0:
+        return None, None
+    return parse_pmset(result.stdout or '')
+
+
+def sudo_prepare():
+    # No capture and no short timeout: the password prompt uses the terminal,
+    # and sudo's own cancel (130) or "no terminal" (10) is the bound.
+    result = run(['bash', '-c', SUDO_PREPARE_SCRIPT], timeout=None, capture=False)
+    return result.returncode
+
+
+def ensure_record_destination(path):
+    if path.is_symlink():
+        raise RuntimeError(f'the recorded AC sleep path is a symlink: {path}.')
+    if path.exists() and not path.is_file():
+        raise RuntimeError(f'the recorded AC sleep path is not a regular file: {path}.')
+    parent = path.parent
+    if parent.exists() and not parent.is_dir():
+        raise RuntimeError(f'the state directory is not a directory: {parent}.')
+
+
+def move_record_aside(path):
+    # Rename the final component. os.replace does not follow a symlink there,
+    # so a planted path cannot redirect the move onto another file.
+    for attempt in range(100):
+        candidate = path.with_name(f'.{path.name}.aside.{os.getpid()}.{attempt}')
+        if candidate.exists() or candidate.is_symlink():
+            continue
+        os.replace(path, candidate)
+        return candidate
+    raise RuntimeError(f'could not move the recorded AC sleep path aside: {path}.')
+
+
+def record_previous(path, value):
+    # False means this call did not create the undo file. An existing path is
+    # left as it is, and sleep must not change unless that file is already valid.
+    if path.exists() or path.is_symlink():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, f'{value}\n'.encode())
+    finally:
+        os.close(descriptor)
+    try:
+        os.replace(temporary, path)
+    except OSError:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def read_recorded(path):
+    if not path.exists() and not path.is_symlink():
+        return None
+    if path.is_symlink() or not path.is_file():
+        return 'unreadable'
+    text = path.read_text(encoding='utf-8').strip()
+    if not RECORDED_VALUE.match(text):
+        return 'unreadable'
+    return text
+
+
+def enable_remote_login():
+    result = run(SYSTEMSETUP)
+    if result.returncode == 0:
+        print('Remote Login is on.')
+        return True
+    detail = (result.stderr or result.stdout or '').strip()
+    print('Remote Login could not be enabled from this terminal.')
+    if detail:
+        print(detail)
+    print('Turn on System Settings → General → Sharing → Remote Login, and limit it to the gateway account.')
+    opened = run(['open', SHARING_URL])
+    if opened.returncode == 0:
+        print('Sharing settings is open.')
+    else:
+        print('Sharing settings did not open. Open System Settings → General → Sharing yourself.')
+    return False
+
+
+def allowed_users():
+    result = run(ACCESS_GROUP)
+    stdout = result.stdout or ''
+    stderr = result.stderr or ''
+    combined = stdout + '\n' + stderr
+    if result.returncode == 0:
+        members = []
+        for line in (result.stdout or '').splitlines():
+            if 'GroupMembership' not in line:
+                continue
+            members.extend(part for part in line.split(':', 1)[-1].split() if part)
+        if members:
+            return ' '.join(members)
+        return 'the selected-user list is empty'
+    if 'eDSRecordNotFound' in combined or 'No such key' in combined:
+        return 'not limited to a selected list (all local users may be allowed)'
+    return 'could not be read'
+
+
+def tailscale_state():
+    try:
+        result = run(TAILSCALE_PROCESS)
+    except OSError:
+        return 'unknown'
+    if result.returncode == 0:
+        return 'running'
+    if result.returncode == 1:
+        return 'not running'
+    return 'unknown'
+
+
+def report_blip():
+    # blip-check's Messages probe can raise the one-time Allow prompt for
+    # this python3, or store a denial against that binary. Status only reports.
+    path = blip_check_path()
+    if not path.is_file():
+        print('Blip check: not installed')
+        return
+    print(f'Blip check: installed at {path}')
+    print('From the client, Blip wants:')
+    print('ssh <host> \'python3 "$HOME/.blip/bin/blip-check"\'')
+    print('Replace <host> with this Mac\'s SSH name.')
+    print('The Messages probe can raise the one-time Allow prompt, so status does not run it.')
+
+
+def minutes(value):
+    return 'not listed' if value is None else str(value)
+
+
+def status():
+    block = platform_block()
+    if block:
+        print(block[1], file=sys.stderr)
+        return block[0]
+    settings = load_settings()
+    role = settings.get('imessage_gateway')
+    print('Role stored: ' + ('on' if role is True else 'off' if role is False else 'unset'))
+    applied = desktop_settings(settings)
+    print('Role applied here: ' + ('yes' if applied else 'no'))
+    try:
+        remote = read_remote_login()
+        ac_sleep, battery_sleep = read_sleep()
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f'iMessage gateway: the report is incomplete ({error}).', file=sys.stderr)
+        return 1
+    print('Remote Login: ' + ('on' if remote else 'off'))
+    try:
+        users = allowed_users()
+    except (OSError, subprocess.SubprocessError):
+        users = 'could not be read'
+    print(f'Remote Login allowed users: {users}')
+    print('Recommendation: limit Remote Login to the gateway account alone. Full Disk Access on sshd covers every key that can open a shell.')
+    print('AC sleep minutes: ' + ('unknown' if ac_sleep is None else str(ac_sleep)))
+    print(f'Battery sleep minutes: {minutes(battery_sleep)}')
+    recorded = read_recorded(state_path())
+    if recorded is None:
+        print(f'Recorded previous AC sleep: not recorded ({state_path()})')
+    else:
+        print(f'Recorded previous AC sleep: {recorded} ({state_path()})')
+    print(f'Tailscale: {tailscale_state()}')
+    report_blip()
+    return 0
+
+
+def prepare():
+    block = platform_block()
+    if block:
+        print(block[1], file=sys.stderr)
+        return block[0]
+    settings = load_settings()
+    if settings.get('headless') is not False:
+        print('The iMessage gateway role applies only on a desktop Mac. Nothing was changed.', file=sys.stderr)
+        return 1
+    if settings.get('imessage_gateway') is not True:
+        print('iMessage gateway role is off. Nothing was changed.')
+        print('Turn it on with groundwork-configure, then run chezmoi apply.')
+        return 0
+    try:
+        remote = read_remote_login()
+        ac_sleep, battery_sleep = read_sleep()
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f'iMessage gateway: Remote Login or AC sleep could not be read ({error}). Nothing was changed.', file=sys.stderr)
+        return 1
+    if ac_sleep is None:
+        print('iMessage gateway: AC sleep could not be read from `pmset -g custom`. Nothing was changed.', file=sys.stderr)
+        return 1
+    need_login = not remote
+    need_sleep = ac_sleep != 0
+    destination = state_path()
+    if not need_login and not need_sleep:
+        print('Remote Login is on.')
+        print(f'AC sleep is already 0. Battery sleep was not changed ({minutes(battery_sleep)}).')
+        return 0
+    record_absent_before_prompt = False
+    if need_sleep:
+        try:
+            ensure_record_destination(destination)
+        except RuntimeError as error:
+            print(f'iMessage gateway: {error} Nothing was changed.', file=sys.stderr)
+            return 1
+        record_absent_before_prompt = not (destination.exists() or destination.is_symlink())
+    sudo_status = sudo_prepare()
+    if sudo_status == 10:
+        print('Groundwork: changing Remote Login or AC sleep needs an administrator password.')
+        print('Nothing was changed. From a terminal on this machine, run chezmoi apply and enter your password when asked.')
+        return 0
+    if sudo_status == 130:
+        print('Groundwork: the password prompt was cancelled. Nothing was changed.', file=sys.stderr)
+        return 130
+    if sudo_status != 0:
+        print(f'Groundwork: administrator permission was not granted (exit {sudo_status}). Nothing was changed.', file=sys.stderr)
+        return sudo_status
+    if need_login:
+        enable_remote_login()
+    else:
+        print('Remote Login is on.')
+    if need_sleep:
+        # The password prompt is a gap. A new file created while it waits is
+        # not the previous sleep value, even when its text looks valid.
+        try:
+            ensure_record_destination(destination)
+        except RuntimeError as error:
+            print(
+                f'iMessage gateway: {error} AC sleep was not changed. Battery sleep was not changed.',
+                file=sys.stderr,
+            )
+            return 1
+        planted = destination.is_file() and not destination.is_symlink()
+        if record_absent_before_prompt and planted:
+            aside = move_record_aside(destination)
+            print(
+                f'iMessage gateway: a file appeared at the sleep record during the password prompt and was moved to {aside}. '
+                'AC sleep was not changed. Battery sleep was not changed.',
+                file=sys.stderr,
+            )
+            return 1
+        if not record_absent_before_prompt:
+            recorded = read_recorded(destination)
+            if not (isinstance(recorded, str) and RECORDED_VALUE.match(recorded)):
+                print(
+                    f'iMessage gateway: the recorded AC sleep value at {destination} cannot be restored. '
+                    'AC sleep was not changed. Battery sleep was not changed.',
+                    file=sys.stderr,
+                )
+                return 1
+        wrote = record_previous(destination, ac_sleep)
+        if record_absent_before_prompt and not wrote:
+            print(
+                f'iMessage gateway: the previous AC sleep value was not recorded at {destination}. '
+                'AC sleep was not changed. Battery sleep was not changed.',
+                file=sys.stderr,
+            )
+            return 1
+        result = run(PMSET_WRITE)
+        if result.returncode != 0:
+            print('AC sleep was not changed. Battery sleep was not changed.', file=sys.stderr)
+            if wrote:
+                print(f'The previous AC sleep value {ac_sleep} is recorded at {destination}.', file=sys.stderr)
+            return 1
+        if wrote:
+            print(f'Recorded the previous AC sleep value {ac_sleep} at {destination}.')
+        print(f'AC sleep is now 0 while on power. Battery sleep was not changed ({minutes(battery_sleep)}).')
+    else:
+        print(f'AC sleep is already 0. Battery sleep was not changed ({minutes(battery_sleep)}).')
+    return 0
+
+
+def print_steps():
+    print('Manual steps Groundwork cannot click:')
+    for step in MANUAL_STEPS:
+        print(step)
+    print('Undo, the lid caveat, and the three failure modes are in docs/imessage-gateway.md in the Groundwork source.')
+
+
+def setup():
+    block = platform_block()
+    if block:
+        print(block[1], file=sys.stderr)
+        print_steps()
+        return block[0]
+    settings = load_settings()
+    if settings.get('headless') is not False:
+        print('A headless Mac has no System Settings session for this role. Nothing was opened.', file=sys.stderr)
+        print_steps()
+        return 1
+    opened = True
+    for url, label in ((SHARING_URL, 'Sharing'), (PRIVACY_URL, 'Privacy & Security')):
+        result = run(['open', url])
+        if result.returncode == 0:
+            print(f'Opened {label}.')
+        else:
+            opened = False
+            print(f'Could not open {label}. Open it from System Settings.')
+    print_steps()
+    return 0 if opened else 1
+
+
+def build_parser():
+    parser = Parser(
+        prog='groundwork-imessage-gateway',
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Actions:
+  status   Report Remote Login, allowed users, AC sleep, Tailscale, and whether blip-check is installed. Changes nothing. It does not run blip-check, because the Messages probe can raise the one-time Allow prompt.
+  prepare  When the role is on, enable Remote Login and set AC sleep to 0. A non-interactive apply defers the privileged part instead of aborting.
+  setup    Open Sharing and Privacy & Security, then print the manual steps.
+
+The role defaults off. Linux, WSL, a headless Mac, and Omarchy do not apply it.
+'''.strip(),
+    )
+    parser.add_argument('action', nargs='?', default='setup', choices=('status', 'prepare', 'setup'))
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        code = exc.code
+        return 0 if code is None else int(code)
+    try:
+        if args.action == 'status':
+            return status()
+        if args.action == 'prepare':
+            return prepare()
+        return setup()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print('iMessage gateway: ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
