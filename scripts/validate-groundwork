@@ -6473,8 +6473,9 @@ EOF
     "the skip-pending runner output"
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
-  # An unrecognized pending filename is package-manager maintenance. A Homebrew
-  # upgrade retry that shares the directory is not.
+  # An unrecognized pending filename is package-manager maintenance. A successful
+  # upgrade lane clears its own retry record before this check, so the two
+  # ignored names are proved by groundwork-cleanup while those files remain.
   rm -f "$update_all_stamp"
   mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
   printf 'unrecognized stage\n' \
@@ -6493,22 +6494,6 @@ EOF
     || fail "an unknown pending filename did not keep the maintenance reminder"
   test -f "$update_all_home/.local/state/groundwork/update-all-pending/future-manager" \
     || fail "--skip-maintenance cleared an unknown pending filename"
-  rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
-
-  rm -f "$update_all_stamp"
-  mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
-  printf 'upgrade retry\n' \
-    >"$update_all_home/.local/state/groundwork/update-all-pending/homebrew-upgrade"
-  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
-    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" --skip-maintenance \
-    >"$update_all_fixture/darwin-skip-upgrade-pending" 2>&1 \
-    || fail "a Homebrew upgrade retry was treated as package-manager maintenance"
-  assert_not_contains 'earlier package-manager maintenance is still pending' \
-    "$update_all_fixture/darwin-skip-upgrade-pending" \
-    "a Homebrew upgrade retry failed package-manager maintenance"
-  test -f "$update_all_home/.local/state/groundwork/update-all-pending/homebrew-upgrade" \
-    || fail "--skip-maintenance cleared a Homebrew upgrade retry"
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
   # BEHAVIOR, not wiring text: a failed upgrade whose downloads re-fetch (exit
