@@ -133,3 +133,17 @@ docker buildx version
 ```
 
 Repeat the project checks. Retain backups until you are satisfied that everything required has moved. Removing Desktop is separate from deleting old backups.
+
+## 5. Recover a Colima instance that has no data disk
+
+Groundwork's Colima template pins `disk: 100`, which is Colima's normal default. Colima reads that template as the whole configuration for a new instance, so a template that omits `disk:` stores `disk: 0` and creates a 0-byte data disk. `colima start` then never finishes.
+
+`groundwork-doctor` and the `update-all` Colima start step look for `disk: 0` in `~/.colima/default/colima.yaml` or a 0-byte `~/.colima/_lima/_disks/colima/datadisk`. When `COLIMA_HOME` is set, they read those paths under that directory. They print the recovery command and skip the start. They never delete the instance.
+
+Deleting destroys that instance's containers and images. Run the recovery only after you accept that loss:
+
+```bash
+colima delete --force && colima start --disk 100
+```
+
+Groundwork does not install Rosetta. The template writes `rosetta: true` only when Rosetta is already installed at apply time. Otherwise the key is omitted and a new instance does not warn that Rosetta is missing. An instance created earlier can still have the key. Install Rosetta if you want it, run `chezmoi apply`, then `colima start --edit` for that existing instance. Do not delete the instance just to change this setting.
