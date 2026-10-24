@@ -141,6 +141,18 @@ class CommonSetupTests(unittest.TestCase):
             TMPDIR=str(self.root / "tmp"),
             GROUNDWORK_APPLICATIONS_DIR=str(apps),
         )
+        # Fixtures hash the amd64 image. Apple Silicon's /usr/sbin/sysctl
+        # reports hw.optional.arm64=1 and would select the arm64 pin. Tests
+        # that still name that path get a stub that exits 1, so the Intel pin
+        # stays selected. A script that already replaced the path keeps its stub.
+        if "/usr/sbin/sysctl" in script:
+            calls = self.root / "freetube-sysctl-calls"
+            stub = self.write_executable(
+                "freetube-sysctl",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_FREETUBE_SYSCTL\"\nexit 1\n",
+            )
+            script = script.replace("/usr/sbin/sysctl", str(stub))
+            environment["FIXTURE_FREETUBE_SYSCTL"] = str(calls)
         environment.update(env)
         (self.root / "tmp").mkdir(exist_ok=True)
         return subprocess.run(["/bin/bash"], input=script, env=environment, text=True,
@@ -473,6 +485,41 @@ printf 'bytes' > "$out"
         self.assertIn("missing-sysctl is missing", result.stderr)
         self.assertFalse(curl_calls.exists())
         self.assertFalse((apps / "FreeTube.app").exists())
+        self.assertFalse((self.root / "freetube-sysctl-calls").exists())
+
+    def test_freetube_run_keeps_the_intel_pin_when_sysctl_reports_arm64(self):
+        pin = self.freetube_pin()
+        script = self.freetube_script()
+        self.assertIn("/usr/sbin/sysctl", script)
+        apps = self.root / "Applications"
+        apps.mkdir()
+        hdiutil_calls = self.root / "hdiutil-calls"
+        arm_calls = self.root / "arm64-sysctl-calls"
+        self.write_executable("sysctl", '''#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_ARM_SYSCTL"
+printf '1\\n'
+exit 0
+''')
+        self.write_executable("curl", '''#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--output" ]; then out="$2"; shift 2; continue; fi
+  shift
+done
+printf 'bytes' > "$out"
+''')
+        self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
+        self.write_executable("hdiutil", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_HDIUTIL"\nexit 1\n')
+        result = self.freetube_run(
+            script, apps, FIXTURE_HDIUTIL=str(hdiutil_calls), FIXTURE_ARM_SYSCTL=str(arm_calls),
+            FIXTURE_SHA=pin["assets"]["amd64"]["sha256"],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("checksum did not match", result.stderr)
+        self.assertIn("did not mount", result.stderr)
+        self.assertTrue(hdiutil_calls.exists())
+        self.assertFalse(arm_calls.exists())
+        self.assertIn("hw.optional.arm64", (self.root / "freetube-sysctl-calls").read_text())
 
     def test_freetube_dmg_checksum_tool_failure_does_not_stop_setup(self):
         pin = self.freetube_pin()
