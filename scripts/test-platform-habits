@@ -134,7 +134,7 @@ INSTALL''')
     def herdr_stubs(self, runtime="Linux"):
         # Exclude the host's Herdr so this exercises a fresh headless image.
         self.env["PATH"] = str(self.bin)
-        for name in ("mktemp", "rm", "cat", "mkdir", "chmod", "sh", "dirname"):
+        for name in ("mktemp", "rm", "cat", "mkdir", "chmod", "sh", "dirname", "awk"):
             target = self.bin / name
             if not target.exists():
                 target.symlink_to(shutil.which(name))
@@ -201,6 +201,91 @@ INSTALL''')
         result = self.run_script(rendered)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.home / ".local/bin/herdr").exists(), "a direct install shadowed Homebrew")
+
+    def write_versioned_herdr(self, path, version, log_name=None):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if log_name:
+            body = f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$HOME/{log_name}"\necho "herdr {version}"\n'
+        else:
+            body = f'#!/bin/sh\necho "herdr {version}"\n'
+        path.write_text(body)
+        path.chmod(0o755)
+
+    def brew_herdr(self, version, log_name=None):
+        prefix = self.root / "homebrew/bin"
+        prefix.mkdir(parents=True, exist_ok=True)
+        self.write_versioned_herdr(prefix / "herdr", version, log_name)
+        brew = prefix / "brew"
+        brew.write_text(f'#!/bin/sh\necho \'export PATH="{prefix}:$PATH"\'\n')
+        brew.chmod(0o755)
+        return brew
+
+    def test_same_or_older_local_herdr_does_not_shadow_homebrew(self):
+        for local_version in ("0.9.4", "0.9.5"):
+            with self.subTest(local_version=local_version):
+                self.herdr_stubs()
+                self.stub("curl", "exit 98")
+                local = self.home / ".local/bin/herdr"
+                self.write_versioned_herdr(local, local_version)
+                result = self.run_script(self.render_herdr(brew=self.brew_herdr("0.9.5")))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(local.exists(), result.stdout + result.stderr)
+                self.assertIn("Homebrew Herdr 0.9.5 stays on PATH", result.stdout)
+
+    def test_homebrew_herdr_symlink_is_not_removed(self):
+        self.herdr_stubs()
+        self.stub("curl", "exit 98")
+        local = self.home / ".local/bin/herdr"
+        target = self.home / "elsewhere/herdr"
+        self.write_versioned_herdr(target, "0.9.4")
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.symlink_to(target)
+        result = self.run_script(self.render_herdr(brew=self.brew_herdr("0.9.5")))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(local.is_symlink(), result.stdout + result.stderr)
+        self.assertEqual(local.resolve(), target.resolve())
+        self.assertIn("shadows Homebrew", result.stderr)
+
+    def test_newer_direct_herdr_is_not_downgraded(self):
+        self.herdr_stubs()
+        self.stub("curl", "exit 98")
+        local = self.home / ".local/bin/herdr"
+        self.write_versioned_herdr(local, "0.9.6")
+        original = local.read_text()
+        result = self.run_script(self.render_herdr(brew=self.brew_herdr("0.9.5")))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(local.read_text(), original)
+        self.assertIn("newer than Homebrew Herdr 0.9.5", result.stdout)
+
+    def test_homebrew_herdr_is_not_refreshed_with_herdr_update(self):
+        self.herdr_stubs()
+        self.stub("curl", "exit 98")
+        self.env["GROUNDWORK_UPDATE_SCOPE"] = "maintenance"
+        local = self.home / ".local/bin/herdr"
+        self.write_versioned_herdr(local, "0.9.4", "local-args")
+        result = self.run_script(self.render_herdr(brew=self.brew_herdr("0.9.5", "brew-args")))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(local.exists())
+        self.assertNotIn("update", (self.home / "brew-args").read_text())
+        self.assertNotIn("Updating the regular file ~/.local/bin/herdr", result.stdout)
+
+    def test_update_all_runs_herdr_update_for_the_direct_install(self):
+        self.herdr_stubs()
+        rendered = self.render_herdr()
+        result = self.run_script(rendered)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        local = self.home / ".local/bin/herdr"
+        self.write_versioned_herdr(local, "0.9.5", "herdr-args")
+        self.stub("curl", "exit 98")
+        self.env["GROUNDWORK_UPDATE_SCOPE"] = "configuration"
+        result = self.run_script(rendered)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / "herdr-args").exists())
+        self.env["GROUNDWORK_UPDATE_SCOPE"] = "maintenance"
+        result = self.run_script(rendered)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("update\n", (self.home / "herdr-args").read_text())
+        self.assertIn("Updating the regular file ~/.local/bin/herdr", result.stdout)
 
     def test_unusable_local_herdr_is_preserved_before_network(self):
         self.herdr_stubs()

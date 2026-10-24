@@ -183,8 +183,8 @@
         <tr><td><code>groundwork-herdr-config status|diff|edit</code></td><td>Inspect Groundwork&apos;s ownership, compare the applied Herdr config, or edit its exact chezmoi source.</td></tr>
         <tr><td><code>groundwork-herdr-config remove --yes</code></td><td>Remove only an unchanged, receipt-matching Groundwork Herdr config. The binary, sessions, and agent settings stay untouched.</td></tr>
         <tr><td><code>groundwork-herdr-integrations status</code></td><td>Show Herdr&apos;s official integration status for agent session identity and recovery.</td></tr>
-        <tr><td><code>groundwork-herdr-integrations install --yes</code></td><td>Explicitly install Herdr&apos;s official Claude Code and Codex hooks for agent tools found on this machine. This never runs during <code>chezmoi apply</code>.</td></tr>
-        <tr><td><code>groundwork-herdr-integrations uninstall --yes</code></td><td>Delegate exact Claude Code/Codex hook removal to Herdr&apos;s supported integration lifecycle.</td></tr>
+        <tr><td><code>groundwork-herdr-integrations install --yes</code></td><td>Explicitly install Herdr hooks for Claude Code, Codex, OpenCode, and Grok when those CLIs are on PATH, and for Cursor only when <code>cursor-agent</code> is on PATH. This never runs during <code>chezmoi apply</code>.</td></tr>
+        <tr><td><code>groundwork-herdr-integrations uninstall --yes</code></td><td>Remove those Herdr hooks. Claude Code, Codex, OpenCode, and Grok stay eligible from their config directories after the CLI is gone. Cursor requires <code>cursor-agent</code> or Herdr&apos;s hook file, not the desktop app alone.</td></tr>
         <tr><td><code>Ctrl+Space</code></td><td>The shared Groundwork tmux/Herdr prefix. In Herdr, press <code>d</code> to detach, <code>?</code> for active keybindings, <code>[</code> for copy mode, <code>g</code> for lazygit, or use the pane and tab mnemonics on the <a href="herdr.html">Herdr page</a>.</td></tr>
         <tr><td><code>chezmoi diff</code></td><td>Preview managed-file changes before applying them.</td></tr>
         <tr><td><code>chezmoi apply</code></td><td>Apply this repo to your home directory.</td></tr>

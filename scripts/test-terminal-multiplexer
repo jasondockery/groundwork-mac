@@ -93,26 +93,48 @@ grep -qF 'bind C-b send-prefix -2' "$repo/home/dot_config/tmux/tmux.conf.tmpl"
 
 python3 - "$repo/home/.chezmoitemplates/herdr.toml" <<'PY'
 import sys, tomllib
-with open(sys.argv[1], "rb") as source:
+from pathlib import Path
+config_path = Path(sys.argv[1])
+source_text = config_path.read_text()
+assert "88de9ecc6c4717e349a21f9e8af3ffc0a9d25415" in source_text
+assert "Herdr 0.9.5" in source_text
+lines = source_text.splitlines()
+for index, line in enumerate(lines):
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or stripped.startswith("["):
+        continue
+    if "=" not in stripped:
+        continue
+    previous = ""
+    for earlier in range(index - 1, -1, -1):
+        previous = lines[earlier].strip()
+        if previous:
+            break
+    assert previous.startswith("#"), (stripped, previous)
+with config_path.open("rb") as source:
     config = tomllib.load(source)
+assert set(config) == {"onboarding", "theme", "keys", "remote", "ui"}
 assert config["onboarding"] is False
-assert config["theme"] == {"name": "catppuccin"}
-assert config["terminal"] == {"shell_mode": "auto", "new_cwd": "follow"}
+assert config["theme"] == {
+    "name": "terminal",
+    "custom": {"panel_bg": "reset", "surface_dim": "black"},
+}
+assert "terminal" not in config
+assert "session" not in config
+assert "experimental" not in config
 keys = config["keys"]
 expected_keys = {'prefix': ['ctrl+space', 'ctrl+b'],
- 'help': 'prefix+?',
  'settings': 'prefix+shift+s',
+ 'workspace_picker': 'prefix+s',
  'detach': 'prefix+d',
  'reload_config': 'prefix+q',
  'resize_mode': ['prefix+ctrl+left',
                  'prefix+ctrl+down',
                  'prefix+ctrl+up',
                  'prefix+ctrl+right'],
- 'copy_mode': 'prefix+[',
  'split_vertical': ['prefix+v', 'alt+shift+enter', 'prefix+|'],
  'split_horizontal': ['prefix+h', 'alt+enter', 'prefix+minus'],
  'close_pane': ['prefix+x', 'alt+esc'],
- 'zoom': 'prefix+z',
  'last_pane': 'prefix+;',
  'focus_pane_left': 'ctrl+alt+left',
  'focus_pane_down': 'ctrl+alt+down',
@@ -122,12 +144,8 @@ expected_keys = {'prefix': ['ctrl+space', 'ctrl+b'],
  'resize_pane_down': 'ctrl+alt+shift+down',
  'resize_pane_up': 'ctrl+alt+shift+up',
  'resize_pane_right': 'ctrl+alt+shift+right',
- 'swap_pane_left': [],
- 'swap_pane_down': [],
  'swap_pane_up': [],
- 'swap_pane_right': [],
  'rename_pane': 'prefix+shift+o',
- 'new_tab': 'prefix+c',
  'rename_tab': ['prefix+r', 'prefix+comma'],
  'close_tab': ['prefix+k', 'prefix+ampersand'],
  'switch_tab': ['prefix+1..9', 'alt+1..9'],
@@ -135,17 +153,102 @@ expected_keys = {'prefix': ['ctrl+space', 'ctrl+b'],
  'next_tab': ['prefix+n', 'alt+right'],
  'move_tab_previous': 'alt+shift+left',
  'move_tab_next': 'alt+shift+right',
- 'workspace_picker': 'prefix+s',
  'goto': 'prefix+shift+t',
  'new_workspace': 'prefix+shift+c',
  'rename_workspace': ['prefix+shift+r', 'prefix+$'],
  'close_workspace': 'prefix+shift+k',
  'previous_workspace': ['prefix+shift+p', 'alt+up'],
  'next_workspace': ['prefix+shift+n', 'alt+down']}
+assert set(keys) == set(expected_keys) | {"command"}
 for action, binding in expected_keys.items():
     assert keys[action] == binding, (action, keys.get(action))
 
-# Model the retained built-in defaults (reviewed against Herdr 0.9.1): an explicitly configured value
+# Pinned Herdr 0.9.5 defaults (`herdr --default-config` plus the runtime keymap).
+# A configured value that merely restates one of these is rejected. Legacy
+# pane_borders true maps to "auto", so both forms count as the default.
+pinned_defaults = {
+    "onboarding": True,
+    "theme.name": "catppuccin",
+    "terminal.shell_mode": "auto",
+    "terminal.new_cwd": "follow",
+    "keys.prefix": "ctrl+b",
+    "keys.help": "prefix+?",
+    "keys.settings": "prefix+s",
+    "keys.new_workspace": "prefix+shift+n",
+    "keys.new_worktree": "prefix+shift+g",
+    "keys.rename_workspace": "prefix+shift+w",
+    "keys.close_workspace": "prefix+shift+d",
+    "keys.workspace_picker": "prefix+w",
+    "keys.goto": "prefix+g",
+    "keys.detach": "prefix+q",
+    "keys.reload_config": "prefix+shift+r",
+    "keys.open_notification_target": "prefix+o",
+    "keys.new_tab": "prefix+c",
+    "keys.rename_tab": "prefix+shift+t",
+    "keys.previous_tab": "prefix+p",
+    "keys.next_tab": "prefix+n",
+    "keys.switch_tab": "prefix+1..9",
+    "keys.close_tab": "prefix+shift+x",
+    "keys.rename_pane": "prefix+shift+p",
+    "keys.edit_scrollback": "prefix+e",
+    "keys.copy_mode": "prefix+[",
+    "keys.focus_pane_left": "prefix+h",
+    "keys.focus_pane_down": "prefix+j",
+    "keys.focus_pane_up": "prefix+k",
+    "keys.focus_pane_right": "prefix+l",
+    "keys.swap_pane_left": "prefix+shift+h",
+    "keys.swap_pane_down": "prefix+shift+j",
+    "keys.swap_pane_up": "prefix+shift+k",
+    "keys.swap_pane_right": "prefix+shift+l",
+    "keys.cycle_pane_next": "prefix+tab",
+    "keys.cycle_pane_previous": "prefix+shift+tab",
+    "keys.split_vertical": "prefix+v",
+    "keys.split_horizontal": "prefix+minus",
+    "keys.close_pane": "prefix+x",
+    "keys.zoom": "prefix+z",
+    "keys.resize_mode": "prefix+r",
+    "keys.toggle_sidebar": "prefix+b",
+    "session.resume_agents_on_restore": True,
+    "remote.manage_ssh_config": True,
+    "experimental.allow_nested": False,
+    "experimental.pane_history": False,
+    "ui.sidebar_start_collapsed": False,
+    "ui.mouse_capture": True,
+    "ui.copy_on_select": True,
+    "ui.confirm_close": True,
+    "ui.prompt_new_tab_name": True,
+    "ui.pane_borders": ("one-of", True, "auto"),
+    "ui.pane_outer_borders": True,
+    "ui.pane_scrollbars": True,
+    "ui.pane_gaps": True,
+    "ui.tab_bar_right": [],
+    "ui.window_title": "{hostname}: {workspace}",
+    "ui.accent": "cyan",
+    "ui.sound.enabled": True,
+}
+
+def iter_leaves(node, prefix=""):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                yield from iter_leaves(value, path)
+            else:
+                yield path, value
+    else:
+        yield prefix, node
+
+for path, value in iter_leaves(config):
+    expected = pinned_defaults.get(path)
+    if expected is None:
+        continue
+    if isinstance(expected, tuple) and expected and expected[0] == "one-of":
+        restated = value in expected[1:]
+    else:
+        restated = value == expected
+    assert not restated, (path, value)
+
+# Model the retained built-in defaults (reviewed against Herdr 0.9.5): an explicitly configured value
 # replaces its default, and an empty list removes the action. This catches a
 # future local collision between configured actions and any retained
 # built-in instead of proving only that TOML can round-trip `[]`.
@@ -221,8 +324,11 @@ for command in keys["command"]:
         "command",
     )
     effective_key_owners[binding] = "command"
-for direction in ("left", "down", "up", "right"):
-    assert f"swap_pane_{direction}" not in effective_key_owners.values()
+assert "swap_pane_up" not in effective_key_owners.values()
+assert effective_key_owners["prefix+shift+h"] == "swap_pane_left"
+assert effective_key_owners["prefix+shift+j"] == "swap_pane_down"
+assert effective_key_owners["prefix+shift+k"] == "close_workspace"
+assert effective_key_owners["prefix+shift+l"] == "swap_pane_right"
 
 assert keys["command"] == [{
     "key": "prefix+g",
@@ -232,18 +338,16 @@ assert keys["command"] == [{
     "width": "90%",
     "height": "90%",
 }]
-assert config["session"]["resume_agents_on_restore"] is True
-assert config["remote"]["manage_ssh_config"] is False
-assert config["experimental"] == {"allow_nested": False, "pane_history": False}
+assert config["remote"] == {"manage_ssh_config": False}
+assert "confirm_close" not in config["ui"]
+assert "Workspace-close confirmation" in source_text
 assert config["ui"] == {
-    "sidebar_start_collapsed": False,
-    "mouse_capture": True,
-    "copy_on_select": True,
-    "confirm_close": True,
+    "accent": "blue",
+    "pane_outer_borders": False,
     "prompt_new_tab_name": False,
-    "pane_borders": True,
     "pane_scrollbars": False,
     "pane_gaps": False,
+    "tab_bar_right": [{"type": "zoom"}, {"type": "hostname"}],
     "sound": {"enabled": False},
 }
 PY
@@ -417,8 +521,9 @@ grep -qF 'Herdr (recommended; Apache-2.0)' "$repo/home/dot_local/bin/executable_
 assert_absent 'github.com/ogulcancelik/herdr' "$repo/home/.chezmoi.toml.tmpl"
 assert_absent 'AGPL-3.0' "$repo/home/dot_local/bin/executable_groundwork-configure"
 
-# Agent hooks are explicit, literal-consent operations and delegate only the
-# two supported tools detected on PATH. No apply hook invokes them.
+# Agent hooks are explicit, literal-consent operations and delegate claude,
+# codex, opencode, grok, and cursor when those tools are detected. No apply
+# hook invokes them.
 render herdr darwin "$repo/home/dot_local/bin/executable_groundwork-herdr-integrations.tmpl" "$tmp/integrations"
 chmod +x "$tmp/integrations"
 mkdir -p "$tmp/integration-bin" "$tmp/integration-home/.claude" "$tmp/integration-home/.codex"
@@ -426,6 +531,9 @@ cat >"$tmp/integration-bin/herdr" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$HERDR_TEST_LOG"
 if [[ "$*" == "integration install codex" && "${HERDR_FAIL_CODEX:-0}" == 1 ]]; then
+  exit 9
+fi
+if [[ "$*" == "integration install grok" && "${HERDR_FAIL_GROK:-0}" == 1 ]]; then
   exit 9
 fi
 [[ "$*" != "integration status" ]] || printf 'status ok\n'
@@ -465,6 +573,75 @@ grep -qF 'failed for: codex' "$tmp/integration-partial.err"
 grep -qF "rerun 'groundwork-herdr-integrations install --yes'" "$tmp/integration-partial.err"
 HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
   "$tmp/integrations" install --yes >"$tmp/integration-repair.out"
+
+# Groundwork CLIs Herdr supports are delegated. The Cursor desktop command is
+# not cursor-agent, and a bare ~/.cursor directory is not an installed hook.
+cat >"$tmp/integration-bin/opencode" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cat >"$tmp/integration-bin/grok" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cat >"$tmp/integration-bin/cursor" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cat >"$tmp/integration-bin/cursor-agent" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$tmp/integration-bin/opencode" "$tmp/integration-bin/grok" "$tmp/integration-bin/cursor" "$tmp/integration-bin/cursor-agent"
+mkdir -p "$tmp/integration-home/.config/opencode" "$tmp/integration-home/.grok" "$tmp/integration-home/.cursor"
+: >"$tmp/integration.log"
+HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install --yes >"$tmp/integration-agents.out"
+grep -qxF 'integration install claude' "$tmp/integration.log"
+grep -qxF 'integration install codex' "$tmp/integration.log"
+grep -qxF 'integration install opencode' "$tmp/integration.log"
+grep -qxF 'integration install grok' "$tmp/integration.log"
+grep -qxF 'integration install cursor' "$tmp/integration.log"
+grep -qxF 'integration status' "$tmp/integration.log"
+if grep -qF 'integration install cursor-agent' "$tmp/integration.log"; then
+  echo "cursor-agent was passed to herdr as the target name" >&2
+  exit 1
+fi
+: >"$tmp/integration.log"
+if HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" HERDR_FAIL_GROK=1 PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install --yes >"$tmp/integration-grok.out" 2>"$tmp/integration-grok.err"; then
+  echo "partial grok integration install reported success" >&2
+  exit 1
+fi
+grep -qF 'failed for: grok' "$tmp/integration-grok.err"
+grep -qF 'completed for: claude, codex, opencode' "$tmp/integration-grok.err"
+
+# Without cursor-agent, the desktop cursor command and ~/.cursor do not install or uninstall.
+rm -f "$tmp/integration-bin/cursor-agent"
+: >"$tmp/integration.log"
+HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" install --yes >"$tmp/integration-no-cursor.out"
+if grep -qF 'integration install cursor' "$tmp/integration.log"; then
+  echo "Cursor desktop app selected the Cursor integration" >&2
+  exit 1
+fi
+: >"$tmp/integration.log"
+HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" uninstall --yes >"$tmp/integration-uninstall.out"
+grep -qxF 'integration uninstall claude' "$tmp/integration.log"
+grep -qxF 'integration uninstall codex' "$tmp/integration.log"
+grep -qxF 'integration uninstall opencode' "$tmp/integration.log"
+grep -qxF 'integration uninstall grok' "$tmp/integration.log"
+if grep -qF 'integration uninstall cursor' "$tmp/integration.log"; then
+  echo "Cursor config directory alone selected uninstall" >&2
+  exit 1
+fi
+printf '#!/bin/sh\n' >"$tmp/integration-home/.cursor/herdr-agent-state.sh"
+: >"$tmp/integration.log"
+HOME="$tmp/integration-home" HERDR_TEST_LOG="$tmp/integration.log" PATH="$tmp/integration-bin:/usr/bin:/bin" \
+  "$tmp/integrations" uninstall --yes >"$tmp/integration-uninstall-cursor.out"
+grep -qxF 'integration uninstall cursor' "$tmp/integration.log"
+
 assert_hook="$repo/home/run_after_09-herdr-config-ownership.sh.tmpl"
 assert_absent 'integration install' "$assert_hook"
 

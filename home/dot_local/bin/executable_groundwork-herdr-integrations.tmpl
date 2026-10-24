@@ -12,10 +12,15 @@ Usage:
   groundwork-herdr-integrations install --yes
   groundwork-herdr-integrations uninstall --yes
 
-Inspect or explicitly install/remove Herdr's official Claude Code and Codex
-session-identity hooks for tools present on this machine. Install and uninstall
-delegate to Herdr's own bounded integration lifecycle; they never run during
-chezmoi apply. The exact --yes is required because agent configuration changes.
+Inspect or explicitly install/remove Herdr session-identity hooks for the
+Groundwork agent CLIs Herdr supports on this machine: Claude Code (claude),
+Codex (codex), OpenCode (opencode), and Grok (grok). Cursor is included only
+when cursor-agent is present. Uninstall still finds Claude Code, Codex,
+OpenCode, and Grok from their config directories after the CLI is gone, and
+finds Cursor from cursor-agent or from Herdr's hook file. The Cursor desktop
+app alone is not enough. Install and uninstall delegate to Herdr's own
+integration lifecycle; they never run during chezmoi apply. The exact --yes
+is required because agent configuration changes.
 EOF
 }
 
@@ -49,32 +54,87 @@ if [[ "$action" == status ]]; then
   exec herdr integration status
 fi
 
-claude_selected=0
-codex_selected=0
-if [[ "$action" == install ]]; then
-  command -v claude >/dev/null 2>&1 && claude_selected=1
-  command -v codex >/dev/null 2>&1 && codex_selected=1
-else
-  # Uninstall remains available after the agent binary itself was removed.
-  [[ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]] && claude_selected=1
-  [[ -d "${CODEX_HOME:-$HOME/.codex}" ]] && codex_selected=1
-fi
+agent_selected() {
+  local agent="$1"
+  local cursor_dir grok_dir
+  case "$action" in
+    install)
+      case "$agent" in
+        claude | codex | opencode | grok)
+          if command -v "$agent" >/dev/null 2>&1; then
+            return 0
+          fi
+          ;;
+        cursor)
+          if command -v cursor-agent >/dev/null 2>&1; then
+            return 0
+          fi
+          ;;
+      esac
+      return 1
+      ;;
+    uninstall)
+      case "$agent" in
+        claude)
+          if [[ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]]; then
+            return 0
+          fi
+          ;;
+        codex)
+          if [[ -d "${CODEX_HOME:-$HOME/.codex}" ]]; then
+            return 0
+          fi
+          ;;
+        opencode)
+          if [[ -d "$HOME/.config/opencode" ]]; then
+            return 0
+          fi
+          ;;
+        grok)
+          if [[ -n "${GROK_CONFIG_DIR:-}" ]]; then
+            grok_dir="$GROK_CONFIG_DIR"
+          else
+            grok_dir="${GROK_HOME:-$HOME/.grok}"
+          fi
+          if [[ -d "$grok_dir" ]]; then
+            return 0
+          fi
+          ;;
+        cursor)
+          if command -v cursor-agent >/dev/null 2>&1; then
+            return 0
+          fi
+          cursor_dir="${CURSOR_CONFIG_DIR:-$HOME/.cursor}"
+          if [[ -f "$cursor_dir/herdr-agent-state.sh" ]]; then
+            return 0
+          fi
+          ;;
+      esac
+      return 1
+      ;;
+    *) return 1 ;;
+  esac
+}
 
-if ((claude_selected == 0 && codex_selected == 0)); then
-  echo "$prog: no selected Claude Code or Codex installation was detected; nothing changed."
+agents=(claude codex opencode grok cursor)
+selected_agents=()
+for agent in "${agents[@]}"; do
+  if agent_selected "$agent"; then
+    selected_agents+=("$agent")
+  fi
+done
+
+if ((${#selected_agents[@]} == 0)); then
+  echo "$prog: no Claude Code, Codex, OpenCode, Grok, or Cursor Agent CLI installation was detected; nothing changed."
   exit 0
 fi
 
-for agent in claude codex; do
-  [[ "$agent" == claude && "$claude_selected" -eq 1 ]] || \
-    [[ "$agent" == codex && "$codex_selected" -eq 1 ]] || continue
+for agent in "${selected_agents[@]}"; do
   printf '%s %s integration: %s\n' "$action" "$agent" "herdr integration $action $agent"
 done
 failed_agents=""
 succeeded_agents=""
-for agent in claude codex; do
-  [[ "$agent" == claude && "$claude_selected" -eq 1 ]] || \
-    [[ "$agent" == codex && "$codex_selected" -eq 1 ]] || continue
+for agent in "${selected_agents[@]}"; do
   if herdr integration "$action" "$agent"; then
     succeeded_agents="${succeeded_agents}${succeeded_agents:+, }$agent"
   else
