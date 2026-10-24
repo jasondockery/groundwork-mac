@@ -211,6 +211,7 @@ def read_recorded(path):
 def enable_remote_login():
     result = run(SYSTEMSETUP)
     if result.returncode == 0:
+        print('Remote Login is on.')
         return True
     detail = (result.stderr or result.stdout or '').strip()
     print('Remote Login could not be enabled from this terminal.')
@@ -257,25 +258,17 @@ def tailscale_state():
 
 
 def report_blip():
+    # blip-check's Messages probe can raise the one-time Allow prompt for
+    # this python3, or store a denial against that binary. Status only reports.
     path = blip_check_path()
     if not path.is_file():
         print('Blip check: not installed')
         return
-    try:
-        result = run(['python3', str(path)])
-    except subprocess.TimeoutExpired:
-        print('Blip check: did not finish within 15 seconds. Nothing was marked read.')
-        return
-    except OSError as error:
-        print(f'Blip check: python3 could not run ({error}). Nothing was marked read.')
-        return
-    print(f'Blip check: exit {result.returncode} (ran without --markread)')
-    text = (result.stdout or '').rstrip()
-    if text:
-        print(text)
-    error_text = (result.stderr or '').rstrip()
-    if error_text:
-        print(error_text, file=sys.stderr)
+    print(f'Blip check: installed at {path}')
+    print('From the client, Blip wants:')
+    print('ssh <host> \'python3 "$HOME/.blip/bin/blip-check"\'')
+    print('Replace <host> with this Mac\'s SSH name.')
+    print('The Messages probe can raise the one-time Allow prompt, so status does not run it.')
 
 
 def minutes(value):
@@ -368,6 +361,17 @@ def prepare():
     else:
         print('Remote Login is on.')
     if need_sleep:
+        # The password prompt is a gap. A symlink created while it waits must
+        # fail here, before pmset. record_previous would skip the write and
+        # the sleep change would still run.
+        try:
+            ensure_record_destination(destination)
+        except RuntimeError as error:
+            print(
+                f'iMessage gateway: {error} AC sleep was not changed. Battery sleep was not changed.',
+                file=sys.stderr,
+            )
+            return 1
         wrote = record_previous(destination, ac_sleep)
         result = run(PMSET_WRITE)
         if result.returncode != 0:
@@ -420,7 +424,7 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Actions:
-  status   Report Remote Login, allowed users, AC sleep, Tailscale, and blip-check. Changes nothing and does not pass --markread.
+  status   Report Remote Login, allowed users, AC sleep, Tailscale, and whether blip-check is installed. Changes nothing. It does not run blip-check, because the Messages probe can raise the one-time Allow prompt.
   prepare  When the role is on, enable Remote Login and set AC sleep to 0. A non-interactive apply defers the privileged part instead of aborting.
   setup    Open Sharing and Privacy & Security, then print the manual steps.
 

@@ -183,6 +183,7 @@ imessage_gateway = "yes"
         self.assertEqual(stat.S_IMODE(recorded.stat().st_mode), 0o600)
         self.assert_narrow(run)
         self.assertIn('Recorded the previous AC sleep value 10', stdout.getvalue())
+        self.assertNotIn('Remote Login is on.', stdout.getvalue())
 
     def test_prepare_is_idle_when_remote_login_and_ac_sleep_are_already_set(self):
         effects = [self.completed(0), self.completed(0, AC_SLEEP_0)]
@@ -227,12 +228,13 @@ imessage_gateway = "yes"
             self.completed(0),
             self.completed(0),
         ]
-        with self.desktop({'headless': False, 'imessage_gateway': True}):
+        with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, _stderr):
             with patch.object(gw, 'run', side_effect=effects) as run:
                 self.assertEqual(gw.main(['prepare']), 0)
         self.assertEqual(recorded.read_text(encoding='utf-8'), '3\n')
         self.assertEqual(run.call_args_list[-1].args[0], gw.PMSET_WRITE)
         self.assertNotIn(['open', gw.SHARING_URL], [call.args[0] for call in run.call_args_list])
+        self.assertIn('Remote Login is on.', stdout.getvalue())
         self.assert_narrow(run)
 
     def test_symlink_record_blocks_sudo_and_leaves_the_target(self):
@@ -248,6 +250,35 @@ imessage_gateway = "yes"
         self.assertEqual(target.read_text(encoding='utf-8'), 'keep\n')
         self.assertTrue(recorded.is_symlink())
         self.assertEqual([call.args[0] for call in run.call_args_list], [gw.SSH_SERVICE, gw.PMSET_READ])
+
+    def test_symlink_created_during_password_prompt_skips_pmset(self):
+        target = self.home / 'secret-sleep'
+        target.write_text('keep\n', encoding='utf-8')
+        recorded = self.state_file()
+
+        def invoke(command, **_kwargs):
+            if command == ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]:
+                recorded.parent.mkdir(parents=True, exist_ok=True)
+                recorded.symlink_to(target)
+                return self.completed(0)
+            if command == gw.SSH_SERVICE:
+                return self.completed(0)
+            if command == gw.PMSET_READ:
+                return self.completed(0, AC_SLEEP_10)
+            self.fail(f'unexpected command {command}')
+
+        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
+            with patch.object(gw, 'run', side_effect=invoke) as run:
+                self.assertEqual(gw.main(['prepare']), 1)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [gw.SSH_SERVICE, gw.PMSET_READ, ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]],
+        )
+        self.assertEqual(target.read_text(encoding='utf-8'), 'keep\n')
+        self.assertTrue(recorded.is_symlink())
+        self.assertIn('symlink', stderr.getvalue())
+        self.assertIn('AC sleep was not changed', stderr.getvalue())
+        self.assert_narrow(run)
 
     def test_directory_record_blocks_sudo(self):
         recorded = self.state_file()
@@ -283,6 +314,8 @@ imessage_gateway = "yes"
         self.assertIn('Battery sleep minutes: 5', text)
         self.assertIn('Tailscale: running', text)
         self.assertIn('not recorded', text)
+        self.assertIn('Blip check: not installed', text)
+        self.assertNotIn('python3', text)
         self.assert_narrow(run)
         self.assertFalse(self.state_file().exists())
 
@@ -295,16 +328,27 @@ imessage_gateway = "yes"
             self.completed(0, AC_SLEEP_0),
             self.completed(0, 'GroupMembership: gateway\n'),
             self.completed(1),
-            self.completed(0, 'all green\n'),
         ]
         with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, _stderr):
             with patch.object(gw, 'run', side_effect=effects) as run:
                 self.assertEqual(gw.main(['status']), 0)
-        self.assertEqual(run.call_args_list[-1].args[0], ['python3', str(blip)])
-        self.assertEqual(len(run.call_args_list[-1].args[0]), 2)
-        self.assertIn('without --markread', stdout.getvalue())
-        self.assertIn('gateway', stdout.getvalue())
-        self.assertIn('Tailscale: not running', stdout.getvalue())
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            commands,
+            [gw.SSH_SERVICE, gw.PMSET_READ, gw.ACCESS_GROUP, gw.TAILSCALE_PROCESS],
+        )
+        for command in commands:
+            blob = ' '.join(command)
+            self.assertNotIn('python3', blob)
+            self.assertNotIn('blip-check', blob)
+        text = stdout.getvalue()
+        self.assertIn('Blip check: installed', text)
+        self.assertIn('ssh <host> \'python3 "$HOME/.blip/bin/blip-check"\'', text)
+        self.assertIn('one-time Allow prompt', text)
+        self.assertIn('status does not run it', text)
+        self.assertIn('gateway', text)
+        self.assertIn('Tailscale: not running', text)
+        self.assertEqual(blip.read_text(encoding='utf-8'), 'print("ok")\n')
         self.assert_narrow(run)
 
     def test_status_does_not_follow_a_symlink_record(self):
@@ -322,8 +366,9 @@ imessage_gateway = "yes"
         with self.desktop({'headless': False}) as (stdout, _stderr):
             with patch.object(gw, 'run', side_effect=effects):
                 self.assertEqual(gw.main(['status']), 0)
-        self.assertIn('Recorded previous AC sleep: unreadable', stdout.getvalue())
-        self.assertNotIn('99', stdout.getvalue())
+        text = stdout.getvalue()
+        self.assertIn('Recorded previous AC sleep: unreadable', text)
+        self.assertNotIn('Recorded previous AC sleep: 99', text)
         self.assertEqual(target.read_text(encoding='utf-8'), '99\n')
 
     def test_setup_opens_both_panes_without_pmset(self):
@@ -346,13 +391,18 @@ imessage_gateway = "yes"
         self.assertIn('Manual steps', stdout.getvalue())
 
     def test_help_and_rejected_arguments_do_not_run_commands(self):
-        with patch.object(gw.sys, 'stdout', io.StringIO()), patch.object(gw.sys, 'stderr', io.StringIO()):
+        stdout = io.StringIO()
+        with patch.object(gw.sys, 'stdout', stdout), patch.object(gw.sys, 'stderr', io.StringIO()):
             with patch.object(gw, 'run') as run:
                 self.assertEqual(gw.main(['--help']), 0)
                 self.assertEqual(gw.main(['--bogus']), 64)
                 self.assertEqual(gw.main(['status', 'extra']), 64)
                 self.assertEqual(gw.main(['nope']), 64)
         run.assert_not_called()
+        help_text = stdout.getvalue()
+        self.assertIn('Changes nothing', help_text)
+        self.assertIn('does not run blip-check', help_text)
+        self.assertNotIn('--markread', help_text)
 
     def test_other_platforms_do_not_run_commands(self):
         cases = (

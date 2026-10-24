@@ -41,7 +41,7 @@ Privileged steps use Groundwork's administrator-password helper. If the apply ha
 groundwork-imessage-gateway status
 ```
 
-`status` reports Remote Login (`launchctl print system/com.openssh.sshd`), whether SSH is limited to selected users, on-power and battery sleep (`pmset -g custom`), whether the Tailscale app is running, and the recorded previous sleep value. If `~/.blip/bin/blip-check` exists, status runs `python3 ~/.blip/bin/blip-check` without `--markread`, so no Automation prompt fires.
+`status` reports Remote Login (`launchctl print system/com.openssh.sshd`), whether SSH is limited to selected users, on-power and battery sleep (`pmset -g custom`), whether the Tailscale app is running, and the recorded previous sleep value. If `~/.blip/bin/blip-check` exists, status says it is installed and prints the command Blip wants from the client: `ssh <host> 'python3 "$HOME/.blip/bin/blip-check"'`. `<host>` is this Mac's SSH name. That Messages probe can raise the one-time Allow prompt, so status does not run it.
 
 ```bash
 groundwork-imessage-gateway
