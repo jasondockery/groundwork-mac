@@ -76,7 +76,7 @@ docker buildx version
 
 Groundwork’s Colima template affects new instances. Use `colima start --edit` for an existing instance; deleting an instance to pick up configuration would delete its container data.
 
-When `~/.colima` already exists, Groundwork’s own `colima` commands set `COLIMA_HOME` to that directory so Colima does not warn that it is ignoring `XDG_CONFIG_HOME`. Groundwork does not move or delete `~/.colima`. It also does not install Rosetta when Colima warns that Rosetta is missing; that warning is expected for an arm64-only install.
+When `COLIMA_HOME` is unset and `~/.colima` is already a directory, Groundwork’s own `colima` commands set `COLIMA_HOME` to that directory so Colima does not warn that it is ignoring `XDG_CONFIG_HOME`. A `COLIMA_HOME` you already set is left unchanged for `start --help`, `start`, and `stop`. Groundwork does not move or delete `~/.colima`. It also does not install Rosetta when Colima warns that Rosetta is missing; that warning is expected for an arm64-only install.
 
 ## 3. Restore and verify one project at a time
 

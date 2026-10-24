@@ -333,15 +333,21 @@ has_pending() {
   return 1
 }
 
-# The read-only report lists every pending file. Failure is narrower: a Mac
-# App Store identity record or a Homebrew upgrade retry is not package-manager
-# maintenance, and must not make this helper exit as if brew, npm, or pnpm failed.
+# The read-only report lists every pending file. Failure ignores only the two
+# upgrade retries that share this directory: mac-app-store and homebrew-upgrade.
+# Every other filename, including one this helper does not recognize, is
+# package-manager maintenance.
 package_manager_pending() {
-  local stage
+  local pending_file stage
   [[ -f "$legacy_pending" ]] && return 0
   [[ -d "$pending_dir" ]] || return 1
-  for stage in homebrew npm pnpm maintenance-helper; do
-    [[ -f "$pending_dir/$stage" ]] && return 0
+  for pending_file in "$pending_dir"/*; do
+    [[ -f "$pending_file" ]] || continue
+    stage="${pending_file##*/}"
+    case "$stage" in
+      mac-app-store | homebrew-upgrade) ;;
+      *) return 0 ;;
+    esac
   done
   return 1
 }

@@ -1469,21 +1469,26 @@ if command -v mas >/dev/null 2>&1; then
     [[ "$base" == *.app && "$path" == "$applications_dir/$base" ]] || return 1
     return 0
   }
-  # 0 and a version on stdout: same bundle id, regular non-empty receipt.
-  # 10 missing or incomplete bundle, 11 bundle id changed, 12 receipt missing
-  # or empty, 13 the bundle could not be read. A receipt that the App Store
-  # replaced is still valid; only a missing, symlinked, or empty receipt is not.
+  # 0 and a version on stdout: same bundle id, and a non-empty regular
+  # receipt reached without a symlink at Contents, Info.plist, _MASReceipt,
+  # or the receipt file. 10 missing or incomplete bundle, 11 bundle id
+  # changed, 12 receipt missing, empty, or not a regular file, 13 the bundle
+  # could not be read. A receipt the App Store replaced is still valid.
   mas_read_bundle_version() {
-    local expected_id="$1" path="$2" plist bundle_id version receipt
+    local expected_id="$1" path="$2" plist bundle_id version receipt contents receipt_dir
     mas_bundle_candidate "$expected_id" "$path" || return 10
     [[ ! -L "$path" && -d "$path" ]] || return 10
-    plist="$path/Contents/Info.plist"
+    contents="$path/Contents"
+    [[ ! -L "$contents" && -d "$contents" ]] || return 10
+    plist="$contents/Info.plist"
     [[ ! -L "$plist" && -f "$plist" ]] || return 10
     command -v plutil >/dev/null 2>&1 || return 13
     bundle_id="$(plutil -extract CFBundleIdentifier raw "$plist" 2>/dev/null)" || return 13
     [[ "$bundle_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 13
     [[ "$bundle_id" == "$expected_id" ]] || return 11
-    receipt="$path/Contents/_MASReceipt/receipt"
+    receipt_dir="$contents/_MASReceipt"
+    [[ ! -L "$receipt_dir" && -d "$receipt_dir" ]] || return 12
+    receipt="$receipt_dir/receipt"
     [[ ! -L "$receipt" && -f "$receipt" && -s "$receipt" ]] || return 12
     version="$(plutil -extract CFBundleShortVersionString raw "$plist" 2>/dev/null)" || return 13
     [[ -n "$version" && ! "$version" =~ [[:cntrl:]] ]] || return 13
@@ -1769,6 +1774,7 @@ if command -v mas >/dev/null 2>&1; then
       # Try one bounded reindex and one inventory retry, then read the bundle.
       mas_verified_from_bundle=0
       mas_bundle_still_outdated=0
+      mas_bundle_version_mismatch=0
       mas_bundle_unreadable=0
       mas_identity_reason=""
       if [[ -z "$mas_post_name" || -z "$mas_post_version" ]]; then
@@ -1801,16 +1807,19 @@ if command -v mas >/dev/null 2>&1; then
             0)
               mas_post_name="$mas_name"
               mas_post_version="$mas_bundle_version"
-              if [[ "$mas_bundle_version" == "$mas_pre_version" \
-                && "$mas_bundle_version" != "$mas_target_version" ]]; then
+              # Only the target version is a verified update. The previous
+              # version is the existing failed update. Anything else is neither.
+              if [[ "$mas_bundle_version" == "$mas_target_version" ]]; then
+                mas_verified_from_bundle=1
+              elif [[ "$mas_bundle_version" == "$mas_pre_version" ]]; then
                 mas_bundle_still_outdated=1
               else
-                mas_verified_from_bundle=1
+                mas_bundle_version_mismatch=1
               fi
               ;;
             10) mas_identity_reason="The app bundle is missing or incomplete." ;;
             11) mas_identity_reason="Its bundle identifier changed." ;;
-            12) mas_identity_reason="Its Mac App Store receipt is missing or empty." ;;
+            12) mas_identity_reason="Its Mac App Store receipt is missing, empty, or not a regular file." ;;
             *) mas_bundle_unreadable=1 ;;
           esac
         fi
@@ -1853,6 +1862,18 @@ if command -v mas >/dev/null 2>&1; then
         [[ "$mas_status" -ne 0 ]] || mas_status=1
         continue
       fi
+      if [[ "$mas_bundle_version_mismatch" -eq 1 ]]; then
+        mas_post_outdated=remaining
+        mas_remaining_count=$((mas_remaining_count + 1))
+        printf 'Groundwork failed: Mac App Store app %s (ID %s) bundle version is %s, which is neither the previous version %s nor the target %s.\n' \
+          "$mas_name" "$mas_id" "$mas_post_version" "$mas_pre_version" "$mas_target_version" >&2
+        append_maintenance_receipt mas-app "$mas_id" "$mas_name" \
+          "$mas_pre_version" "$mas_target_version" "$mas_command_outcome" \
+          "$mas_command_status" "$mas_termination" "$mas_post_version" \
+          "$mas_post_outdated" || mas_observe_status=1
+        [[ "$mas_status" -ne 0 ]] || mas_status=1
+        continue
+      fi
       if grep -qxF -- "$mas_id" "$mas_remaining_ids"; then
         mas_post_outdated=remaining
         mas_remaining_count=$((mas_remaining_count + 1))
@@ -1864,7 +1885,7 @@ if command -v mas >/dev/null 2>&1; then
         if [[ "$mas_post_version" != "$mas_pre_version" ]]; then
           mas_verified_updated_count=$((mas_verified_updated_count + 1))
           if [[ "$mas_verified_from_bundle" -eq 1 ]]; then
-            printf 'Groundwork verified: %s (ID %s) changed from %s to %s; the app bundle and its Mac App Store receipt match.\n' \
+            printf 'Groundwork verified: %s (ID %s) changed from %s to %s; the bundle identifier matches and the Mac App Store receipt is a non-empty regular file.\n' \
               "$mas_name" "$mas_id" "$mas_pre_version" "$mas_post_version"
           else
             printf 'Groundwork verified: %s (ID %s) changed from %s to %s and is no longer reported outdated.\n' \
@@ -1968,14 +1989,19 @@ fi
 # nonzero only after recording every outcome. --skip-maintenance is the
 # exceptional fast path and never clears older pending work.
 maintenance_pending() {
-  local pending_dir="$HOME/.local/state/groundwork/update-all-pending" stage
-  # Only Homebrew, npm, pnpm, and the maintenance helper are package-manager
-  # maintenance. A Mac App Store verification record or a Homebrew upgrade
-  # retry shares this directory and must not fail the cleanup lane.
+  local pending_dir="$HOME/.local/state/groundwork/update-all-pending" pending_file stage
+  # Every file in this directory is package-manager maintenance except the
+  # two upgrade retries that share it: mac-app-store and homebrew-upgrade.
+  # An unknown name stays pending so a future stage cannot pass silently.
   [[ -f "$HOME/.local/state/groundwork/homebrew-cleanup-pending" ]] && return 0
   [[ -d "$pending_dir" ]] || return 1
-  for stage in homebrew npm pnpm maintenance-helper; do
-    [[ -f "$pending_dir/$stage" ]] && return 0
+  for pending_file in "$pending_dir"/*; do
+    [[ -f "$pending_file" ]] || continue
+    stage="${pending_file##*/}"
+    case "$stage" in
+      mac-app-store | homebrew-upgrade) ;;
+      *) return 0 ;;
+    esac
   done
   return 1
 }
@@ -2184,10 +2210,11 @@ docker_context_is_canonical_local() {
 }
 
 # Colima warns on every call when ~/.colima exists and XDG_CONFIG_HOME is set.
-# Point only these invocations at the directory Colima is already using.
-# Do not create, move, or delete that directory.
+# When COLIMA_HOME is unset and ~/.colima is already a directory, point only
+# these invocations at that directory. A value the user already set is kept.
+# Do not create, move, or delete ~/.colima.
 groundwork_colima() {
-  if [[ -d "$HOME/.colima" ]]; then
+  if [[ -z "${COLIMA_HOME:-}" && -d "$HOME/.colima" ]]; then
     COLIMA_HOME="$HOME/.colima" command colima "$@"
   else
     command colima "$@"

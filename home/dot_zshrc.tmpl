@@ -416,7 +416,7 @@ groundwork-update-reminder() {
       read -r pending_note <"$legacy_pending" 2>/dev/null
       print -r -- "  homebrew: ${pending_note:-legacy cleanup repair is pending}"
     fi
-    if (( upgrade_pending || (mas_pending && ! manager_pending) )); then
+    if (( upgrade_pending || mas_pending )); then
       print "Run update-all again to retry the complete update transaction."
     else
       print "Run update-all again to retry the normal maintenance transaction."
