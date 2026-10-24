@@ -82,9 +82,6 @@ environment:
   release_posture: preview    # posture: seeds defaults, does not name a channel
 
 tools:
-  primary_editor:
-    family: vscode
-    variant: stable
   primary_browser:
     family: chrome
     variant: beta
@@ -210,8 +207,8 @@ owns — there must not be one answer in chezmoi and a second copy elsewhere.
 ## Tool catalog
 
 One canonical record per tool family. Channel variants are **separate products**
-with different cask tokens, application bundles, CLI commands, and settings
-directories — values that cannot be derived from the token.
+with different cask tokens, application bundles, bundle identifiers, and
+settings locations — values that cannot be derived from the token.
 
 The canonical catalog is a **machine-readable, schema-validated file**
 (`data/tool-channels.yaml` or equivalent). It is not this document. Any table
@@ -281,9 +278,10 @@ path, or shadows a vendor command.** Doing so breaks code signing, bundle
 identity and LaunchServices registration, the vendor's own updater,
 side-by-side installation, and rollback.
 
-Concretely: `Google Chrome.app` always means Stable and `Google Chrome
-Beta.app` always means Beta, exactly as Google intends. Normalization, if any, happens in
-Groundwork's own invocation layer — never in the application bundle.
+Concretely: `Google Chrome.app` always means Stable and
+`Google Chrome Beta.app` always means Beta, exactly as Google intends.
+Normalization, if any, happens in Groundwork's own invocation layer — never in
+the application bundle.
 
 ### Deferred: role-based resolver commands
 
@@ -304,16 +302,18 @@ drift surface for a fallback the user rarely opens.
 retained stable fallback is installed but unmanaged. If the user later promotes
 the fallback to primary, the profile change plan renders settings then.
 
-Where a family needs channel-specific values, use a common file plus an
-overlay, rendered to that channel's native path:
+Where a family needs channel-specific values, write them to that channel's own
+preference domain, the way Groundwork already configures Chrome with
+`defaults write`:
 
 ```text
-Stable:  ~/Library/Application Support/Google/Chrome/
-Beta:    ~/Library/Application Support/Google/Chrome Beta/
+Stable:  com.google.Chrome
+Beta:    com.google.Chrome.beta
 ```
 
-Render real files. Do not symlink two channels to one live file — schemas,
-extensions, and migrations differ between them.
+Groundwork never writes into a browser's profile data directories under
+`~/Library/Application Support`; the browser owns those. Do not point two
+channels at one domain — policies, schemas, and migrations differ between them.
 
 Promotion and demotion are explicit, never incidental:
 
