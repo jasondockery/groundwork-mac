@@ -8,6 +8,10 @@ The Brewfile installs `tailscale-app`. That installer needs an administrator pas
 
 For inbound terminal access, enable System Settings → General → Sharing → Remote Login and select only the local users who need access. The macOS GUI app cannot serve Tailscale SSH. Use normal OpenSSH over the device's MagicDNS name, with your existing per-account SSH keys and the shared guide's network grant. Keep local SSH ownership separate from GitHub account authentication. Screen Sharing is an optional, separate service; restrict its allowed users and reach it through Tailscale.
 
+### Optional iMessage gateway
+
+A desktop Mac can stay reachable for [Blip](https://github.com/nixfred/blip) over ordinary OpenSSH. The role stays off until you turn it on with `groundwork-configure`. An apply then enables Remote Login and stops system sleep while the Mac is on power. It does not grant privacy permissions, write SSH keys, or turn off System Integrity Protection. The recorded sleep value, manual grants, and undo steps are in [iMessage gateway](imessage-gateway.md).
+
 Do not install the headless formula alongside the desktop cask. Use the app to diagnose sign-in and DNS, then test `tailscale status` and a connection from another approved machine before relying on remote recovery.
 
 ### Automatic startup and local desktop permission

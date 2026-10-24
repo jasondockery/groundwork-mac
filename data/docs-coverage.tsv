@@ -23,6 +23,7 @@ daily	groundwork-doctor --shell	command	executable	home/dot_local/share/groundwo
 daily	groundwork-doctor --storage	command	executable	home/dot_local/share/groundwork/commands.tsv	platforms.html	no	no	all
 daily	groundwork-help --pick [query]	command	executable	home/dot_local/share/groundwork/commands.tsv	commands.html	yes	no	all; requires fzf
 daily	groundwork-help [query]	command	executable	home/dot_local/share/groundwork/commands.tsv	commands.html	yes	no	all
+daily	groundwork-imessage-gateway	command	executable	home/dot_local/share/groundwork/commands.tsv	commands.html	no	no	macOS desktop
 daily	groundwork-mux	command	executable	home/dot_local/share/groundwork/commands.tsv	herdr.html	no	no	all
 daily	groundwork-mux status --json	command	executable	home/dot_local/share/groundwork/commands.tsv	herdr.html	no	no	all
 daily	groundwork-platform	command	executable	home/dot_local/share/groundwork/commands.tsv	platforms.html	no	no	all

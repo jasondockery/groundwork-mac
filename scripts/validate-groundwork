@@ -1150,6 +1150,7 @@ validate_static_foundation() {
   check "common developer setup and Docker configuration merge"
   python3 -B scripts/test-common-setup
   python3 -B scripts/test-remote-desktop
+  python3 -B tests/test_imessage_gateway.py
 
   local canonical_rows canonical_expected canonical_observed
 
@@ -9343,6 +9344,8 @@ PYTHON
     rg -n 'promptChoiceOnce \. "profile_preset"|Starting profile' home/.chezmoi.toml.tmpl
   assert_no_matches "chezmoi init must not ask for an Xcode beta preference" \
     rg -n 'promptBoolOnce \. "beta"' home/.chezmoi.toml.tmpl
+  assert_no_matches "chezmoi init must not ask for the iMessage gateway role" \
+    rg -n 'promptBoolOnce \. "imessage_gateway"' home/.chezmoi.toml.tmpl
   _profile_render() {
     local override_data="$1"
     chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
@@ -15511,6 +15514,8 @@ EOF
     || fail "a stored key_repeat was discarded when the interview skipped its question"
   grep -qF 'beta = true' "$interview_out" \
     || fail "a stored Xcode beta preference was discarded during regeneration"
+  grep -qF 'imessage_gateway = false' "$interview_out" \
+    || fail "an existing machine without an iMessage gateway answer must keep that role off"
   grep -qF 'install_chrome = false' "$interview_out" \
     || fail "the obsolete install_chrome field must survive regeneration as ignored compatibility input"
   grep -qF 'terminal_multiplexer = "tmux"' "$interview_out" \
@@ -15529,6 +15534,8 @@ EOF
     || fail "an unanswered key_repeat must fall back to the documented default"
   grep -qF 'beta = false' "$interview_fresh_out" \
     || fail "a fresh install must default the mutable Xcode beta preference to false"
+  grep -qF 'imessage_gateway = false' "$interview_fresh_out" \
+    || fail "a fresh install must default the iMessage gateway role to false"
   grep -qF 'terminal_multiplexer = "herdr"' "$interview_fresh_out" \
     || fail "a fresh install must recommend Herdr while preserving an explicit choice"
   # A real older Groundwork config has profile_preset but predates the new
