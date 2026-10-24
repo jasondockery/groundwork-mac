@@ -12,12 +12,12 @@ set -euo pipefail
 #      would fail the bundle anyway, and admitting one would put an unverified
 #      artifact on every new machine.
 #
-#   2. Browser exception registry — the official Chrome stable and Beta casks
-#      cannot satisfy that policy (Google's own updater owns their binaries, so
-#      the casks declare no_check). They must be absent from the checksum-safe
-#      Brewfile, selected only by the profile-rendered Brewfile.browser, and
-#      installed by the bounded exception lane. If either cask gains a checksum,
-#      this audit says so instead of preserving an unnecessary bypass.
+#   2. Browser exception registry — the official Chrome stable cask cannot
+#      satisfy that policy (Google's own updater owns the binary, so the cask
+#      declares no_check). It must be absent from the checksum-safe Brewfile,
+#      selected only by the profile-rendered Brewfile.browser, and installed by
+#      the bounded exception lane. If that cask gains a checksum, this audit
+#      says so instead of preserving an unnecessary bypass.
 #
 # Needs macOS, Homebrew, chezmoi, jq, and network access, so this is a receipt
 # (and a required CI job), not part of the offline validator.
@@ -33,8 +33,8 @@ for tool in brew jq chezmoi; do
   }
 done
 
-# The only casks allowed to be unchecked — and ONLY outside the main Brewfile.
-exception_casks=(google-chrome google-chrome@beta)
+# The only cask allowed to be unchecked — and ONLY outside the main Brewfile.
+exception_casks=(google-chrome)
 
 status=0
 declare -a all_casks=()
@@ -71,7 +71,7 @@ for work in false true; do
         [[ -n "$cask" ]] || continue
         all_casks+=("$cask")
         # Invariant 2: browser exceptions must never be inside the safe Brewfile.
-        if [[ "$cask" == "google-chrome" || "$cask" == "google-chrome@beta" ]]; then
+        if [[ "$cask" == "google-chrome" ]]; then
           echo "VIOLATION $cask is in the Brewfile ($profile)." >&2
           echo "          It ships no checksum, so the --require-sha bundle would fail — and admitting" >&2
           echo "          it would hand every new machine an unverified artifact. It belongs in its" >&2
@@ -105,8 +105,8 @@ preview_browser="$(render_browser_profile preview)" \
   printf 'FAIL: current browser profile selected:\n%s\n' "$current_browser" >&2
   exit 1
 }
-[[ "$preview_browser" == $'google-chrome\ngoogle-chrome@beta' ]] || {
-  printf 'FAIL: preview browser profile must retain stable then add Beta; selected:\n%s\n' "$preview_browser" >&2
+[[ "$preview_browser" == "google-chrome" ]] || {
+  printf 'FAIL: preview browser profile must select Chrome stable only; selected:\n%s\n' "$preview_browser" >&2
   exit 1
 }
 
@@ -195,7 +195,7 @@ for exception_cask in "${exception_casks[@]}"; do
 done
 
 if ((status == 0)); then
-  echo "ok: ${#unique_casks[@]} safe casks are versioned and checksummed; both profile-selected Chrome exceptions remain justified"
+  echo "ok: ${#unique_casks[@]} safe casks are versioned and checksummed; the Chrome stable exception remains justified"
 else
   echo "FAIL: the cask inventory violates Groundwork's checksum policy" >&2
 fi

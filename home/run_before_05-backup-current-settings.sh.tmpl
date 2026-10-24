@@ -113,9 +113,6 @@ NSGlobalDomain	InitialKeyRepeat
 com.apple.dock	show-recents
 com.apple.screencapture	location
 com.google.Chrome	PasswordManagerEnabled
-{{ if contains "google-chrome@beta" (includeTemplate "browser-brewfile" .) -}}
-com.google.Chrome.beta	PasswordManagerEnabled
-{{ end -}}
 EOF
 
 if command -v brew >/dev/null 2>&1; then

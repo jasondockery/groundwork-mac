@@ -521,14 +521,14 @@ done nor lost in review prose.
       `sha256 :no_check`), so no unchecked "fast lane" exists and no
       `groundwork-ai-update` split is warranted. An earlier unscoped
       `--greedy-latest` was a no-op and removed; the current exact-token lane is
-      a separately proved contract. The official Chrome stable
-      and Beta casks genuinely ship `sha256 :no_check` (Google's updater owns
-      the binaries): both stay OUT of the checksum-safe Brewfile. The profile
-      renders the exact selected set into `Brewfile.browser`, the bounded lane
-      installs it only after the checksummed bundle succeeds, and failure makes
-      the next apply retry. Current/work select stable; preview selects Beta and
-      retains stable as a fallback. The obsolete setup opt-in remains ignored
-      compatibility input rather than a rendering failure.
+      a separately proved contract. The official Chrome stable cask genuinely
+      ships `sha256 :no_check` (Google's updater owns the binary): it stays OUT
+      of the checksum-safe Brewfile. Every desktop Mac posture renders that one
+      cask into `Brewfile.browser`, the bounded lane installs it only after the
+      checksummed bundle succeeds, and failure makes the next apply retry.
+      Chrome Beta is not selected. An existing Beta install is not removed by
+      Groundwork. The obsolete setup opt-in remains ignored compatibility input
+      rather than a rendering failure.
       `scripts/audit-brew-casks` enforces both invariants across every
       conditional profile (work, password manager, game-dev) and self-audits
       the exception — it is a required macOS CI job, not a manual habit.
