@@ -6233,6 +6233,191 @@ EOF
     || fail "a failed Homebrew observation did not print the exact command to reproduce it"
   test ! -e "$update_all_stamp"
 
+  check "Colima zero data disk is reported and not started"
+  # disk: 0 and a 0-byte datadisk are the same broken instance. update-all must
+  # say so and skip colima start. groundwork-doctor reports the same fact.
+  # Neither command deletes the instance. COLIMA_HOME wins over ~/.colima.
+  colima_disk_root="$update_all_fixture/colima-disk"
+  rm -rf "$colima_disk_root" "$update_all_home/.colima"
+  write_colima_instance() {
+    local root="$1" disk_value="$2" datadisk_bytes="$3"
+    rm -rf "$root"
+    mkdir -p "$root/default" "$root/_lima/_disks/colima"
+    if [[ -n "$disk_value" ]]; then
+      printf 'runtime: docker\ndisk: %s\n' "$disk_value" >"$root/default/colima.yaml"
+    fi
+    if [[ "$datadisk_bytes" != "absent" ]]; then
+      printf '%s' "$datadisk_bytes" >"$root/_lima/_disks/colima/datadisk"
+    fi
+  }
+  assert_colima_untouched() {
+    local root="$1" yaml disk_file
+    yaml="$root/default/colima.yaml"
+    disk_file="$root/_lima/_disks/colima/datadisk"
+    if [[ -n "${2:-}" ]]; then
+      grep -qxF "disk: $2" "$yaml" \
+        || fail "Colima config under $root changed"
+    fi
+    if [[ "${3:-}" == "absent" ]]; then
+      test ! -e "$disk_file" || fail "a missing Colima data disk was created under $root"
+    elif [[ "${3:-}" == "empty" ]]; then
+      [[ -f "$disk_file" && ! -s "$disk_file" ]] \
+        || fail "the 0-byte Colima data disk under $root was replaced"
+    else
+      grep -qxF "$3" "$disk_file" || fail "Colima data disk bytes under $root changed"
+    fi
+  }
+
+  write_colima_instance "$update_all_home/.colima" 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env -u COLIMA_HOME HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-disk-zero-yaml" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "disk: 0 exited $update_all_status; expected a skip, not success or the start deadline"
+  grep -qF 'this Colima instance has no Docker data disk' \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not say the instance has no Docker data disk"
+  grep -qF 'colima delete --force && colima start --disk 100' \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not print the recovery command"
+  grep -qF "Deleting destroys that instance's containers and images." \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not say that deleting destroys containers and images"
+  grep -qF 'will not delete anything automatically' \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not say that nothing is deleted automatically"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started, stopped, or deleted a Colima instance with disk: 0"
+  assert_colima_untouched "$update_all_home/.colima" 0 absent
+  grep -qxF 'previous-success' "$update_all_stamp"
+  test -f "$docker_pending" || fail "a disk: 0 Colima instance left no pending repair record"
+  rm -rf "$update_all_home/.colima"
+
+  write_colima_instance "$colima_disk_root/empty-datadisk" 100 ""
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env -u COLIMA_HOME HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_HOME="$colima_disk_root/empty-datadisk" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-empty-datadisk" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "a 0-byte Colima data disk exited $update_all_status; expected a skip, not success or the start deadline"
+  grep -qF 'this Colima instance has no Docker data disk' \
+    "$update_all_fixture/colima-empty-datadisk" \
+    || fail "a 0-byte data disk did not say the instance has no Docker data disk"
+  grep -qF 'colima delete --force && colima start --disk 100' \
+    "$update_all_fixture/colima-empty-datadisk" \
+    || fail "a 0-byte data disk did not print the recovery command"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started, stopped, or deleted a Colima instance with a 0-byte data disk"
+  assert_colima_untouched "$colima_disk_root/empty-datadisk" 100 empty
+  test ! -e "$update_all_home/.colima"
+  grep -qxF 'previous-success' "$update_all_stamp"
+
+  write_colima_instance "$colima_disk_root/healthy" 100 x
+  write_colima_instance "$update_all_home/.colima" 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  rm -f "$update_all_stamp" "$docker_pending"
+  : >"$update_all_log"
+  run_fixture_pty_after "$update_all_fixture/colima-home-overrides-default" \
+    'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    -u COLIMA_HOME HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_HOME="$colima_disk_root/healthy" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    || fail "a healthy COLIMA_HOME was blocked by disk: 0 under ~/.colima"
+  grep -qxF 'colima start --runtime docker' "$update_all_log" \
+    || fail "update-all did not start the COLIMA_HOME instance"
+  assert_not_contains 'colima delete' "$update_all_log" \
+    "update-all deleted a Colima instance while COLIMA_HOME was healthy"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-home-overrides-default" \
+    "update-all reported the default ~/.colima disk while COLIMA_HOME was healthy"
+  assert_colima_untouched "$colima_disk_root/healthy" 100 x
+  assert_colima_untouched "$update_all_home/.colima" 0 absent
+  rm -rf "$update_all_home/.colima" "$colima_disk_root"
+
+  doctor_colima_home="$update_all_fixture/colima-doctor-home"
+  doctor_colima_log="$update_all_fixture/colima-doctor-colima.log"
+  rm -rf "$doctor_colima_home"
+  mkdir -p "$doctor_colima_home/bin"
+  cat >"$doctor_colima_home/bin/colima" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"${COLIMA_STUB_LOG:?}"
+exit 99
+SH
+  chmod +x "$doctor_colima_home/bin/colima"
+  run_colima_doctor() {
+    local output="$1"
+    shift
+    : >"$doctor_colima_log"
+    env -u COLIMA_HOME HOME="$doctor_colima_home" PATH="$doctor_colima_home/bin:/usr/bin:/bin" \
+      COLIMA_STUB_LOG="$doctor_colima_log" "$@" \
+      /bin/bash home/dot_local/bin/executable_groundwork-doctor --docker \
+      >"$output" 2>&1
+  }
+  run_colima_doctor "$update_all_fixture/colima-doctor-absent" \
+    || fail "groundwork-doctor failed when no Colima instance exists"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-doctor-absent" \
+    "groundwork-doctor reported a missing Colima instance as a 0-byte data disk"
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima"
+
+  write_colima_instance "$doctor_colima_home/.colima" 0 absent
+  run_colima_doctor "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor failed on disk: 0"
+  grep -qF 'This Colima instance has no Docker data disk.' \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not report disk: 0"
+  grep -qF 'colima delete --force && colima start --disk 100' \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not print the recovery command"
+  grep -qF "Deleting destroys that instance's containers and images." \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not say that deleting destroys containers and images"
+  grep -qF 'never deletes anything automatically' \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not say that it never deletes anything"
+  assert_not_contains "Run 'colima start'" "$update_all_fixture/colima-doctor-yaml" \
+    "groundwork-doctor recommended a start that would hang"
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima for disk: 0"
+  assert_colima_untouched "$doctor_colima_home/.colima" 0 absent
+
+  write_colima_instance "$doctor_colima_home/.colima" 100 ""
+  run_colima_doctor "$update_all_fixture/colima-doctor-empty" \
+    || fail "groundwork-doctor failed on a 0-byte data disk"
+  grep -qF 'This Colima instance has no Docker data disk.' \
+    "$update_all_fixture/colima-doctor-empty" \
+    || fail "groundwork-doctor did not report a 0-byte data disk"
+  assert_colima_untouched "$doctor_colima_home/.colima" 100 empty
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima for a 0-byte data disk"
+
+  write_colima_instance "$doctor_colima_home/.colima" 0 absent
+  write_colima_instance "$colima_disk_root/doctor-healthy" 100 x
+  run_colima_doctor "$update_all_fixture/colima-doctor-override" \
+    COLIMA_HOME="$colima_disk_root/doctor-healthy" \
+    || fail "groundwork-doctor failed when COLIMA_HOME was healthy"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-doctor-override" \
+    "groundwork-doctor ignored COLIMA_HOME and reported ~/.colima"
+  assert_colima_untouched "$colima_disk_root/doctor-healthy" 100 x
+  assert_colima_untouched "$doctor_colima_home/.colima" 0 absent
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima while COLIMA_HOME was healthy"
+  rm -rf "$doctor_colima_home" "$colima_disk_root"
+
   check "update-all Homebrew download-cache cleanup"
   # Homebrew's DEFAULT cleanup is conservative by design: it prunes stale
   # downloads and files older than 120 days, and keeps downloads for currently
@@ -12434,6 +12619,27 @@ SH
       || fail "the rendered Colima template ($colima_arch) did not use the controlled CPU observation"
     grep -qE '^memory:[[:space:]]*8$' "$colima_rendered" \
       || fail "the rendered Colima template ($colima_arch) did not use the controlled memory observation"
+    grep -qE '^disk:[[:space:]]*100$' "$colima_rendered" \
+      || fail "the rendered Colima template ($colima_arch) does not pin a non-zero disk"
+    if grep -qE '^disk:[[:space:]]*0([^0-9]|$)' "$colima_rendered"; then
+      fail "the rendered Colima template ($colima_arch) has disk: 0"
+    fi
+    # Rosetta is an apply-time fact, not an architecture fact. Require the key
+    # only when this host actually has Rosetta; otherwise require it to be absent
+    # so Linux CI and a Mac without Rosetta keep the same expectation.
+    rosetta_runtime="/Library/Apple/usr/libexec/oah/libRosettaRuntime"
+    if [[ "$colima_arch" == "arm64" && -e "$rosetta_runtime" ]]; then
+      grep -qE '^rosetta:[[:space:]]*true$' "$colima_rendered" \
+        || fail "the rendered Colima template (arm64) omitted rosetta while Rosetta is installed"
+    else
+      if grep -qE '^rosetta:' "$colima_rendered"; then
+        fail "the rendered Colima template ($colima_arch) set rosetta without an installed Rosetta runtime"
+      fi
+      if [[ "$colima_arch" == "arm64" ]]; then
+        grep -qF 'Rosetta is not installed, so rosetta is omitted' "$colima_rendered" \
+          || fail "the rendered Colima template (arm64) omitted rosetta without saying why"
+      fi
+    fi
 
     if python3 -c 'import yaml' >/dev/null 2>&1; then
       python3 - "$colima_rendered" <<'PY'
@@ -12447,6 +12653,7 @@ expected = {
     "mountType": "virtiofs",
     "cpu": 6,
     "memory": 8,
+    "disk": 100,
 }
 for key, value in expected.items():
     if document.get(key) != value:
@@ -12470,6 +12677,7 @@ expected = {
     "mountType": "virtiofs",
     "cpu": "6",
     "memory": "8",
+    "disk": "100",
 }
 for key, value in expected.items():
     if top.get(key) != value:

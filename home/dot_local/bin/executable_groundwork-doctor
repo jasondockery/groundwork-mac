@@ -81,6 +81,30 @@ ok() { printf '  ok    %s\n' "$1"; }
 warn() { printf '  warn  %s\n' "$1"; }
 note() { printf '  note  %s\n' "$1"; }
 
+# Colima treats an omitted disk as 0 and creates a 0-byte data disk. Starting
+# that instance hangs. Report the recovery command and never delete the instance.
+# COLIMA_HOME selects the instance; otherwise Colima's default is ~/.colima.
+# Keep this check in step with groundwork-update-run.
+colima_instance_lacks_data_disk() {
+  local colima_home config disk_file
+  colima_home="${COLIMA_HOME:-$HOME/.colima}"
+  config="$colima_home/default/colima.yaml"
+  disk_file="$colima_home/_lima/_disks/colima/datadisk"
+  if [[ -f "$config" ]] && grep -qE '^disk:[[:space:]]*0[[:space:]]*(#.*)?$' "$config"; then
+    return 0
+  fi
+  if [[ -f "$disk_file" && ! -s "$disk_file" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+colima_report_missing_data_disk() {
+  warn "This Colima instance has no Docker data disk."
+  note "Recover with: colima delete --force && colima start --disk 100"
+  note "Deleting destroys that instance's containers and images. The doctor never deletes anything automatically."
+}
+
 karabiner_section() {
   heading "Karabiner"
 
@@ -277,6 +301,12 @@ browser_section() {
 docker_section() {
   heading "Docker"
 
+  local colima_disk_missing=0
+  if colima_instance_lacks_data_disk; then
+    colima_disk_missing=1
+    colima_report_missing_data_disk
+  fi
+
   local docker_lib="$HOME/.local/share/groundwork/lib/docker-scan.sh" docker_executable
   if [[ ! -r "$docker_lib" ]]; then
     warn "Groundwork's docker-scan probe is missing: $docker_lib — Docker checks skipped."
@@ -294,6 +324,10 @@ docker_section() {
   [[ -n "$GW_DOCKER_JQ" ]] || GW_DOCKER_JQ="/groundwork/unavailable/jq"
   docker() { "$docker_executable" "$@"; }
   if ! docker info >/dev/null 2>&1; then
+    if [[ "$colima_disk_missing" -eq 1 ]]; then
+      note "Docker daemon not reachable. Starting this Colima instance would hang, so the doctor did not start it and did not delete anything."
+      return 0
+    fi
     note "Docker daemon not reachable; skipping Docker checks. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun groundwork-doctor."
     return 0
   fi
