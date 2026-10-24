@@ -213,6 +213,68 @@
         </div>
       </div>
 
+      <h2><span class="hash" aria-hidden="true">#</span>Herdr <span class="muted">· <a href="herdr.html">Herdr</a> · prefix is <kbd>Ctrl</kbd><kbd>Space</kbd>, <kbd>Ctrl</kbd><kbd>B</kbd> also works</span></h2>
+      <div class="quickref">
+        <div class="quickref-sections">
+          <div class="quickref-section">
+            <h3>Panes</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Enter</kbd></span> <span class="act">split below</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>Enter</kbd></span> <span class="act">split beside</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>h</kbd> / <kbd>v</kbd></span> <span class="act">split below / beside</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>-</kbd> / <kbd>|</kbd></span> <span class="act">tmux aliases for those splits</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Left</kbd></span> <span class="act">focus pane left</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Down</kbd></span> <span class="act">focus pane below</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Up</kbd></span> <span class="act">focus pane above</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Right</kbd></span> <span class="act">focus pane right</span></div>
+              <div class="qr"><span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd> + arrows</span> <span class="act">resize the focused pane</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Escape</kbd></span> <span class="act">close pane</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>x</kbd></span> <span class="act">close pane</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>z</kbd></span> <span class="act">zoom pane</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>O</kbd></span> <span class="act">rename pane</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Tabs</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>c</kbd></span> <span class="act">new tab</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>1</kbd>…<kbd>9</kbd></span> <span class="act">switch tab by number</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Left</kbd></span> <span class="act">previous tab</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Right</kbd></span> <span class="act">next tab</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>Left</kbd></span> <span class="act">move tab toward the front</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>Right</kbd></span> <span class="act">move tab toward the back</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>r</kbd> / <kbd>,</kbd></span> <span class="act">rename tab</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>k</kbd> / <kbd>&amp;</kbd></span> <span class="act">close tab</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Workspaces</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>C</kbd></span> <span class="act">new workspace</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>R</kbd> / <kbd>$</kbd></span> <span class="act">rename workspace</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>Shift</kbd><kbd>K</kbd></span> <span class="act">close workspace, after confirmation</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Up</kbd></span> <span class="act">previous workspace</span></div>
+              <div class="qr"><span class="keys"><kbd>Alt</kbd><kbd>Down</kbd></span> <span class="act">next workspace</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>s</kbd></span> <span class="act">workspace picker</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>d</kbd></span> <span class="act">detach; processes keep running</span></div>
+            </div>
+          </div>
+          <div class="quickref-section">
+            <h3>Tools</h3>
+            <div class="quickref-grid">
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>g</kbd></span> <span class="act">lazygit popup</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>?</kbd></span> <span class="act">show the active key map</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>[</kbd></span> <span class="act">copy mode</span></div>
+              <div class="qr"><span class="keys"><kbd>prefix</kbd> <kbd>q</kbd></span> <span class="act">reload config</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="callout note">
+        <span class="label">Tabs and workspaces</span>
+        <p>A tmux window is a Herdr tab, and a tmux session is a Herdr workspace. Focus uses Ctrl+Alt plus arrows. Alt+h/j/k/l and prefix &lt; / &gt; stay tmux chords.</p>
+      </div>
+
       <h2><span class="hash" aria-hidden="true">#</span>tmux <span class="muted">— <a href="tmux.html">tmux</a> · prefix is <kbd>Ctrl</kbd><kbd>Space</kbd></span></h2>
       <div class="quickref">
         <div class="quickref-sections">

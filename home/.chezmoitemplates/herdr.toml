@@ -1,94 +1,137 @@
-# Groundwork's Herdr baseline keeps the same prefix and core mnemonics as its
-# tmux setup. `groundwork-herdr-config edit` opens this source; user-owned
-# configuration is never overwritten silently.
+# Groundwork Herdr overrides. Re-check both pins before the next edit.
+# Omarchy quattro config/herdr/config.toml @ 88de9ecc6c4717e349a21f9e8af3ffc0a9d25415
+# Herdr 0.9.5, reviewed 2026-10-24 with `herdr --default-config` and `herdr config check`.
+# Assign only values that differ from that Herdr release. A key array replaces
+# the whole default, so an added chord repeats any default chord it still needs.
+# Herdr shows onboarding when this key is missing. Groundwork's interview owns setup.
 onboarding = false
 
 [theme]
-name = "catppuccin"
+# Omarchy uses the terminal's own palette. Herdr's default theme is catppuccin.
+name = "terminal"
 
-[terminal]
-shell_mode = "auto"
-new_cwd = "follow"
+[theme.custom]
+# The tab bar uses the terminal background so a translucent window stays see-through.
+panel_bg = "reset"
+# Active tab text falls back to this token. Black matches Omarchy's dark-on-blue status.
+surface_dim = "black"
 
 [keys]
+# Omarchy sets only ctrl+space, which drops Herdr's default ctrl+b. Keep ctrl+b:
+# it is tmux prefix2, Ctrl+B still works when macOS reserves Ctrl+Space, and the
+# Herdr page tells people to use that fallback.
 prefix = ["ctrl+space", "ctrl+b"]
-
-# Use Omarchy's actions across platforms; keep displaced settings reachable.
-help = "prefix+?"
+# The hotkeys manual and tmux use prefix+s for the session list. Move Settings
+# so the workspace picker can take that chord. Omarchy never sets workspace_picker,
+# so stock Herdr leaves prefix+s on Settings and the picker on prefix+w.
 settings = "prefix+shift+s"
-detach = "prefix+d"
-reload_config = "prefix+q"
-resize_mode = ["prefix+ctrl+left", "prefix+ctrl+down", "prefix+ctrl+up", "prefix+ctrl+right"]
-copy_mode = "prefix+["
-
-# Pane keys match Omarchy's Herdr and tmux configurations.
-split_vertical = ["prefix+v", "alt+shift+enter", "prefix+|"]
-split_horizontal = ["prefix+h", "alt+enter", "prefix+minus"]
-close_pane = ["prefix+x", "alt+esc"]
-zoom = "prefix+z"
-last_pane = "prefix+;"
-focus_pane_left = "ctrl+alt+left"
-focus_pane_down = "ctrl+alt+down"
-focus_pane_up = "ctrl+alt+up"
-focus_pane_right = "ctrl+alt+right"
-resize_pane_left = "ctrl+alt+shift+left"
-resize_pane_down = "ctrl+alt+shift+down"
-resize_pane_up = "ctrl+alt+shift+up"
-resize_pane_right = "ctrl+alt+shift+right"
-# Shift+K now closes the workspace, as it does in Omarchy. Avoid retaining a
-# competing pane-swap action on the same key.
-swap_pane_left = []
-swap_pane_down = []
-swap_pane_up = []
-swap_pane_right = []
-rename_pane = "prefix+shift+o"
-
-# Herdr tabs carry the tmux window shortcuts; workspaces carry session intent.
-new_tab = "prefix+c"
-rename_tab = ["prefix+r", "prefix+comma"]
-close_tab = ["prefix+k", "prefix+ampersand"]
-switch_tab = ["prefix+1..9", "alt+1..9"]
-previous_tab = ["prefix+p", "alt+left"]
-next_tab = ["prefix+n", "alt+right"]
-move_tab_previous = "alt+shift+left"
-move_tab_next = "alt+shift+right"
+# Same manual choice as settings above: prefix+s opens workspaces, not Settings.
 workspace_picker = "prefix+s"
+# Omarchy detaches with prefix+d. Herdr's default is prefix+q.
+detach = "prefix+d"
+# Omarchy reloads with prefix+q. Herdr's default is prefix+shift+r.
+reload_config = "prefix+q"
+# Omarchy resizes with prefix then Ctrl+arrows, which frees prefix+r for rename tab.
+resize_mode = ["prefix+ctrl+left", "prefix+ctrl+down", "prefix+ctrl+up", "prefix+ctrl+right"]
+# Omarchy's side-by-side split. prefix+| keeps tmux's vertical split. The array
+# replaces Herdr's prefix+v default, so that chord stays too.
+split_vertical = ["prefix+v", "alt+shift+enter", "prefix+|"]
+# Omarchy's stacked split is prefix+h and alt+enter, and that array drops
+# Herdr's prefix+minus default. Keep prefix+minus so tmux's split-below chord still works.
+split_horizontal = ["prefix+h", "alt+enter", "prefix+minus"]
+# Omarchy also closes a pane with alt+esc. The array replaces Herdr's prefix+x default.
+close_pane = ["prefix+x", "alt+esc"]
+# Herdr leaves last-pane unset. Omarchy binds prefix+;.
+last_pane = "prefix+;"
+# Omarchy focuses with Ctrl+Alt+arrows. That replaces Herdr's prefix+h/j/k/l,
+# which would collide with the Omarchy split chords.
+focus_pane_left = "ctrl+alt+left"
+# Omarchy focus below. Herdr's default is prefix+j.
+focus_pane_down = "ctrl+alt+down"
+# Omarchy focus above. Herdr's default is prefix+k.
+focus_pane_up = "ctrl+alt+up"
+# Omarchy focus right. Herdr's default is prefix+l.
+focus_pane_right = "ctrl+alt+right"
+# Omarchy resizes directly with Ctrl+Alt+Shift+arrows. Herdr leaves this unset.
+resize_pane_left = "ctrl+alt+shift+left"
+# Omarchy resize below. Herdr leaves this unset.
+resize_pane_down = "ctrl+alt+shift+down"
+# Omarchy resize above. Herdr leaves this unset.
+resize_pane_up = "ctrl+alt+shift+up"
+# Omarchy resize right. Herdr leaves this unset.
+resize_pane_right = "ctrl+alt+shift+right"
+# prefix+shift+k is Herdr's default swap-up and Omarchy's close-workspace chord.
+# Clear only that direction. The other swap chords do not collide and stay at their defaults.
+swap_pane_up = []
+# Herdr's default rename-pane is prefix+shift+p, which previous workspace uses.
+rename_pane = "prefix+shift+o"
+# Omarchy renames a tab with prefix+r. prefix+comma keeps tmux's rename-window chord.
+# The array replaces Herdr's prefix+shift+t default, which goto now uses.
+rename_tab = ["prefix+r", "prefix+comma"]
+# Omarchy closes a tab with prefix+k. prefix+ampersand keeps tmux's kill-window chord.
+# Herdr's default is prefix+shift+x.
+close_tab = ["prefix+k", "prefix+ampersand"]
+# Omarchy also switches tabs with alt+1..9. The array replaces Herdr's prefix+1..9 default.
+switch_tab = ["prefix+1..9", "alt+1..9"]
+# Omarchy's previous tab. The array replaces Herdr's prefix+p default, so that chord stays.
+previous_tab = ["prefix+p", "alt+left"]
+# Omarchy's next tab. The array replaces Herdr's prefix+n default, so that chord stays.
+next_tab = ["prefix+n", "alt+right"]
+# Omarchy moves a tab toward the front. Herdr leaves this unset.
+move_tab_previous = "alt+shift+left"
+# Omarchy moves a tab toward the back. Herdr leaves this unset.
+move_tab_next = "alt+shift+right"
+# prefix+g is lazygit below, and that is Herdr's default goto, so goto moves here.
+# Omarchy does not define this chord.
 goto = "prefix+shift+t"
+# Omarchy creates a workspace with prefix+shift+c. Herdr's default is prefix+shift+n.
 new_workspace = "prefix+shift+c"
+# Omarchy renames a workspace with prefix+shift+r. prefix+$ keeps tmux's rename-session chord.
+# Herdr's default is prefix+shift+w.
 rename_workspace = ["prefix+shift+r", "prefix+$"]
+# Omarchy closes a workspace with prefix+shift+k. Herdr's default is prefix+shift+d.
 close_workspace = "prefix+shift+k"
+# Omarchy's previous workspace, plus alt+up. Herdr leaves this unset.
 previous_workspace = ["prefix+shift+p", "alt+up"]
+# Omarchy's next workspace, plus alt+down. Herdr leaves this unset.
 next_workspace = ["prefix+shift+n", "alt+down"]
 
+# prefix+g opens lazygit in the active pane directory when Herdr provides it.
+# Groundwork tmux uses the same chord. Omarchy's Herdr and tmux files do not define this popup.
 [[keys.command]]
+# The lazygit chord displaced off goto.
 key = "prefix+g"
+# A popup keeps the current tab layout.
 type = "popup"
+# Enter the active pane directory when Herdr exported it; otherwise stay put.
 command = "if [ -n \"${HERDR_ACTIVE_PANE_CWD:-}\" ]; then cd \"$HERDR_ACTIVE_PANE_CWD\" || exit; fi; exec lazygit"
+# Label shown for this popup.
 description = "open lazygit in the active pane directory when available"
+# Popup width.
 width = "90%"
+# Popup height.
 height = "90%"
 
-[session]
-resume_agents_on_restore = true
-
 [remote]
-# SSH configuration remains user/repository authority. Herdr uses plain ssh.
+# SSH config stays with the user and repositories. Herdr's default would add its own.
 manage_ssh_config = false
 
-[experimental]
-allow_nested = false
-# Pane output can contain secrets. Live detach preserves it without writing it.
-pane_history = false
-
 [ui]
-sidebar_start_collapsed = false
-mouse_capture = true
-copy_on_select = true
-confirm_close = true
+# Omarchy's accent is blue. Herdr's default is cyan.
+accent = "blue"
+# Omarchy draws no outer frame. Herdr's default is true.
+pane_outer_borders = false
+# Omarchy creates tabs without a name prompt. Herdr's default is true.
 prompt_new_tab_name = false
-pane_borders = true
+# Omarchy has no scrollbar column. Herdr's default is true.
 pane_scrollbars = false
+# Omarchy shares divider borders. Herdr's default leaves gaps on.
 pane_gaps = false
+# Omarchy's status corner is the zoom flag, then the hostname. Herdr's default is empty.
+tab_bar_right = [{ type = "zoom" }, { type = "hostname" }]
+# Workspace-close confirmation stays at Herdr's default (true). Omarchy sets false.
+# The Herdr page documents the prompt, so this file does not assign confirm_close.
 
 [ui.sound]
+# Groundwork keeps agent sounds off. Herdr and Omarchy leave sound enabled.
 enabled = false
