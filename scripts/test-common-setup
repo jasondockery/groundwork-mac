@@ -58,9 +58,19 @@ class CommonSetupTests(unittest.TestCase):
                             if headless:
                                 for app in ("chatgpt", "claude", "cursor", "docker-desktop"):
                                     self.assertNotIn(f'cask "{app}"\n', source)
+                            if platform == "darwin" and not headless:
+                                self.assertIn('cask "freetube"', source)
+                            else:
+                                self.assertNotIn('cask "freetube"', source)
                             if platform == "linux":
                                 self.assertNotIn('cask "chatgpt"', source)
                                 self.assertNotIn('cask "claude"\n', source)
+
+    def test_freetube_is_installed_when_personal_apps_are_off(self):
+        source = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=False, personal_apps=False)
+        self.assertIn('cask "freetube"', source)
+        self.assertNotIn('cask "obsidian"', source)
+        self.assertNotIn('cask "iina"', source)
 
     def test_configuration_only_apply_keeps_existing_nightly_but_installs_missing_cli(self):
         hook = self.text('home/run_after_21-t3-code.sh.tmpl')
