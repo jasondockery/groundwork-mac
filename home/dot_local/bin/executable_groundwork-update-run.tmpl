@@ -2103,6 +2103,44 @@ restore_docker_backend() {
   return "$status"
 }
 
+# Colima treats an omitted disk as 0 and creates a 0-byte data disk. Starting
+# that instance hangs until the deadline. Report the home and profile that
+# were read, and never delete the instance. Resolution lives in colima-home.sh
+# so this stays in step with groundwork-doctor. groundwork_colima can call
+# gw_colima_child_home from that same file.
+colima_home_lib="$HOME/.local/share/groundwork/lib/colima-home.sh"
+colima_home_ready=0
+if [[ -r "$colima_home_lib" ]]; then
+  # shellcheck source=/dev/null
+  . "$colima_home_lib"
+  colima_home_ready=1
+fi
+
+colima_instance_lacks_data_disk() {
+  [[ "$colima_home_ready" -eq 1 ]] || return 2
+  gw_colima_instance_lacks_data_disk
+}
+
+colima_report_missing_data_disk() {
+  local recovery=""
+  if [[ "$colima_home_ready" -eq 1 ]]; then
+    recovery="$(gw_colima_recovery_command 2>/dev/null || true)"
+  fi
+  if [[ -n "$recovery" ]]; then
+    cat <<EOF >&2
+Groundwork: this Colima instance has no Docker data disk, so it was not started.
+Recover with: $recovery
+Deleting destroys that instance's containers and images. Groundwork will not delete anything automatically.
+EOF
+  else
+    cat <<'EOF' >&2
+Groundwork: this Colima instance has no Docker data disk, so it was not started.
+The recovery command was not printed because this home or profile cannot be quoted safely.
+Deleting destroys that instance's containers and images. Groundwork will not delete anything automatically.
+EOF
+  fi
+}
+
 wait_for_docker_ready() {
   local started now next_notice probe_status probe_output
   # Bash's monotonic per-process counter keeps the readiness budget independent
@@ -2159,6 +2197,21 @@ elif [[ -x "$HOME/.local/bin/groundwork-docker-tidy" ]]; then
     docker_maintenance_status=0
     if [[ "$docker_backend" != "none" ]] && docker_context_is_canonical_local \
       && docker_backend_is_manageable; then
+      colima_disk_status=1
+      if [[ "$docker_backend" == "colima" ]]; then
+        colima_disk_status=0
+        colima_instance_lacks_data_disk || colima_disk_status=$?
+      fi
+      if [[ "$colima_disk_status" -eq 0 ]]; then
+        colima_report_missing_data_disk
+        docker_maintenance_status=1
+        mark_docker_pending "Colima instance has no Docker data disk"
+      elif [[ "$colima_disk_status" -eq 2 ]]; then
+        echo "Groundwork: Colima's home or profile could not be checked, so Colima was not started." >&2
+        echo "Nothing was deleted." >&2
+        docker_maintenance_status=1
+        mark_docker_pending "Colima home or profile could not be checked"
+      else
       printf '%s is installed but not running.\n' "$(docker_backend_label)"
       prompt_status=0
       prompt_start_docker_backend || prompt_status=$?
@@ -2189,6 +2242,7 @@ elif [[ -x "$HOME/.local/bin/groundwork-docker-tidy" ]]; then
         echo "Groundwork: Docker scratch maintenance skipped because $(docker_backend_label) was stopped and no interactive terminal was available."
       else
         echo "Groundwork: Docker scratch maintenance skipped; $(docker_backend_label) remains stopped."
+      fi
       fi
     else
       echo "Groundwork: Docker scratch maintenance skipped because no safe managed local backend was available."

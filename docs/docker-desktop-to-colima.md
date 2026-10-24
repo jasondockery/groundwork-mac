@@ -133,3 +133,19 @@ docker buildx version
 ```
 
 Repeat the project checks. Retain backups until you are satisfied that everything required has moved. Removing Desktop is separate from deleting old backups.
+
+## 5. Recover a Colima instance that has no data disk
+
+Groundwork's Colima template pins `disk: 100`, which is Colima's normal default. Colima reads that template as the whole configuration for a new instance, so a template that omits `disk:` stores `disk: 0` and creates a 0-byte data disk. `colima start` then never finishes.
+
+`groundwork-doctor` and the `update-all` Colima start step read the same home and profile Colima 0.10.3 would use. They use `COLIMA_HOME` only when that directory exists. Otherwise they use `~/.colima` when it exists, and otherwise `$XDG_CONFIG_HOME/colima`. `COLIMA_PROFILE` selects the instance (`default` when it is unset). `LIMA_HOME`, when set, replaces the `_lima` directory that holds the data disk. They look for `disk: 0` in that profile's `colima.yaml`, or a 0-byte datadisk for that profile. They print a recovery command that names the home and profile they actually read, and they skip the start. They never delete the instance.
+
+Deleting destroys that instance's containers and images. Run the printed command only after you accept that loss. It has this shape, with the directory and profile that were read:
+
+```bash
+COLIMA_HOME="$colima_home" colima --profile "$profile" delete --force && COLIMA_HOME="$colima_home" colima --profile "$profile" start --disk 100
+```
+
+When `LIMA_HOME` was set, the printed command includes that directory on both parts as well.
+
+Groundwork does not install Rosetta. The template writes `rosetta: true` only when Rosetta is already installed at apply time. Otherwise the key is omitted and a new instance does not warn that Rosetta is missing. An instance created earlier can still have the key. Install Rosetta if you want it, run `chezmoi apply`, then run `colima start --edit` and set `rosetta: true` on that existing instance. Colima still warns when `oahd` is not running. Do not delete the instance just to change this setting.
