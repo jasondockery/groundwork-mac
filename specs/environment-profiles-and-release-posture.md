@@ -84,7 +84,7 @@ environment:
 tools:
   primary_editor:
     family: vscode
-    variant: insiders
+    variant: stable
   primary_browser:
     family: chrome
     variant: beta
@@ -100,7 +100,7 @@ system:
 Two vocabularies, deliberately separate:
 
 - **Posture** — `current` or `preview`. An attitude that seeds defaults.
-- **Variant** — `stable`, `insiders`, `beta`, `dev`, `canary`. A
+- **Variant** — `stable`, `beta`, `dev`, `canary`. A
   real upstream channel named by its vendor.
 
 Collapsing them loses intent: Chrome has Beta, Dev, and Canary, and calling all
@@ -222,17 +222,15 @@ Shape:
 
 ```yaml
 families:
-  vscode:
-    defaults: { current: stable, preview: insiders }
+  chrome:
+    defaults: { current: stable, preview: beta }
     variants:
       stable:
-        cask: visual-studio-code
-        app_bundle: Visual Studio Code.app
-        cli: code
-      insiders:
-        cask: visual-studio-code@insiders
-        app_bundle: Visual Studio Code - Insiders.app
-        cli: code-insiders
+        cask: google-chrome
+        app_bundle: Google Chrome.app
+      beta:
+        cask: google-chrome@beta
+        app_bundle: Google Chrome Beta.app
 ```
 
 `defaults` is how a posture becomes a variant, and why posture and variant stay
@@ -283,8 +281,8 @@ path, or shadows a vendor command.** Doing so breaks code signing, bundle
 identity and LaunchServices registration, the vendor's own updater,
 side-by-side installation, and rollback.
 
-Concretely: `code` always means Stable and `code-insiders` always means
-Insiders, exactly as Microsoft intends. Normalization, if any, happens in
+Concretely: `Google Chrome.app` always means Stable and `Google Chrome
+Beta.app` always means Beta, exactly as Google intends. Normalization, if any, happens in
 Groundwork's own invocation layer — never in the application bundle.
 
 ### Deferred: role-based resolver commands
@@ -310,8 +308,8 @@ Where a family needs channel-specific values, use a common file plus an
 overlay, rendered to that channel's native path:
 
 ```text
-Stable:    ~/Library/Application Support/Code/User/settings.json
-Insiders:  ~/Library/Application Support/Code - Insiders/User/settings.json
+Stable:  ~/Library/Application Support/Google/Chrome/
+Beta:    ~/Library/Application Support/Google/Chrome Beta/
 ```
 
 Render real files. Do not symlink two channels to one live file — schemas,
