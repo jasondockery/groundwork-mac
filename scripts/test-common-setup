@@ -94,6 +94,9 @@ class CommonSetupTests(unittest.TestCase):
             self.assertIn(pin["assets"][arch]["url"], desktop)
             self.assertIn(pin["assets"][arch]["sha256"], desktop)
         self.assertIn("hw.optional.arm64", desktop)
+        self.assertIn("/usr/sbin/sysctl", desktop)
+        self.assertNotIn("command -v sysctl", desktop)
+        self.assertIn('hdiutil detach "$mount_point" -force', desktop)
         self.assertIn("com.apple.quarantine", desktop)
         self.assertNotIn('cask "freetube"', desktop)
         self.assertEqual(desktop.count('clear_quarantine "$dest"'), 1)
@@ -307,8 +310,10 @@ exit 99
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         recorded = hdiutil_calls.read_text().splitlines()
         detach = [line for line in recorded if line.startswith("detach ")]
-        self.assertGreaterEqual(len(detach), 1)
+        self.assertGreaterEqual(len(detach), 2)
+        self.assertTrue(any("-force" in line for line in detach))
         mount = detach[0].split(" ", 1)[1]
+        self.assertNotIn("-force", mount)
         self.assertTrue(os.path.isdir(mount), recorded)
 
     def test_freetube_dmg_leaves_a_running_app_in_place(self):
@@ -418,10 +423,19 @@ printf 'bytes' > "$out"
 
     def test_freetube_dmg_uses_arm64_image_when_rosetta_reports_arm64(self):
         pin = self.freetube_pin()
-        script = self.freetube_script()
         apps = self.root / "Applications"
         apps.mkdir()
         hdiutil_calls = self.root / "hdiutil-calls"
+        sysctl = self.write_executable("sysctl", '''#!/bin/sh
+if [ "$1" = "-n" ] && [ "$2" = "hw.optional.arm64" ]; then
+  printf '%s\\n' "$FIXTURE_ARM64"
+  exit 0
+fi
+exit 1
+''')
+        # The installer calls /usr/sbin/sysctl by absolute path, so a PATH stub
+        # would leave this Linux host on the x64 image.
+        script = self.freetube_script().replace("/usr/sbin/sysctl", str(sysctl))
         self.write_executable("curl", '''#!/bin/sh
 out=""
 while [ $# -gt 0 ]; do
@@ -429,13 +443,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 printf 'bytes' > "$out"
-''')
-        self.write_executable("sysctl", '''#!/bin/sh
-if [ "$1" = "-n" ] && [ "$2" = "hw.optional.arm64" ]; then
-  printf '%s\\n' "$FIXTURE_ARM64"
-  exit 0
-fi
-exit 1
 ''')
         self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
         self.write_executable("hdiutil", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_HDIUTIL"\nexit 1\n')
@@ -453,6 +460,174 @@ exit 1
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("checksum did not match", result.stderr)
         self.assertFalse(hdiutil_calls.exists())
+
+    def test_freetube_dmg_skips_when_sysctl_is_missing(self):
+        script = self.freetube_script().replace("/usr/sbin/sysctl", str(self.root / "missing-sysctl"))
+        apps = self.root / "Applications"
+        apps.mkdir()
+        curl_calls = self.root / "curl-calls"
+        self.write_executable("curl", '#!/bin/sh\nprintf curl >> "$FIXTURE_CURL"\nexit 1\n')
+        result = self.freetube_run(script, apps, FIXTURE_CURL=str(curl_calls))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("could not read the Mac architecture", result.stderr)
+        self.assertIn("missing-sysctl is missing", result.stderr)
+        self.assertFalse(curl_calls.exists())
+        self.assertFalse((apps / "FreeTube.app").exists())
+
+    def test_freetube_dmg_checksum_tool_failure_does_not_stop_setup(self):
+        pin = self.freetube_pin()
+        script = self.freetube_script()
+        apps = self.root / "Applications"
+        apps.mkdir()
+        hdiutil_calls = self.root / "hdiutil-calls"
+        self.write_executable("curl", '''#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--output" ]; then out="$2"; shift 2; continue; fi
+  shift
+done
+printf 'bytes' > "$out"
+''')
+        self.write_executable("hdiutil", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_HDIUTIL"\nexit 99\n')
+
+        def run(body, **env):
+            if hdiutil_calls.exists():
+                hdiutil_calls.unlink()
+            result = self.freetube_run(
+                body, apps, FIXTURE_HDIUTIL=str(hdiutil_calls),
+                FIXTURE_SHA=pin["assets"]["amd64"]["sha256"], **env,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("checksum could not be read", result.stderr)
+            self.assertFalse(hdiutil_calls.exists())
+            self.assertFalse((apps / "FreeTube.app").exists())
+
+        self.write_executable("sha256sum", "#!/bin/sh\nexit 1\n")
+        with self.subTest(tool="sha256sum"):
+            run(script)
+
+        self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
+        self.write_executable("awk", "#!/bin/sh\nexit 1\n")
+        with self.subTest(tool="awk"):
+            run(script)
+        (self.root / "bin" / "awk").unlink()
+
+        self.write_executable("tr", "#!/bin/sh\nexit 1\n")
+        with self.subTest(tool="tr"):
+            run(script)
+        (self.root / "bin" / "tr").unlink()
+
+        (self.root / "bin" / "sha256sum").unlink()
+        self.write_executable("shasum", "#!/bin/sh\nexit 1\n")
+        with self.subTest(tool="shasum"):
+            run(script.replace("command -v sha256sum", "command -v sha256sum-absent"))
+
+    def test_freetube_dmg_force_detach_continues_the_install(self):
+        pin = self.freetube_pin()
+        script = self.freetube_script()
+        apps = self.root / "Applications"
+        apps.mkdir()
+        hdiutil_calls = self.root / "hdiutil-calls"
+        self.write_executable("curl", '''#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--output" ]; then out="$2"; shift 2; continue; fi
+  shift
+done
+printf 'bytes' > "$out"
+''')
+        self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
+        self.write_executable("xattr", "#!/bin/sh\nexit 1\n")
+        self.write_executable("pgrep", "#!/bin/sh\nexit 1\n")
+        self.write_executable("ditto", '''#!/bin/sh
+mkdir -p "$2"
+printf staged > "$2/from-image"
+exit 0
+''')
+        self.write_executable("hdiutil", '''#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_HDIUTIL"
+if [ "$1" = attach ]; then
+  prev=""
+  mp=""
+  for arg in "$@"; do
+    if [ "$prev" = "-mountpoint" ]; then mp="$arg"; fi
+    prev="$arg"
+  done
+  mkdir -p "$mp/FreeTube.app/Contents"
+  printf image > "$mp/FreeTube.app/Contents/Info.plist"
+  exit 0
+fi
+if [ "$1" = detach ]; then
+  for arg in "$@"; do
+    if [ "$arg" = "-force" ]; then exit 0; fi
+  done
+  exit 1
+fi
+exit 99
+''')
+        result = self.freetube_run(
+            script, apps, FIXTURE_HDIUTIL=str(hdiutil_calls), FIXTURE_SHA=pin["assets"]["amd64"]["sha256"],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("installed FreeTube", result.stdout)
+        self.assertNotIn("could not be detached", result.stderr)
+        self.assertEqual((apps / "FreeTube.app" / "from-image").read_text(), "staged")
+        recorded = hdiutil_calls.read_text().splitlines()
+        detach = [line for line in recorded if line.startswith("detach ")]
+        self.assertEqual(len(detach), 2)
+        self.assertIn("-force", detach[1])
+        mount = detach[0].split(" ", 1)[1]
+        self.assertFalse(os.path.isdir(mount))
+        self.assertEqual([path.name for path in apps.iterdir()], ["FreeTube.app"])
+
+    def test_freetube_dmg_keeps_the_mount_when_force_detach_fails(self):
+        pin = self.freetube_pin()
+        script = self.freetube_script()
+        apps = self.root / "Applications"
+        apps.mkdir()
+        hdiutil_calls = self.root / "hdiutil-calls"
+        self.write_executable("curl", '''#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--output" ]; then out="$2"; shift 2; continue; fi
+  shift
+done
+printf 'bytes' > "$out"
+''')
+        self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
+        self.write_executable("ditto", '''#!/bin/sh
+mkdir -p "$2"
+printf staged > "$2/from-image"
+exit 0
+''')
+        self.write_executable("hdiutil", '''#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_HDIUTIL"
+if [ "$1" = attach ]; then
+  prev=""
+  mp=""
+  for arg in "$@"; do
+    if [ "$prev" = "-mountpoint" ]; then mp="$arg"; fi
+    prev="$arg"
+  done
+  mkdir -p "$mp/FreeTube.app/Contents"
+  exit 0
+fi
+exit 1
+''')
+        result = self.freetube_run(
+            script, apps, FIXTURE_HDIUTIL=str(hdiutil_calls), FIXTURE_SHA=pin["assets"]["amd64"]["sha256"],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("could not be detached", result.stderr)
+        self.assertNotIn("installed FreeTube", result.stdout)
+        self.assertFalse((apps / "FreeTube.app").exists())
+        self.assertEqual(list(apps.iterdir()), [])
+        recorded = hdiutil_calls.read_text().splitlines()
+        detach = [line for line in recorded if line.startswith("detach ")]
+        self.assertGreaterEqual(len(detach), 2)
+        self.assertTrue(any(line.endswith("-force") for line in detach))
+        mount = detach[0].split(" ", 1)[1]
+        self.assertTrue(os.path.isdir(mount), recorded)
 
     def test_configuration_only_apply_keeps_existing_nightly_but_installs_missing_cli(self):
         hook = self.text('home/run_after_21-t3-code.sh.tmpl')

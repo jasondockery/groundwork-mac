@@ -22,22 +22,8 @@ freetube_arm64_url={{ printf "%q" $arm.url }}
 freetube_arm64_sha256={{ printf "%q" $arm.sha256 }}
 freetube_amd64_url={{ printf "%q" $intel.url }}
 freetube_amd64_sha256={{ printf "%q" $intel.sha256 }}
-
-# Apple Silicon reports hw.optional.arm64=1 even when this shell is Rosetta
-# and chezmoi recorded amd64. Intel reports 0, or the key is absent.
-freetube_arch="amd64"
-if command -v sysctl >/dev/null 2>&1; then
-  if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == "1" ]]; then
-    freetube_arch="arm64"
-  fi
-fi
-if [[ "$freetube_arch" == "arm64" ]]; then
-  freetube_url="$freetube_arm64_url"
-  freetube_sha256="$freetube_arm64_sha256"
-else
-  freetube_url="$freetube_amd64_url"
-  freetube_sha256="$freetube_amd64_sha256"
-fi
+freetube_url=""
+freetube_sha256=""
 
 applications_dir="${GROUNDWORK_APPLICATIONS_DIR:-/Applications}"
 dest="${applications_dir}/FreeTube.app"
@@ -109,14 +95,26 @@ permission_denied() {
   grep -q -E 'Permission denied|Operation not permitted' "$err_file"
 }
 
+# A busy image can refuse a normal detach after the verified app is staged.
+# Force is the retry. mount_point stays set when both attempts fail so cleanup
+# does not delete a live mount.
+detach_mount() {
+  [[ -n "$mount_point" ]] || return 0
+  if hdiutil detach "$mount_point" >/dev/null 2>&1; then
+    mount_point=""
+    return 0
+  fi
+  if hdiutil detach "$mount_point" -force >/dev/null 2>&1; then
+    mount_point=""
+    return 0
+  fi
+  return 1
+}
+
 cleanup() {
   # Bash 5.2 lets a failing command in an EXIT trap replace the script status.
   local status=$?
-  if [[ -n "$mount_point" ]]; then
-    if hdiutil detach "$mount_point" >/dev/null 2>&1; then
-      mount_point=""
-    fi
-  fi
+  detach_mount || true
   if [[ -n "$stage" && -d "$stage" ]]; then
     rm -rf -- "$stage" || true
     stage=""
@@ -142,6 +140,28 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+
+# /usr/sbin is not on PATH for every login. Apple Silicon, including Rosetta,
+# reports hw.optional.arm64=1. Intel reports 0, or the key is absent. A missing
+# sysctl binary cannot choose an image, so this apply skips FreeTube.
+if [[ ! -x /usr/sbin/sysctl ]]; then
+  finish_without_install "FreeTube could not read the Mac architecture because /usr/sbin/sysctl is missing. Setup will continue."
+fi
+freetube_arch="amd64"
+sysctl_arm64=""
+if ! sysctl_arm64="$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)"; then
+  sysctl_arm64=""
+fi
+if [[ "$sysctl_arm64" == "1" ]]; then
+  freetube_arch="arm64"
+fi
+if [[ "$freetube_arch" == "arm64" ]]; then
+  freetube_url="$freetube_arm64_url"
+  freetube_sha256="$freetube_arm64_sha256"
+else
+  freetube_url="$freetube_amd64_url"
+  freetube_sha256="$freetube_amd64_sha256"
+fi
 
 if [[ -d "$dest" && ! -L "$dest" ]]; then
   installed_version="$(plutil -extract CFBundleShortVersionString raw "${dest}/Contents/Info.plist" 2>/dev/null || true)"
@@ -208,13 +228,19 @@ fi
 
 actual_sha=""
 if command -v sha256sum >/dev/null 2>&1; then
-  actual_sha="$(sha256sum -- "$dmg" | awk 'NR==1 { print $1 }')"
+  if ! actual_sha="$(sha256sum -- "$dmg" | awk 'NR==1 { print $1 }')"; then
+    finish_without_install "FreeTube checksum could not be read. Setup will continue without installing it."
+  fi
 elif command -v shasum >/dev/null 2>&1; then
-  actual_sha="$(shasum -a 256 -- "$dmg" | awk 'NR==1 { print $1 }')"
+  if ! actual_sha="$(shasum -a 256 -- "$dmg" | awk 'NR==1 { print $1 }')"; then
+    finish_without_install "FreeTube checksum could not be read. Setup will continue without installing it."
+  fi
 else
   finish_without_install "FreeTube checksum tool is missing. Setup will continue without installing it."
 fi
-actual_sha="$(printf '%s' "$actual_sha" | tr '[:upper:]' '[:lower:]')"
+if ! actual_sha="$(printf '%s' "$actual_sha" | tr '[:upper:]' '[:lower:]')"; then
+  finish_without_install "FreeTube checksum could not be read. Setup will continue without installing it."
+fi
 if [[ "$actual_sha" != "$freetube_sha256" ]]; then
   finish_without_install "FreeTube checksum did not match the pinned release. The disk image was not installed."
 fi
@@ -242,10 +268,9 @@ if ! ditto "$src" "${stage}/FreeTube.app" 2>"${work}/ditto.err"; then
   fi
   finish_without_install "FreeTube could not be copied out of the disk image. Setup will continue."
 fi
-if ! hdiutil detach "$mount_point" >/dev/null 2>&1; then
+if ! detach_mount; then
   finish_without_install "FreeTube disk image could not be detached. Setup will continue without replacing the app."
 fi
-mount_point=""
 
 if freetube_is_running; then
   warn "FreeTube is running, so the existing app was left in place."
