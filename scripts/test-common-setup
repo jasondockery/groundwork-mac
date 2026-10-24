@@ -97,6 +97,9 @@ class CommonSetupTests(unittest.TestCase):
         self.assertIn("/usr/sbin/sysctl", desktop)
         self.assertNotIn("command -v sysctl", desktop)
         self.assertIn('hdiutil detach "$mount_point" -force', desktop)
+        self.assertIn("--kill-after=5s", desktop)
+        self.assertIn("gtimeout", desktop)
+        self.assertIn("-readonly -nobrowse </dev/null", desktop)
         self.assertIn("com.apple.quarantine", desktop)
         self.assertNotIn('cask "freetube"', desktop)
         self.assertEqual(desktop.count('clear_quarantine "$dest"'), 1)
@@ -153,6 +156,12 @@ class CommonSetupTests(unittest.TestCase):
             )
             script = script.replace("/usr/sbin/sysctl", str(stub))
             environment["FIXTURE_FREETUBE_SYSCTL"] = str(calls)
+        # Darwin looks up gtimeout and Linux looks up timeout. A passthrough
+        # keeps the deadline wrapper from depending on the host PATH. A test
+        # that already installed either command keeps that stub.
+        for name in ("timeout", "gtimeout"):
+            if not (self.root / "bin" / name).exists():
+                self.write_executable(name, '#!/bin/sh\nshift\nshift\nexec "$@"\n')
         environment.update(env)
         (self.root / "tmp").mkdir(exist_ok=True)
         return subprocess.run(["/bin/bash"], input=script, env=environment, text=True,
@@ -584,7 +593,14 @@ done
 printf 'bytes' > "$out"
 ''')
         self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
-        self.write_executable("xattr", "#!/bin/sh\nexit 1\n")
+        xattr_calls = self.root / "xattr-calls"
+        self.write_executable("xattr", '''#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_XATTR"
+if [ "$1" = "-p" ] || [ "$1" = "-dr" ]; then
+  exit 0
+fi
+exit 1
+''')
         self.write_executable("pgrep", "#!/bin/sh\nexit 1\n")
         self.write_executable("ditto", '''#!/bin/sh
 mkdir -p "$2"
@@ -613,11 +629,14 @@ fi
 exit 99
 ''')
         result = self.freetube_run(
-            script, apps, FIXTURE_HDIUTIL=str(hdiutil_calls), FIXTURE_SHA=pin["assets"]["amd64"]["sha256"],
+            script, apps, FIXTURE_HDIUTIL=str(hdiutil_calls), FIXTURE_XATTR=str(xattr_calls),
+            FIXTURE_SHA=pin["assets"]["amd64"]["sha256"],
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("installed FreeTube", result.stdout)
         self.assertNotIn("could not be detached", result.stderr)
+        removed = [line for line in xattr_calls.read_text().splitlines() if line.startswith("-dr ")]
+        self.assertEqual(removed, [f"-dr com.apple.quarantine {apps / 'FreeTube.app'}"])
         self.assertEqual((apps / "FreeTube.app" / "from-image").read_text(), "staged")
         recorded = hdiutil_calls.read_text().splitlines()
         detach = [line for line in recorded if line.startswith("detach ")]
@@ -675,6 +694,55 @@ exit 1
         self.assertTrue(any(line.endswith("-force") for line in detach))
         mount = detach[0].split(" ", 1)[1]
         self.assertTrue(os.path.isdir(mount), recorded)
+
+    def test_freetube_dmg_mount_timeout_detaches_and_skips_install(self):
+        pin = self.freetube_pin()
+        script = self.freetube_script()
+        apps = self.root / "Applications"
+        apps.mkdir()
+        hdiutil_calls = self.root / "hdiutil-calls"
+        timeout_calls = self.root / "timeout-calls"
+        deadline = '''#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_TIMEOUT"
+if [ "$3" = hdiutil ] && [ "$4" = attach ]; then
+  exit 124
+fi
+shift
+shift
+exec "$@"
+'''
+        self.write_executable("timeout", deadline)
+        self.write_executable("gtimeout", deadline)
+        self.write_executable("curl", '''#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--output" ]; then out="$2"; shift 2; continue; fi
+  shift
+done
+printf 'bytes' > "$out"
+''')
+        self.write_executable("sha256sum", '#!/bin/sh\nprintf "%s  -\\n" "$FIXTURE_SHA"\n')
+        self.write_executable("hdiutil", '''#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_HDIUTIL"
+if [ "$1" = detach ]; then exit 0; fi
+exit 99
+''')
+        result = self.freetube_run(
+            script, apps, FIXTURE_HDIUTIL=str(hdiutil_calls), FIXTURE_TIMEOUT=str(timeout_calls),
+            FIXTURE_SHA=pin["assets"]["amd64"]["sha256"],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("mount timed out", result.stderr)
+        self.assertNotIn("installed FreeTube", result.stdout)
+        self.assertFalse((apps / "FreeTube.app").exists())
+        self.assertEqual(list(apps.iterdir()), [])
+        recorded_timeout = timeout_calls.read_text()
+        self.assertIn("--kill-after=5s", recorded_timeout)
+        self.assertIn("hdiutil attach", recorded_timeout)
+        self.assertNotIn("attach", hdiutil_calls.read_text())
+        detach = [line for line in hdiutil_calls.read_text().splitlines() if line.startswith("detach ")]
+        self.assertGreaterEqual(len(detach), 1)
+        self.assertEqual(list((self.root / "tmp").glob("groundwork-freetube.*")), [])
 
     def test_configuration_only_apply_keeps_existing_nightly_but_installs_missing_cli(self):
         hook = self.text('home/run_after_21-t3-code.sh.tmpl')

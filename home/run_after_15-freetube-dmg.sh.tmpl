@@ -9,8 +9,9 @@
 # Bump version, URL, and sha256 together in .chezmoitemplates/freetube-release.json.
 # version is CFBundleShortVersionString. This hook runs on every apply. One
 # plutil read decides whether a download is needed. A newer installed copy is
-# left alone. A download, checksum, mount, copy, or permission failure warns
-# and setup continues. A checksum mismatch never mounts or copies the image.
+# left alone. A download, checksum, mount, copy, permission, or deadline
+# failure warns and setup continues. A checksum mismatch never mounts or
+# copies the image. Mount, copy, and detach each stop after their deadline.
 # The next apply tries again.
 set -euo pipefail
 {{ if and (eq .chezmoi.os "darwin") (not .headless) -}}
@@ -32,6 +33,36 @@ mount_point=""
 stage=""
 previous=""
 previous_moved=0
+deadline=""
+
+# Same choice as the Herdr hook: gtimeout on macOS, timeout elsewhere.
+# This hook warns and continues when the tool is missing, because a failed
+# FreeTube install must not stop the rest of setup.
+require_deadline() {
+  if [[ -n "$deadline" ]]; then
+    return 0
+  fi
+  if [[ "$(uname -s)" == Darwin ]]; then
+    deadline="gtimeout"
+  else
+    deadline="timeout"
+  fi
+  if ! command -v "$deadline" >/dev/null 2>&1; then
+    deadline=""
+    finish_without_install "GNU timeout is required to install FreeTube. Setup will continue."
+  fi
+}
+
+# 124 is GNU timeout's deadline. 137 is the KILL that follows --kill-after.
+deadline_expired() {
+  [[ "$1" -eq 124 || "$1" -eq 137 ]]
+}
+
+run_bounded() {
+  local seconds="$1"
+  shift
+  "$deadline" --kill-after=5s "$seconds" "$@"
+}
 
 warn() {
   printf 'Groundwork: %s\n' "$1" >&2
@@ -99,12 +130,17 @@ permission_denied() {
 # Force is the retry. mount_point stays set when both attempts fail so cleanup
 # does not delete a live mount.
 detach_mount() {
+  local status
   [[ -n "$mount_point" ]] || return 0
-  if hdiutil detach "$mount_point" >/dev/null 2>&1; then
+  status=0
+  run_bounded 60 hdiutil detach "$mount_point" </dev/null >/dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 ]]; then
     mount_point=""
     return 0
   fi
-  if hdiutil detach "$mount_point" -force >/dev/null 2>&1; then
+  status=0
+  run_bounded 60 hdiutil detach "$mount_point" -force </dev/null >/dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 ]]; then
     mount_point=""
     return 0
   fi
@@ -247,7 +283,17 @@ fi
 
 mnt="${work}/mnt"
 mkdir -p "$mnt" || finish_without_install "FreeTube could not prepare a mount directory. Setup will continue."
-if ! hdiutil attach "$dmg" -mountpoint "$mnt" -readonly -nobrowse >/dev/null; then
+# 60 seconds for the mount, then 5 seconds after TERM. Stdin is /dev/null so
+# hdiutil cannot wait on a prompt. A deadline expiry sets mount_point first,
+# then the EXIT trap detaches and deletes only this temporary tree.
+require_deadline
+attach_status=0
+run_bounded 60 hdiutil attach "$dmg" -mountpoint "$mnt" -readonly -nobrowse </dev/null >/dev/null || attach_status=$?
+if [[ "$attach_status" -ne 0 ]]; then
+  if deadline_expired "$attach_status"; then
+    mount_point="$mnt"
+    finish_without_install "FreeTube disk image mount timed out. Setup will continue."
+  fi
   finish_without_install "FreeTube disk image did not mount. Setup will continue."
 fi
 mount_point="$mnt"
@@ -262,7 +308,13 @@ if ! stage="$(mktemp -d "${applications_dir}/.freetube-groundwork.XXXXXX" 2>"${w
   fi
   finish_without_install "FreeTube could not prepare an install directory in ${applications_dir}. Setup will continue."
 fi
-if ! ditto "$src" "${stage}/FreeTube.app" 2>"${work}/ditto.err"; then
+# 180 seconds for the copy. A partial stage directory is removed by the trap.
+ditto_status=0
+run_bounded 180 ditto "$src" "${stage}/FreeTube.app" </dev/null 2>"${work}/ditto.err" || ditto_status=$?
+if [[ "$ditto_status" -ne 0 ]]; then
+  if deadline_expired "$ditto_status"; then
+    finish_without_install "FreeTube copy timed out. Setup will continue."
+  fi
   if permission_denied "${work}/ditto.err"; then
     finish_without_install "FreeTube could not be copied into ${applications_dir} because permission was denied. Setup will continue."
   fi
