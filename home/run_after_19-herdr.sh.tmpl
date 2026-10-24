@@ -1,34 +1,157 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Homebrew owns Herdr on supported hosts, including headless setups. Fill
-# only a missing command through Herdr's checksum-verifying stable installer.
+# Homebrew owns Herdr when its formula is installed. The official installer
+# fills only a missing command, into ~/.local/bin, and only when no Herdr is
+# already on PATH outside that directory. Shell startup puts ~/.local/bin
+# first, so an older fallback there would hide a newer Homebrew binary.
+# update-all sets GROUNDWORK_UPDATE_SCOPE=maintenance before chezmoi apply.
+# That is the only path that runs `herdr update`, and it runs for any regular
+# file at ~/.local/bin/herdr when Homebrew does not provide Herdr.
+
+homebrew_prefix=""
 for brew_bin in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
-  [[ -x "$brew_bin" ]] && eval "$("$brew_bin" shellenv)" && break
+  if [[ -x "$brew_bin" ]]; then
+    eval "$("$brew_bin" shellenv)"
+    homebrew_prefix="$(dirname -- "$(dirname -- "$brew_bin")")"
+    break
+  fi
 done
 unset brew_bin
-export PATH="$HOME/.local/bin:$PATH"
-existing_herdr="$(command -v herdr || true)"
-if [[ -n "$existing_herdr" && -f "$existing_herdr" && -x "$existing_herdr" ]]; then
+
+homebrew_herdr=""
+if [[ -n "$homebrew_prefix" && -x "$homebrew_prefix/bin/herdr" ]]; then
+  homebrew_herdr="$homebrew_prefix/bin/herdr"
+fi
+
+local_herdr="$HOME/.local/bin/herdr"
+deadline=""
+
+require_deadline() {
+  if [[ -n "$deadline" ]]; then
+    return 0
+  fi
+  if [[ "$(uname -s)" == Darwin ]]; then
+    deadline="gtimeout"
+  else
+    deadline="timeout"
+  fi
+  command -v "$deadline" >/dev/null 2>&1 || {
+    echo "GNU timeout is required for the Herdr installer; apply the Brewfile first." >&2
+    exit 1
+  }
+}
+
+herdr_release_version() {
+  local output
+  output="$("$deadline" --kill-after=5s 15 "$1" --version 2>&1 || true)"
+  printf '%s\n' "$output" | awk 'match($0, /[0-9]+([.][0-9]+)*/) { print substr($0, RSTART, RLENGTH); exit }'
+}
+
+# Return 0 when $1 <= $2, 1 when $1 > $2, and 2 when either token is not dotted numbers.
+version_le() {
+  local left="$1" right="$2"
+  [[ "$left" =~ ^[0-9]+([.][0-9]+)*$ ]] || return 2
+  [[ "$right" =~ ^[0-9]+([.][0-9]+)*$ ]] || return 2
+  [[ "$left" == "$right" ]] && return 0
+  local IFS=.
+  local -a left_parts right_parts
+  local index count left_part right_part
+  read -r -a left_parts <<<"$left"
+  read -r -a right_parts <<<"$right"
+  count="${#left_parts[@]}"
+  if ((${#right_parts[@]} > count)); then
+    count="${#right_parts[@]}"
+  fi
+  for ((index = 0; index < count; index++)); do
+    left_part="${left_parts[$index]:-0}"
+    right_part="${right_parts[$index]:-0}"
+    if ((10#$left_part < 10#$right_part)); then
+      return 0
+    fi
+    if ((10#$left_part > 10#$right_part)); then
+      return 1
+    fi
+  done
+  return 0
+}
+
+if [[ -n "$homebrew_herdr" ]]; then
+  if [[ -L "$local_herdr" ]]; then
+    printf 'Preserving symlink %s; it shadows Homebrew Herdr and was not removed.\n' \
+      "$local_herdr" >&2
+    exit 1
+  fi
+  if [[ -x "$local_herdr" ]]; then
+    require_deadline
+    local_version="$(herdr_release_version "$local_herdr")"
+    brew_version="$(herdr_release_version "$homebrew_herdr")"
+    comparison=0
+    version_le "$local_version" "$brew_version" || comparison=$?
+    case "$comparison" in
+      0)
+        rm -f -- "$local_herdr"
+        printf 'Removed %s (%s); Homebrew Herdr %s stays on PATH.\n' \
+          "$local_herdr" "$local_version" "$brew_version"
+        ;;
+      1)
+        printf 'Keeping %s (%s); it is newer than Homebrew Herdr %s.\n' \
+          "$local_herdr" "$local_version" "$brew_version"
+        ;;
+      *)
+        printf 'Could not compare %s (%s) with Homebrew Herdr (%s).\n' \
+          "$local_herdr" "${local_version:-unknown}" "${brew_version:-unknown}" >&2
+        exit 1
+        ;;
+    esac
+  fi
   exit 0
 fi
-installed_herdr="$HOME/.local/bin/herdr"
-if [[ -e "$installed_herdr" || -L "$installed_herdr" ]]; then
-  echo "Preserving unusable $installed_herdr; inspect its ownership and permissions before retrying." >&2
-  exit 1
+
+path_without_local=""
+IFS=':' read -r -a path_entries <<<"${PATH}"
+for entry in "${path_entries[@]}"; do
+  [[ "$entry" == "$HOME/.local/bin" ]] && continue
+  if [[ -z "$path_without_local" ]]; then
+    path_without_local="$entry"
+  else
+    path_without_local="${path_without_local}:${entry}"
+  fi
+done
+other_herdr=""
+if [[ -n "$path_without_local" ]]; then
+  other_herdr="$(PATH="$path_without_local" command -v herdr || true)"
 fi
-deadline=timeout
-[[ "$(uname -s)" != Darwin ]] || deadline=gtimeout
-command -v "$deadline" >/dev/null || {
-  echo "GNU timeout is required for the Herdr installer; apply the Brewfile first." >&2
-  exit 1
-}
+if [[ -n "$other_herdr" && -x "$other_herdr" ]]; then
+  exit 0
+fi
+
+if [[ -e "$local_herdr" || -L "$local_herdr" ]]; then
+  if [[ ! -x "$local_herdr" || -d "$local_herdr" ]]; then
+    echo "Preserving unusable $local_herdr; inspect its ownership and permissions before retrying." >&2
+    exit 1
+  fi
+  if [[ -L "$local_herdr" ]]; then
+    exit 0
+  fi
+  if [[ "${GROUNDWORK_UPDATE_SCOPE:-}" == maintenance ]]; then
+    require_deadline
+    echo "Updating the regular file ~/.local/bin/herdr (five-minute deadline)."
+    "$deadline" --kill-after=5s 300 "$local_herdr" update </dev/null
+    "$deadline" --kill-after=5s 15 "$local_herdr" --version
+  fi
+  exit 0
+fi
+
+require_deadline
 installer="$(mktemp)"
 trap 'rm -f "$installer"' EXIT
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
   -fsSL https://herdr.dev/install.sh -o "$installer"
 echo "Installing Herdr stable (five-minute deadline; installer output follows)."
 HERDR_INSTALL_DIR="$HOME/.local/bin" "$deadline" --kill-after=5s 300 sh "$installer"
-hash -r
-[[ -x "$installed_herdr" ]] || { echo "The official installer did not create $installed_herdr." >&2; exit 1; }
-"$deadline" --kill-after=5s 15 "$installed_herdr" --version
+[[ -x "$local_herdr" ]] || {
+  echo "The official installer did not create $local_herdr." >&2
+  exit 1
+}
+"$deadline" --kill-after=5s 15 "$local_herdr" --version
