@@ -326,7 +326,7 @@
       <table class="keytable">
         <tr><td><strong>Keep files local</strong></td><td>Your vault lives at <code>iCloud Drive/Obsidian/&lt;name&gt;</code>. Right-click the folder and choose Keep Downloaded, or turn off Optimize Mac Storage, so notes are available to editors and agents.</td></tr>
         <tr><td><strong>Plugin first run</strong></td><td>After first launch, restart Obsidian once so Groundwork's auto-installed plugins load before you configure them.</td></tr>
-        <tr><td><strong>Smart Connections</strong></td><td>Add your Claude API key or local Ollama URL, then choose the embedding model you want. For a local path, start Ollama so it serves <code>http://localhost:11434</code>, then run <code>ollama pull nomic-embed-text</code>.</td></tr>
+        <tr><td><strong>Smart Connections</strong></td><td>Add your Claude API key or a local Ollama URL, then choose the embedding model you want. Ollama is not installed by default. Optional personal apps can install the menu-bar app, and an Apple Silicon Mac can opt into the Homebrew formula with <code>groundwork-configure</code>. See <a href="local-inference.md">local inference</a>. For a local path, start Ollama so it serves <code>http://localhost:11434</code>, read the model page, then run <code>ollama pull</code> for the embedding model you chose.</td></tr>
         <tr><td><strong>Whisper</strong></td><td>Use it for speech-to-text notes. Point it at a local endpoint if you want speech fully offline.</td></tr>
         <tr><td><strong>Claude Code over notes</strong></td><td>For AI chat over a vault, point Claude Code at the vault or the generated knowledge-wiki folder so changes happen through files you can review.</td></tr>
       </table>

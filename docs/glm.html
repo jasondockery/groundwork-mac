@@ -157,7 +157,7 @@
 <p>Everything else about the session — permissions, hooks, <code>AGENTS.md</code> — stays exactly as configured; only the model behind the conversation changes. That is the general shape of the open-model ecosystem, not just Z.ai&apos;s: most serving options speak an OpenAI- or Anthropic-compatible API, so an agent that lets you set a base URL and a key can usually be pointed at any model behind it, hosted or local.</p>
 
 <h2><span class="hash" aria-hidden="true">#</span>Local models on this machine</h2>
-<p>Groundwork installs <strong>Ollama</strong>, a local model runtime that downloads and serves open models on your machine at <code>localhost:11434</code>. It is the shortest path to a model that works with the network cable unplugged:</p>
+<p>A local model runtime is optional. Groundwork does not install one during setup, and it does not download weights for you. On an Apple Silicon Mac, <code>groundwork-configure</code> can install Homebrew's <strong>Ollama</strong> formula; the hardware range, MLX path, and removal steps are in the <a href="local-inference.md">local inference guide</a>. How to judge a license, a publisher, and whether a model fits the machine is in the <a href="https://github.com/jasondockery/groundwork-core/blob/main/docs/local-models.md">shared local model guide</a>. Optional personal apps can still install the Ollama menu-bar app for Obsidian. Either way, you choose the model and you run the download. The commands below are that explicit download, not part of setup:</p>
 <table class="keytable">
   <tr><td><code>ollama run &lt;model&gt;</code></td><td>Download (first run) and chat with a model in the terminal.</td></tr>
   <tr><td><code>ollama ps</code></td><td>Show what&apos;s loaded, its size, and whether it&apos;s running on your machine or as a <code>:cloud</code> model — the local equivalent of a usage gauge.</td></tr>
@@ -178,7 +178,8 @@
 
 <h2><span class="hash" aria-hidden="true">#</span>References</h2>
 <ul>
-  <li><a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> — for a reader starting out: the local runtime Groundwork installs, and its <a href="https://ollama.com/library/gemma3" target="_blank" rel="noopener">Gemma 3 library page</a> for the drill above.</li>
+  <li><a href="local-inference.md">Local inference on Apple Silicon</a> — for a reader who wants the runtime installed: the opt-in formula, what it does not download, and how to remove it.</li>
+  <li><a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> — for a reader starting out: the local runtime, and its <a href="https://ollama.com/library/gemma3" target="_blank" rel="noopener">Gemma 3 library page</a> for the drill above. Read the size and license on that page before <code>ollama pull</code>.</li>
   <li><a href="https://z.ai" target="_blank" rel="noopener">Z.ai</a> — for a reader deciding whether to try GLM hosted: models, API, and the GLM Coding Plan.</li>
   <li><a href="https://docs.z.ai/devpack/overview" target="_blank" rel="noopener">GLM Coding Plan docs</a> — for a reader ready to point an agent at it: tiers, quotas, and per-tool setup for Claude Code, Cline, and OpenCode.</li>
   <li><a href="https://huggingface.co/zai-org" target="_blank" rel="noopener">zai-org on Hugging Face</a> — for a reader evaluating or self-hosting: every GLM release&apos;s weights, license, and model card, GLM-5.2 included.</li>
