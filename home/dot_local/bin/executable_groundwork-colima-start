@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'HELP'
+Size and start a Colima instance managed by Groundwork.
+
+Usage:
+  groundwork-colima-start [--profile NAME] [--runtime docker|containerd|incus]
+  groundwork-colima-start --help
+
+For a new profile, Groundwork reads free space from the filesystem that will
+hold the Colima data disk and starts with a limit of about half that space,
+capped at 100 GiB. Existing profiles start without an automatic disk-size
+change. When 20 to under 40 GiB is free, the 20 GiB floor takes precedence over
+half-free sizing. Below 20 GiB free, the command refuses to create an instance.
+Colima's data disk is sparse and grows as it is used, so the configured limit
+is not a reservation or a guarantee against the host volume running out of
+space later.
+
+Custom Colima settings remain available through Colima's configuration and
+the direct colima start command. Direct Colima starts do not use this sizing
+policy.
+HELP
+}
+
+usage_error() {
+  printf 'groundwork-colima-start: %s\n' "$1" >&2
+  printf "Run 'groundwork-colima-start --help' for usage.\n" >&2
+  exit 64
+}
+
+# Help is a read-only request and must not run any external command.
+for argument in "$@"; do
+  case "$argument" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
+profile=""
+profile_set=0
+runtime=""
+runtime_set=0
+while (($#)); do
+  case "$1" in
+    --profile)
+      [[ $# -ge 2 ]] || usage_error "--profile needs a value"
+      [[ "$profile_set" -eq 0 ]] || usage_error "--profile may be supplied once"
+      profile="$2"
+      profile_set=1
+      shift
+      ;;
+    --profile=*)
+      [[ "$profile_set" -eq 0 ]] || usage_error "--profile may be supplied once"
+      profile="${1#*=}"
+      profile_set=1
+      ;;
+    --runtime)
+      [[ $# -ge 2 ]] || usage_error "--runtime needs a value"
+      [[ "$runtime_set" -eq 0 ]] || usage_error "--runtime may be supplied once"
+      runtime="$2"
+      runtime_set=1
+      shift
+      ;;
+    --runtime=*)
+      [[ "$runtime_set" -eq 0 ]] || usage_error "--runtime may be supplied once"
+      runtime="${1#*=}"
+      runtime_set=1
+      ;;
+    *)
+      usage_error "unsupported argument: $1"
+      ;;
+  esac
+  shift
+done
+
+if [[ "$profile_set" -eq 1 ]]; then
+  case "$profile" in
+    "" | *[!A-Za-z0-9._-]* | . | .. | -*)
+      usage_error "profile must be one safe name segment using letters, digits, dot, underscore, or hyphen"
+      ;;
+  esac
+  profile_short="$profile"
+  if [[ "$profile_short" == colima-* ]]; then
+    profile_short="${profile_short#colima-}"
+  fi
+  case "$profile_short" in
+    "" | *[!A-Za-z0-9._-]* | . | .. | -*)
+      usage_error "profile must resolve to one safe Colima profile name"
+      ;;
+  esac
+fi
+
+if [[ "$runtime_set" -eq 1 ]]; then
+  case "$runtime" in
+    docker | containerd | incus) ;;
+    *) usage_error "--runtime must be docker, containerd, or incus" ;;
+  esac
+fi
+
+if [[ -z "${HOME:-}" ]]; then
+  echo "groundwork-colima-start: HOME is unset; no instance was started." >&2
+  exit 1
+fi
+
+platform_helper="$HOME/.local/bin/groundwork-platform"
+if [[ ! -x "$platform_helper" ]]; then
+  printf 'groundwork-colima-start: the platform helper is missing: %s; no instance was started.\n' "$platform_helper" >&2
+  exit 1
+fi
+platform="$("$platform_helper" 2>/dev/null)" || platform=unknown
+if [[ "$platform" != darwin ]]; then
+  printf 'groundwork-colima-start: this managed Colima start command requires macOS (detected %s); no instance was started.\n' "$platform" >&2
+  exit 1
+fi
+
+colima_home_lib="$HOME/.local/share/groundwork/lib/colima-home.sh"
+if [[ ! -r "$colima_home_lib" ]]; then
+  printf 'groundwork-colima-start: the managed Colima home helper is missing: %s\n' "$colima_home_lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$colima_home_lib"
+
+if [[ "$profile_set" -eq 1 ]]; then
+  COLIMA_PROFILE="$profile"
+  export COLIMA_PROFILE
+fi
+
+if ! gw_colima_resolve; then
+  echo "groundwork-colima-start: the selected Colima profile could not be resolved; no instance was started." >&2
+  exit 1
+fi
+
+colima_executable="$(type -P colima 2>/dev/null || true)"
+if [[ -z "$colima_executable" ]]; then
+  echo "groundwork-colima-start: Colima was not found on PATH; no instance was started." >&2
+  exit 1
+fi
+
+instance_status=1
+gw_colima_instance_exists || instance_status=$?
+case "$instance_status" in
+  0)
+    disk_status=1
+    gw_colima_instance_lacks_data_disk || disk_status=$?
+    if [[ "$disk_status" -eq 0 ]]; then
+      recovery="$(gw_colima_recovery_command 2>/dev/null || true)"
+      if [[ -n "$recovery" ]]; then
+        printf 'Groundwork: this Colima profile has no data disk, so it was not started.\nRecover with: %s\n' "$recovery" >&2
+      else
+        echo "Groundwork: this Colima profile has no data disk, so it was not started. Its recovery command could not be quoted safely." >&2
+      fi
+      echo "Deleting the instance destroys its containers and images. Groundwork will not delete anything automatically." >&2
+      exit 1
+    fi
+    if [[ "$disk_status" -ne 1 ]]; then
+      echo "groundwork-colima-start: the existing profile's data disk could not be checked; no instance was started." >&2
+      exit 1
+    fi
+    printf 'Groundwork: profile %q already has Colima state; starting without an automatic disk-size change.\n' "$GW_COLIMA_PROFILE"
+    ;;
+  1)
+    disk_status=1
+    gw_colima_instance_lacks_data_disk || disk_status=$?
+    if [[ "$disk_status" -ne 1 ]]; then
+      echo "groundwork-colima-start: the new profile state could not be checked safely; no instance was started." >&2
+      exit 1
+    fi
+
+    if ! gw_colima_measure_disk_space; then
+      printf 'groundwork-colima-start: could not read free space for the Colima data-disk location %q; no instance was started.\n' \
+        "$GW_COLIMA_LIMA_HOME" >&2
+      exit 1
+    fi
+
+    available_kib="$GW_COLIMA_DISK_SPACE_KIB"
+    free_whole_gib=$((available_kib / 1048576))
+    free_tenth_gib=$(((available_kib % 1048576) * 10 / 1048576))
+    free_display="${free_whole_gib}.${free_tenth_gib}"
+    if [[ "$free_whole_gib" -lt 20 ]]; then
+      printf 'groundwork-colima-start: the filesystem for %q has about %s GiB free; at least 20 GiB must be free before creating a new instance. Choose a roomier LIMA_HOME; no instance was started.\n' \
+        "$GW_COLIMA_LIMA_HOME" "$free_display" >&2
+      exit 1
+    fi
+    disk_gib=$((available_kib / 2097152))
+    if [[ "$disk_gib" -lt 20 ]]; then
+      disk_gib=20
+    fi
+    if [[ "$disk_gib" -gt 100 ]]; then
+      disk_gib=100
+    fi
+
+    printf 'Groundwork: new profile %q will use a %s GiB data-disk limit.\n' \
+      "$GW_COLIMA_PROFILE" "$disk_gib"
+    printf 'The data disk will be stored under %q; its filesystem has about %s GiB free (measured at %q).\n' \
+      "$GW_COLIMA_LIMA_HOME" "$free_display" "$GW_COLIMA_DISK_SPACE_PATH"
+    printf 'The limit is about half of current free space, rounded down, with a 20 GiB floor and a 100 GiB cap.'
+    if [[ "$free_whole_gib" -lt 40 ]]; then
+      printf ' The 20 GiB floor takes precedence over half-free sizing in this range.'
+    fi
+    printf ' Colima stores the data disk sparsely and it grows as used; later workloads can still fill the host volume.\n'
+    ;;
+  *)
+    echo "groundwork-colima-start: the selected Colima profile could not be checked safely; no instance was started." >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$profile_set" -eq 1 ]]; then
+  colima_args=(--profile "$profile" start)
+else
+  colima_args=(start)
+fi
+if [[ "$runtime_set" -eq 1 ]]; then
+  colima_args+=(--runtime "$runtime")
+fi
+if [[ "$instance_status" -eq 1 ]]; then
+  colima_args+=(--disk "$disk_gib")
+fi
+
+exec "$colima_executable" "${colima_args[@]}"
