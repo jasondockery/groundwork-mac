@@ -107,6 +107,8 @@ docker_backend={{ $developer := includeTemplate "developer-settings" . | fromJso
 multiplexer={{ includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim | quote }}
 headless={{ if .headless }}true{{ else }}false{{ end }}
 xcode={{ if and (hasKey . "xcode") .xcode }}true{{ else }}false{{ end }}
+local_inference={{ if and (hasKey . "local_inference") (kindIs "bool" .local_inference) .local_inference }}true{{ else }}false{{ end }}
+local_inference_applies={{ if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") }}true{{ else }}false{{ end }}
 stored_beta={{ if and (hasKey . "beta") .beta }}true{{ else }}false{{ end }}
 browser="Google Chrome stable"
 if [[ "$headless" == "true" ]]; then
@@ -143,6 +145,11 @@ case "$command" in
     printf '  Release posture   %s\n' "$posture"
     printf '  Multiplexer       %s\n' "$multiplexer"
     printf '  Xcode             %s\n' "$([[ "$xcode" == "true" ]] && echo enabled || echo disabled)"
+    if [[ "$local_inference" == "true" && "$local_inference_applies" != "true" ]]; then
+      printf '  Local inference   inactive (stored enabled; Apple Silicon only)\n'
+    else
+      printf '  Local inference   %s\n' "$([[ "$local_inference" == "true" ]] && echo enabled || echo disabled)"
+    fi
     if [[ "$xcode" == "true" && "$stored_beta" == "true" ]]; then
       printf '  Xcode beta        enabled\n'
     elif [[ "$xcode" != "true" && "$stored_beta" == "true" ]]; then

@@ -282,6 +282,14 @@
       </div>
       <p>Worth knowing before you settle in: because that tap ships no bottle, <strong>every</strong> cliamp release rebuilds from source, and it publishes often. If you would rather not carry that, cliamp is a music player and nothing depends on it — remove it with <code>chezmoi edit --apply ~/.config/homebrew/Brewfile.optional</code>. Leaving it costs you a failed optional line on each apply and nothing more.</p>
 
+      <h3>Optional Ollama did not install because the menu-bar app is present</h3>
+      <p>The Apple Silicon opt-in installs the Homebrew formula <code>ollama</code>. Optional personal apps can install the cask <code>ollama-app</code>. Both provide the <code>ollama</code> command, so the formula install stops while the app remains. This does not fail the rest of the update. The optional installer prints the recovery command. Removing the app leaves downloaded models in <code>~/.ollama</code>:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">ollama app conflict</span></div>
+        <pre><code><span class="prompt">$ </span>brew uninstall --cask ollama-app</code></pre>
+      </div>
+      <p>Do not add <code>--zap</code> unless you also mean to delete those models. The cask&apos;s zap list includes <code>~/.ollama</code>. Then run <code>chezmoi apply</code> again. The full install, run, and removal path is in <a href="local-inference.md">local inference</a>.</p>
+
       <h3>A Python tool tries to build SciPy or asks for gfortran</h3>
       <p>Global Python tools intentionally use a proven Python version, not the newest Python release. Heavy dependencies such as NumPy and SciPy need mature wheel coverage; when a tool runs on a too-new Python, <code>uv</code> can fall back to a slow source build and fail on a normal Mac because no Fortran compiler is installed. Keep the global tool Python on the Groundwork-managed version, and choose newer Python versions per project with <code>mise use python@...</code> only when that project needs them.</p>
 
