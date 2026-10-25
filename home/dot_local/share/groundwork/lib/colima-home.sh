@@ -25,7 +25,10 @@ GW_COLIMA_PROFILE_ID=""
 GW_COLIMA_LIMA_HOME=""
 GW_COLIMA_CONFIG=""
 GW_COLIMA_DATADISK=""
+# These outputs are consumed by the CLI that sources this library.
+# shellcheck disable=SC2034
 GW_COLIMA_DISK_SPACE_PATH=""
+# shellcheck disable=SC2034
 GW_COLIMA_DISK_SPACE_KIB=""
 
 # Print ~/.colima when COLIMA_HOME is unset or empty and that directory
@@ -146,10 +149,10 @@ gw_colima_existing_directory() {
 # existing state even when Colima's instance config has been deleted.
 gw_colima_instance_exists() {
   gw_colima_resolve || return 2
-  if [[ -e "$GW_COLIMA_CONFIG" || -L "$GW_COLIMA_CONFIG" \
-    || -e "$GW_COLIMA_DATADISK" || -L "$GW_COLIMA_DATADISK" \
-    || -d "$GW_COLIMA_HOME/$GW_COLIMA_PROFILE_SHORT" \
-    || -d "$GW_COLIMA_LIMA_HOME/_disks/$GW_COLIMA_PROFILE_ID" ]]; then
+  if [[ -e "$GW_COLIMA_CONFIG" || -L "$GW_COLIMA_CONFIG" ||
+    -e "$GW_COLIMA_DATADISK" || -L "$GW_COLIMA_DATADISK" ||
+    -d "$GW_COLIMA_HOME/$GW_COLIMA_PROFILE_SHORT" ||
+    -d "$GW_COLIMA_LIMA_HOME/_disks/$GW_COLIMA_PROFILE_ID" ]]; then
     return 0
   fi
   return 1
@@ -166,7 +169,9 @@ gw_colima_measure_disk_space() {
   output="$(LC_ALL=C df -kP "$probe")" || return 2
   available="$(printf '%s\n' "$output" | awk 'NR == 2 { print $4; exit }')" || return 2
   [[ "$available" =~ ^[0-9]+$ ]] || return 2
+  # shellcheck disable=SC2034
   GW_COLIMA_DISK_SPACE_PATH="$probe"
+  # shellcheck disable=SC2034
   GW_COLIMA_DISK_SPACE_KIB="$available"
 }
 

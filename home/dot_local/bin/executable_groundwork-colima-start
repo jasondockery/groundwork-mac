@@ -141,11 +141,11 @@ if [[ -z "$colima_executable" ]]; then
   exit 1
 fi
 
-instance_status=1
+instance_status=0
 gw_colima_instance_exists || instance_status=$?
 case "$instance_status" in
   0)
-    disk_status=1
+    disk_status=0
     gw_colima_instance_lacks_data_disk || disk_status=$?
     if [[ "$disk_status" -eq 0 ]]; then
       recovery="$(gw_colima_recovery_command 2>/dev/null || true)"
@@ -164,7 +164,7 @@ case "$instance_status" in
     printf 'Groundwork: profile %q already has Colima state; starting without an automatic disk-size change.\n' "$GW_COLIMA_PROFILE"
     ;;
   1)
-    disk_status=1
+    disk_status=0
     gw_colima_instance_lacks_data_disk || disk_status=$?
     if [[ "$disk_status" -ne 1 ]]; then
       echo "groundwork-colima-start: the new profile state could not be checked safely; no instance was started." >&2
