@@ -10,16 +10,16 @@
       "lastmod": "2026-08-13"
     },
     "ai-budget.html": {
-      "sha256": "347f4e78473468076fbf0a68710a9f67d8d45653bc660ffe94efd0255968e283",
-      "lastmod": "2026-08-13"
+      "sha256": "971e859557e9f7e2cf0111c985b9d02f14f67bbe0611b7641707e0ac5a64825e",
+      "lastmod": "2026-10-26"
     },
     "app-dev.html": {
       "sha256": "e463a06633431544df2223f770fc30acbbb6200597c4e20bd512ad6a342e46a6",
       "lastmod": "2026-08-13"
     },
     "apps.html": {
-      "sha256": "74b6c5eea30412d1e717a809a3e749c4d3fd5c4d035be848b9abe403e879cb94",
-      "lastmod": "2026-10-24"
+      "sha256": "33f5ca39f98b66db98816e7386be467bdf128ce6ba42b7721f563aaf70295a6c",
+      "lastmod": "2026-10-26"
     },
     "cheatsheet.html": {
       "sha256": "d6e21598793a9abd2be0f91c98035ebbd665a761b42d66e70cea60cf01d3c626",
@@ -38,7 +38,7 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "f81c3d01cfaa4ca9fbbb9e4cee362d2f4ae926421e5c8765489fd9ea7bc9646c",
+      "sha256": "ce23b80c99c90ff96a7696eb2318d6b03e81edf88603db61537b1b96a25878b5",
       "lastmod": "2026-10-26"
     },
     "customizing.html": {
@@ -86,8 +86,8 @@
       "lastmod": "2026-10-16"
     },
     "glm.html": {
-      "sha256": "73b45a19366d3e67b9a2a7c7d5d5179855251a2fd2b6cb651ad91cb1c17c35c8",
-      "lastmod": "2026-08-13"
+      "sha256": "c2817b8d7c3f7f7531c6072853d1f67f1c564428e5710ace6be534f6b8dd01fe",
+      "lastmod": "2026-10-26"
     },
     "glossary.html": {
       "sha256": "60749ac9aea10d681f6e2678ad06eccde053557033b7a5f8a118615da1f2b0f7",
@@ -114,8 +114,8 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "66536f2ddd74c4053a8215055be25523c3a114afd5a0b23bee26368260f37f75",
-      "lastmod": "2026-10-24"
+      "sha256": "da897d4e3863fadb75778b77684dc71df8f882f5f1be9d126df9addb7ae21533",
+      "lastmod": "2026-10-26"
     },
     "keyboard.html": {
       "sha256": "de050cec0c5b72215e75f9dea81f4301cef219c5788df609af0aed75e1b60d42",
@@ -146,7 +146,7 @@
       "lastmod": "2026-08-13"
     },
     "platforms.html": {
-      "sha256": "ccddb637b4a792141670d420256146043066f8b0eed001772b9f62c688fb9ef0",
+      "sha256": "0b708a246fb8400798745d151021d4624761ce572cde346870ef0f93bbb23967",
       "lastmod": "2026-10-26"
     },
     "practice.html": {
@@ -162,7 +162,7 @@
       "lastmod": "2026-10-24"
     },
     "setup.html": {
-      "sha256": "51b43ace9a603651e670d9b4f068e003272b7d35a32f6c1ac443dd4da801a1f3",
+      "sha256": "3640ad9d6ced81bfc9e8cb86a878843c4534403e40d54bd6e71cc4c126e00a9c",
       "lastmod": "2026-10-26"
     },
     "shell.html": {
@@ -186,7 +186,7 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "a5dcdc83240b958884128196a4f01fbc1e421e82016650f31aa871afe976d110",
+      "sha256": "424191e5ef5c881cddfa24188c2863adbb7714bd6edf3d3e702ae169edd615e7",
       "lastmod": "2026-10-26"
     },
     "web-dev.html": {
