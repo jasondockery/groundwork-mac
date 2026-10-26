@@ -3449,6 +3449,8 @@ SH
   cp home/dot_local/bin/executable_groundwork-cleanup "$update_all_bin/groundwork-cleanup"
   cp home/dot_local/share/groundwork/lib/brew-output.sh \
     "$update_all_home/.local/share/groundwork/lib/brew-output.sh"
+  cp home/dot_local/share/groundwork/lib/colima-home.sh \
+    "$update_all_home/.local/share/groundwork/lib/colima-home.sh"
   cp home/dot_local/share/groundwork/lib/sudo-preflight.sh \
     "$update_all_home/.local/share/groundwork/lib/sudo-preflight.sh"
   cp home/dot_local/share/groundwork/lib/reset-signals.c \
@@ -6704,6 +6706,539 @@ EOF
     "$update_all_fixture/darwin-outdated-fail" \
     || fail "a failed Homebrew observation did not print the exact command to reproduce it"
   test ! -e "$update_all_stamp"
+
+  check "Colima zero data disk is reported and not started"
+  # disk: 0 and a 0-byte datadisk are the same broken instance. update-all must
+  # say so and skip colima start. groundwork-doctor reports the same fact.
+  # Neither command deletes the instance. The printed recovery command names
+  # the home and profile the resolver actually read. COLIMA_HOME is used only
+  # when that directory exists. A missing COLIMA_HOME falls through to
+  # ~/.colima, then to $XDG_CONFIG_HOME/colima. COLIMA_PROFILE and LIMA_HOME
+  # select the config and the datadisk.
+  colima_disk_root="$update_all_fixture/colima-disk"
+  rm -rf "$colima_disk_root" "$update_all_home/.colima"
+  write_colima_instance() {
+    local root="$1" disk_value="$2" datadisk_bytes="$3"
+    rm -rf "$root"
+    mkdir -p "$root/default" "$root/_lima/_disks/colima"
+    if [[ -n "$disk_value" ]]; then
+      printf 'runtime: docker\ndisk: %s\n' "$disk_value" >"$root/default/colima.yaml"
+    fi
+    if [[ "$datadisk_bytes" != "absent" ]]; then
+      printf '%s' "$datadisk_bytes" >"$root/_lima/_disks/colima/datadisk"
+    fi
+  }
+  assert_colima_untouched() {
+    local root="$1" yaml disk_file
+    yaml="$root/default/colima.yaml"
+    disk_file="$root/_lima/_disks/colima/datadisk"
+    if [[ -n "${2:-}" ]]; then
+      grep -qxF "disk: $2" "$yaml" \
+        || fail "Colima config under $root changed"
+    fi
+    if [[ "${3:-}" == "absent" ]]; then
+      test ! -e "$disk_file" || fail "a missing Colima data disk was created under $root"
+    elif [[ "${3:-}" == "empty" ]]; then
+      [[ -f "$disk_file" && ! -s "$disk_file" ]] \
+        || fail "the 0-byte Colima data disk under $root was replaced"
+    else
+      grep -qxF "$3" "$disk_file" || fail "Colima data disk bytes under $root changed"
+    fi
+  }
+  # Colima 0.10.3 ProfileFromName. The argument is the original profile
+  # string. "", "colima", and "default" are the default instance. One leading
+  # "colima-" is removed only after that switch.
+  colima_profile_short() {
+    local name="$1"
+    case "$name" in
+      "" | colima | default)
+        printf '%s\n' default
+        return
+        ;;
+    esac
+    if [[ "$name" == colima-* ]]; then
+      name="${name#colima-}"
+    fi
+    printf '%s\n' "$name"
+  }
+  colima_profile_id() {
+    local name="$1"
+    case "$name" in
+      "" | colima | default)
+        printf '%s\n' colima
+        return
+        ;;
+    esac
+    if [[ "$name" == colima-* ]]; then
+      name="${name#colima-}"
+    fi
+    printf '%s\n' "colima-$name"
+  }
+  write_colima_profile() {
+    local root="$1" profile="$2" disk_value="$3" datadisk_bytes="$4" lima_root="${5:-}"
+    local id short disk_file
+    short="$(colima_profile_short "$profile")"
+    id="$(colima_profile_id "$profile")"
+    [[ -n "$lima_root" ]] || lima_root="$root/_lima"
+    mkdir -p "$root/$short" "$lima_root/_disks/$id"
+    if [[ -n "$disk_value" ]]; then
+      printf 'runtime: docker\ndisk: %s\n' "$disk_value" >"$root/$short/colima.yaml"
+    fi
+    disk_file="$lima_root/_disks/$id/datadisk"
+    if [[ "$datadisk_bytes" == "absent" ]]; then
+      rm -f "$disk_file"
+    else
+      printf '%s' "$datadisk_bytes" >"$disk_file"
+    fi
+  }
+  colima_recovery_line() {
+    local home="$1" profile="$2" lima="${3:-}" id one disk
+    id="$(colima_profile_id "$profile")"
+    [[ -n "$lima" ]] || lima="$home/_lima"
+    one="LIMA_HOME=\"$lima\" COLIMA_HOME=\"$home\" colima --profile=\"$profile\""
+    disk="LIMA_HOME=\"$lima\" limactl disk delete --force \"$id\""
+    printf '%s\n' "${one} delete --force && ${disk} && ${one} start --disk 100"
+  }
+  colima_clean_env=(-u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME)
+
+  write_colima_instance "$update_all_home/.colima" 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-disk-zero-yaml" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "disk: 0 exited $update_all_status; expected a skip, not success or the start deadline"
+  grep -qF 'this Colima instance has no Docker data disk' \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not say the instance has no Docker data disk"
+  grep -qF "$(colima_recovery_line "$update_all_home/.colima" default)" \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not print the home and profile that were read"
+  grep -qF "Deleting destroys that instance's containers and images." \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not say that deleting destroys containers and images"
+  grep -qF 'will not delete anything automatically' \
+    "$update_all_fixture/colima-disk-zero-yaml" \
+    || fail "disk: 0 did not say that nothing is deleted automatically"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started, stopped, or deleted a Colima instance with disk: 0"
+  assert_colima_untouched "$update_all_home/.colima" 0 absent
+  grep -qxF 'previous-success' "$update_all_stamp"
+  test -f "$docker_pending" || fail "a disk: 0 Colima instance left no pending repair record"
+  rm -rf "$update_all_home/.colima"
+
+  write_colima_instance "$colima_disk_root/empty-datadisk" 100 ""
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_HOME="$colima_disk_root/empty-datadisk" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-empty-datadisk" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "a 0-byte Colima data disk exited $update_all_status; expected a skip, not success or the start deadline"
+  grep -qF 'this Colima instance has no Docker data disk' \
+    "$update_all_fixture/colima-empty-datadisk" \
+    || fail "a 0-byte data disk did not say the instance has no Docker data disk"
+  grep -qF "$(colima_recovery_line "$colima_disk_root/empty-datadisk" default)" \
+    "$update_all_fixture/colima-empty-datadisk" \
+    || fail "a 0-byte data disk did not print the home and profile that were read"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started, stopped, or deleted a Colima instance with a 0-byte data disk"
+  assert_colima_untouched "$colima_disk_root/empty-datadisk" 100 empty
+  test ! -e "$update_all_home/.colima"
+  grep -qxF 'previous-success' "$update_all_stamp"
+
+  write_colima_instance "$colima_disk_root/healthy" 100 x
+  write_colima_instance "$update_all_home/.colima" 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  rm -f "$update_all_stamp" "$docker_pending"
+  : >"$update_all_log"
+  run_fixture_pty_after "$update_all_fixture/colima-home-overrides-default" \
+    'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_HOME="$colima_disk_root/healthy" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    || fail "a healthy COLIMA_HOME was blocked by disk: 0 under ~/.colima"
+  grep -qxF 'colima start --runtime docker' "$update_all_log" \
+    || fail "update-all did not start the COLIMA_HOME instance"
+  assert_not_contains 'colima delete' "$update_all_log" \
+    "update-all deleted a Colima instance while COLIMA_HOME was healthy"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-home-overrides-default" \
+    "update-all reported the default ~/.colima disk while COLIMA_HOME was healthy"
+  assert_colima_untouched "$colima_disk_root/healthy" 100 x
+  assert_colima_untouched "$update_all_home/.colima" 0 absent
+
+  # A broken non-default profile is the instance Colima would start. A healthy
+  # default profile must not hide it.
+  rm -rf "$update_all_home/.colima"
+  write_colima_instance "$update_all_home/.colima" 100 x
+  write_colima_profile "$update_all_home/.colima" work 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_PROFILE=work \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-profile-broken" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "a broken COLIMA_PROFILE exited $update_all_status; expected a skip, not success or the start deadline"
+  grep -qF "$(colima_recovery_line "$update_all_home/.colima" work)" \
+    "$update_all_fixture/colima-profile-broken" \
+    || fail "a broken COLIMA_PROFILE did not print the home and profile that were read"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started, stopped, or deleted a broken COLIMA_PROFILE"
+  grep -qxF 'disk: 100' "$update_all_home/.colima/default/colima.yaml"
+  grep -qxF 'disk: 0' "$update_all_home/.colima/work/colima.yaml"
+
+  # The inverse: a broken default profile must not block a healthy COLIMA_PROFILE.
+  write_colima_instance "$update_all_home/.colima" 0 absent
+  write_colima_profile "$update_all_home/.colima" work 100 x
+  printf 'stopped\n' >"$docker_runtime_state"
+  rm -f "$update_all_stamp" "$docker_pending"
+  : >"$update_all_log"
+  run_fixture_pty_after "$update_all_fixture/colima-profile-healthy" \
+    'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_PROFILE=work \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    || fail "a healthy COLIMA_PROFILE was blocked by disk: 0 on the default profile"
+  grep -qxF 'colima start --runtime docker' "$update_all_log" \
+    || fail "update-all did not start the healthy COLIMA_PROFILE"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-profile-healthy" \
+    "update-all reported the broken default profile while COLIMA_PROFILE was healthy"
+  grep -qxF 'disk: 0' "$update_all_home/.colima/default/colima.yaml"
+  grep -qxF 'disk: 100' "$update_all_home/.colima/work/colima.yaml"
+
+  # LIMA_HOME replaces _lima. The 0-byte disk exists only under that directory.
+  lima_root="$colima_disk_root/lima-home"
+  rm -rf "$lima_root" "$update_all_home/.colima"
+  write_colima_profile "$update_all_home/.colima" work 100 absent "$lima_root"
+  : >"$lima_root/_disks/colima-work/datadisk"
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_PROFILE=work LIMA_HOME="$lima_root" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-lima-home" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "a 0-byte LIMA_HOME datadisk exited $update_all_status; expected a skip"
+  grep -qF "$(colima_recovery_line "$update_all_home/.colima" work "$lima_root")" \
+    "$update_all_fixture/colima-lima-home" \
+    || fail "LIMA_HOME was not included in the recovery command for the profile that was read"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started a Colima profile whose LIMA_HOME disk is empty"
+  [[ -f "$lima_root/_disks/colima-work/datadisk" && ! -s "$lima_root/_disks/colima-work/datadisk" ]] \
+    || fail "the LIMA_HOME data disk was replaced"
+  test ! -e "$update_all_home/.colima/_lima/_disks/colima-work/datadisk"
+
+  # A set but missing COLIMA_HOME is not the directory Colima reads.
+  rm -rf "$update_all_home/.colima"
+  write_colima_instance "$update_all_home/.colima" 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    COLIMA_HOME="$colima_disk_root/missing-colima-home" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-missing-home" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "a missing COLIMA_HOME with a broken ~/.colima exited $update_all_status; expected a skip"
+  grep -qF "$(colima_recovery_line "$update_all_home/.colima" default)" \
+    "$update_all_fixture/colima-missing-home" \
+    || fail "a missing COLIMA_HOME did not recover the existing ~/.colima profile"
+  assert_not_contains "$colima_disk_root/missing-colima-home" \
+    "$update_all_fixture/colima-missing-home" \
+    "a missing COLIMA_HOME was printed as the directory that was read"
+  assert_colima_untouched "$update_all_home/.colima" 0 absent
+
+  # No COLIMA_HOME and no ~/.colima: the instance lives under XDG_CONFIG_HOME.
+  rm -rf "$update_all_home/.colima"
+  xdg_root="$colima_disk_root/xdg"
+  rm -rf "$xdg_root"
+  write_colima_instance "$xdg_root/colima" 0 absent
+  printf 'stopped\n' >"$docker_runtime_state"
+  printf 'previous-success\n' >"$update_all_stamp"
+  rm -f "$docker_pending"
+  : >"$update_all_log"
+  update_all_status=0
+  env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    XDG_CONFIG_HOME="$xdg_root" \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    "$update_all_fixture/darwin-work-runner" \
+    >"$update_all_fixture/colima-xdg-home" 2>&1 || update_all_status=$?
+  [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
+    || fail "an XDG-only Colima home exited $update_all_status; expected a skip"
+  grep -qF "$(colima_recovery_line "$xdg_root/colima" default)" \
+    "$update_all_fixture/colima-xdg-home" \
+    || fail "an XDG-only Colima home did not print that directory and the default profile"
+  assert_not_contains 'colima start --runtime docker|colima stop|colima delete' \
+    "$update_all_log" "update-all started an XDG Colima instance with disk: 0"
+  assert_colima_untouched "$xdg_root/colima" 0 absent
+  test ! -e "$update_all_home/.colima"
+
+  # The last fallback differs by OS. This host's uname is the same fact the
+  # resolver uses, so the expected directory follows that.
+  os_fallback_home="$colima_disk_root/os-fallback-home"
+  rm -rf "$os_fallback_home"
+  mkdir -p "$os_fallback_home"
+  os_fallback_got="$(
+    # shellcheck source=/dev/null
+    . home/dot_local/share/groundwork/lib/colima-home.sh
+    unset COLIMA_HOME COLIMA_PROFILE LIMA_HOME XDG_CONFIG_HOME
+    HOME="$os_fallback_home" gw_colima_config_home
+  )"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    os_fallback_want="$os_fallback_home/.colima"
+  else
+    os_fallback_want="$os_fallback_home/.config/colima"
+  fi
+  [[ "$os_fallback_got" == "$os_fallback_want" ]] \
+    || fail "Colima home fallback was '$os_fallback_got', expected '$os_fallback_want'"
+  mkdir -p "$os_fallback_home/.colima"
+  dash_status=0
+  env -u COLIMA_HOME -u LIMA_HOME -u XDG_CONFIG_HOME \
+    HOME="$os_fallback_home" COLIMA_PROFILE=-work \
+    bash -c '. home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_instance_lacks_data_disk' \
+    || dash_status=$?
+  [[ "$dash_status" -eq 2 ]] \
+    || fail "a profile name starting with '-' was accepted (status $dash_status)"
+
+  # The flag, config directory, and disk id name one Lima instance.
+  # colima-default and colima-colima stay distinct from the default instance.
+  # work and colima-work share the config directory and disk id, and the
+  # printed --profile keeps whichever string was set.
+  profile_map_root="$colima_disk_root/profile-map"
+  rm -rf "$profile_map_root"
+  mkdir -p \
+    "$profile_map_root/default" \
+    "$profile_map_root/work" \
+    "$profile_map_root/colima" \
+    "$profile_map_root/_lima/_disks/colima" \
+    "$profile_map_root/_lima/_disks/colima-default" \
+    "$profile_map_root/_lima/_disks/colima-work" \
+    "$profile_map_root/_lima/_disks/colima-colima"
+  printf 'runtime: docker\ndisk: 100\n' >"$profile_map_root/default/colima.yaml"
+  printf 'runtime: docker\ndisk: 100\n' >"$profile_map_root/work/colima.yaml"
+  printf 'runtime: docker\ndisk: 100\n' >"$profile_map_root/colima/colima.yaml"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima/datadisk"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-default/datadisk"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-work/datadisk"
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-colima/datadisk"
+  assert_profile_reads() {
+    local input="$1" flag="$2" short="$3" id="$4" lack="$5"
+    local status=0 config disk cmd
+    config="$(
+      env -u LIMA_HOME -u XDG_CONFIG_HOME \
+        HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+        bash -c ". home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_resolve && printf '%s\n' \"\$GW_COLIMA_CONFIG\""
+    )"
+    [[ "$config" == "$profile_map_root/$short/colima.yaml" ]] \
+      || fail "COLIMA_PROFILE=$input config was '$config', expected $short/colima.yaml"
+    disk="$(
+      env -u LIMA_HOME -u XDG_CONFIG_HOME \
+        HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+        bash -c ". home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_resolve && printf '%s\n' \"\$GW_COLIMA_DATADISK\""
+    )"
+    [[ "$disk" == "$profile_map_root/_lima/_disks/$id/datadisk" ]] \
+      || fail "COLIMA_PROFILE=$input datadisk was '$disk', expected disk $id"
+    status=0
+    env -u LIMA_HOME -u XDG_CONFIG_HOME \
+      HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+      bash -c '. home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_instance_lacks_data_disk' \
+      || status=$?
+    [[ "$status" -eq "$lack" ]] \
+      || fail "COLIMA_PROFILE=$input disk status was $status, expected $lack"
+    if [[ "$lack" -eq 0 ]]; then
+      cmd="$(
+        env -u LIMA_HOME -u XDG_CONFIG_HOME \
+          HOME="$profile_map_root" COLIMA_HOME="$profile_map_root" COLIMA_PROFILE="$input" \
+          bash -c '. home/dot_local/share/groundwork/lib/colima-home.sh && gw_colima_recovery_command'
+      )"
+      [[ "$cmd" == "$(colima_recovery_line "$profile_map_root" "$flag")" ]] \
+        || fail "COLIMA_PROFILE=$input recovery was '$cmd'"
+      case "$cmd" in
+        *"|| true"*) fail "COLIMA_PROFILE=$input recovery hid a disk-delete failure" ;;
+      esac
+    fi
+  }
+  : >"$profile_map_root/_lima/_disks/colima-default/datadisk"
+  assert_profile_reads colima-default colima-default default colima-default 0
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-default/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima/datadisk"
+  assert_profile_reads colima-default colima-default default colima-default 1
+  printf 'x' >"$profile_map_root/_lima/_disks/colima/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima-colima/datadisk"
+  assert_profile_reads colima-colima colima-colima colima colima-colima 0
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-colima/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima/datadisk"
+  assert_profile_reads colima-colima colima-colima colima colima-colima 1
+  printf 'x' >"$profile_map_root/_lima/_disks/colima/datadisk"
+  : >"$profile_map_root/_lima/_disks/colima-work/datadisk"
+  assert_profile_reads work work work colima-work 0
+  assert_profile_reads colima-work colima-work work colima-work 0
+  printf 'x' >"$profile_map_root/_lima/_disks/colima-work/datadisk"
+  rm -rf "$update_all_home/.colima" "$colima_disk_root"
+
+  doctor_colima_home="$update_all_fixture/colima-doctor-home"
+  doctor_colima_log="$update_all_fixture/colima-doctor-colima.log"
+  rm -rf "$doctor_colima_home"
+  mkdir -p "$doctor_colima_home/bin"
+  cat >"$doctor_colima_home/bin/colima" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"${COLIMA_STUB_LOG:?}"
+exit 99
+SH
+  chmod +x "$doctor_colima_home/bin/colima"
+  run_colima_doctor() {
+    local output="$1"
+    shift
+    : >"$doctor_colima_log"
+    env "${colima_clean_env[@]}" HOME="$doctor_colima_home" PATH="$doctor_colima_home/bin:/usr/bin:/bin" \
+      COLIMA_STUB_LOG="$doctor_colima_log" "$@" \
+      /bin/bash home/dot_local/bin/executable_groundwork-doctor --docker \
+      >"$output" 2>&1
+  }
+  run_colima_doctor "$update_all_fixture/colima-doctor-absent" \
+    || fail "groundwork-doctor failed when no Colima instance exists"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-doctor-absent" \
+    "groundwork-doctor reported a missing Colima instance as a 0-byte data disk"
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima"
+
+  write_colima_instance "$doctor_colima_home/.colima" 0 absent
+  run_colima_doctor "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor failed on disk: 0"
+  grep -qF 'This Colima instance has no Docker data disk.' \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not report disk: 0"
+  grep -qF "$(colima_recovery_line "$doctor_colima_home/.colima" default)" \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not print the home and profile that were read"
+  assert_not_contains 'did not start' "$update_all_fixture/colima-doctor-yaml" \
+    "groundwork-doctor claimed it skipped a Colima start"
+  grep -qF "Deleting destroys that instance's containers and images." \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not say that deleting destroys containers and images"
+  grep -qF 'never deletes anything automatically' \
+    "$update_all_fixture/colima-doctor-yaml" \
+    || fail "groundwork-doctor did not say that it never deletes anything"
+  # This doctor PATH has no docker, so it returns before the unreachable-daemon
+  # note. That note is proved in the docker suite, where the daemon is down.
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima for disk: 0"
+  assert_colima_untouched "$doctor_colima_home/.colima" 0 absent
+
+  write_colima_instance "$doctor_colima_home/.colima" 100 ""
+  run_colima_doctor "$update_all_fixture/colima-doctor-empty" \
+    || fail "groundwork-doctor failed on a 0-byte data disk"
+  grep -qF 'This Colima instance has no Docker data disk.' \
+    "$update_all_fixture/colima-doctor-empty" \
+    || fail "groundwork-doctor did not report a 0-byte data disk"
+  grep -qF "$(colima_recovery_line "$doctor_colima_home/.colima" default)" \
+    "$update_all_fixture/colima-doctor-empty" \
+    || fail "groundwork-doctor did not name the home of a 0-byte data disk"
+  assert_colima_untouched "$doctor_colima_home/.colima" 100 empty
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima for a 0-byte data disk"
+
+  write_colima_instance "$doctor_colima_home/.colima" 0 absent
+  write_colima_instance "$colima_disk_root/doctor-healthy" 100 x
+  run_colima_doctor "$update_all_fixture/colima-doctor-override" \
+    COLIMA_HOME="$colima_disk_root/doctor-healthy" \
+    || fail "groundwork-doctor failed when COLIMA_HOME was healthy"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-doctor-override" \
+    "groundwork-doctor ignored COLIMA_HOME and reported ~/.colima"
+  assert_colima_untouched "$colima_disk_root/doctor-healthy" 100 x
+  assert_colima_untouched "$doctor_colima_home/.colima" 0 absent
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima while COLIMA_HOME was healthy"
+
+  rm -rf "$doctor_colima_home/.colima"
+  write_colima_instance "$doctor_colima_home/.colima" 100 x
+  write_colima_profile "$doctor_colima_home/.colima" work 0 absent
+  run_colima_doctor "$update_all_fixture/colima-doctor-profile" \
+    COLIMA_PROFILE=work \
+    || fail "groundwork-doctor failed on a broken COLIMA_PROFILE"
+  grep -qF "$(colima_recovery_line "$doctor_colima_home/.colima" work)" \
+    "$update_all_fixture/colima-doctor-profile" \
+    || fail "groundwork-doctor did not name the broken profile it read"
+  assert_not_contains 'did not start' "$update_all_fixture/colima-doctor-profile" \
+    "groundwork-doctor claimed it skipped a Colima start"
+  test ! -s "$doctor_colima_log" || fail "groundwork-doctor invoked colima for a broken profile"
+
+  write_colima_instance "$doctor_colima_home/.colima" 0 absent
+  write_colima_profile "$doctor_colima_home/.colima" work 100 x
+  run_colima_doctor "$update_all_fixture/colima-doctor-profile-healthy" \
+    COLIMA_PROFILE=work \
+    || fail "groundwork-doctor failed when COLIMA_PROFILE was healthy"
+  assert_not_contains 'has no Docker data disk' \
+    "$update_all_fixture/colima-doctor-profile-healthy" \
+    "groundwork-doctor reported the broken default profile while COLIMA_PROFILE was healthy"
+
+  rm -rf "$doctor_colima_home/.colima"
+  write_colima_instance "$doctor_colima_home/.colima" 0 absent
+  run_colima_doctor "$update_all_fixture/colima-doctor-missing-home" \
+    COLIMA_HOME="$colima_disk_root/doctor-missing-home" \
+    || fail "groundwork-doctor failed when COLIMA_HOME was missing"
+  grep -qF "$(colima_recovery_line "$doctor_colima_home/.colima" default)" \
+    "$update_all_fixture/colima-doctor-missing-home" \
+    || fail "groundwork-doctor used a missing COLIMA_HOME instead of ~/.colima"
+  assert_not_contains "$colima_disk_root/doctor-missing-home" \
+    "$update_all_fixture/colima-doctor-missing-home" \
+    "groundwork-doctor printed a COLIMA_HOME directory that does not exist"
+
+  doctor_lima="$colima_disk_root/doctor-lima"
+  rm -rf "$doctor_lima" "$doctor_colima_home/.colima"
+  write_colima_profile "$doctor_colima_home/.colima" work 100 absent "$doctor_lima"
+  : >"$doctor_lima/_disks/colima-work/datadisk"
+  run_colima_doctor "$update_all_fixture/colima-doctor-lima" \
+    COLIMA_PROFILE=work LIMA_HOME="$doctor_lima" \
+    || fail "groundwork-doctor failed when LIMA_HOME held the empty data disk"
+  grep -qF "$(colima_recovery_line "$doctor_colima_home/.colima" work "$doctor_lima")" \
+    "$update_all_fixture/colima-doctor-lima" \
+    || fail "groundwork-doctor omitted LIMA_HOME from the recovery command"
+
+  rm -rf "$doctor_colima_home/.colima"
+  doctor_xdg="$colima_disk_root/doctor-xdg"
+  rm -rf "$doctor_xdg"
+  write_colima_instance "$doctor_xdg/colima" 0 absent
+  run_colima_doctor "$update_all_fixture/colima-doctor-xdg" \
+    XDG_CONFIG_HOME="$doctor_xdg" \
+    || fail "groundwork-doctor failed for an XDG-only Colima home"
+  grep -qF "$(colima_recovery_line "$doctor_xdg/colima" default)" \
+    "$update_all_fixture/colima-doctor-xdg" \
+    || fail "groundwork-doctor did not read the XDG Colima home"
+  test ! -e "$doctor_colima_home/.colima"
+  rm -rf "$doctor_colima_home" "$colima_disk_root"
 
   check "update-all Homebrew download-cache cleanup"
   # Homebrew's DEFAULT cleanup is conservative by design: it prunes stale
@@ -12975,6 +13510,27 @@ SH
       || fail "the rendered Colima template ($colima_arch) did not use the controlled CPU observation"
     grep -qE '^memory:[[:space:]]*8$' "$colima_rendered" \
       || fail "the rendered Colima template ($colima_arch) did not use the controlled memory observation"
+    grep -qE '^disk:[[:space:]]*100$' "$colima_rendered" \
+      || fail "the rendered Colima template ($colima_arch) does not pin a non-zero disk"
+    if grep -qE '^disk:[[:space:]]*0([^0-9]|$)' "$colima_rendered"; then
+      fail "the rendered Colima template ($colima_arch) has disk: 0"
+    fi
+    # Rosetta is an apply-time fact, not an architecture fact. Require the key
+    # only when this host actually has Rosetta; otherwise require it to be absent
+    # so Linux CI and a Mac without Rosetta keep the same expectation.
+    rosetta_runtime="/Library/Apple/usr/libexec/oah/libRosettaRuntime"
+    if [[ "$colima_arch" == "arm64" && -e "$rosetta_runtime" ]]; then
+      grep -qE '^rosetta:[[:space:]]*true$' "$colima_rendered" \
+        || fail "the rendered Colima template (arm64) omitted rosetta while Rosetta is installed"
+    else
+      if grep -qE '^rosetta:' "$colima_rendered"; then
+        fail "the rendered Colima template ($colima_arch) set rosetta without an installed Rosetta runtime"
+      fi
+      if [[ "$colima_arch" == "arm64" ]]; then
+        grep -qF 'Rosetta is not installed, so rosetta is omitted' "$colima_rendered" \
+          || fail "the rendered Colima template (arm64) omitted rosetta without saying why"
+      fi
+    fi
 
     if python3 -c 'import yaml' >/dev/null 2>&1; then
       python3 - "$colima_rendered" <<'PY'
@@ -12988,6 +13544,9 @@ expected = {
     "mountType": "virtiofs",
     "cpu": 6,
     "memory": 8,
+    "disk": 100,
+    "mountInotify": True,
+    "sshConfig": True,
 }
 for key, value in expected.items():
     if document.get(key) != value:
@@ -13011,6 +13570,9 @@ expected = {
     "mountType": "virtiofs",
     "cpu": "6",
     "memory": "8",
+    "disk": "100",
+    "mountInotify": "true",
+    "sshConfig": "true",
 }
 for key, value in expected.items():
     if top.get(key) != value:
@@ -13438,6 +14000,54 @@ SH
   docker_run "$doctor_state" "$docker_stub_bin:$PATH" groundwork-doctor --docker >"$out_dir/doctor-down"
   grep -qF 'Docker daemon not reachable' "$out_dir/doctor-down"
   assert_not_contains 'Disk usage' "$out_dir/doctor-down" "doctor probed a down docker daemon"
+  assert_not_contains 'did not start' "$out_dir/doctor-down" \
+    "doctor claimed it skipped a Colima start when no zero disk was present"
+  # A leftover 0-byte Colima disk changes the unreachable hint only when the
+  # selected backend is Colima. Docker Desktop keeps the hint that names both
+  # backends. The doctor never starts a backend, so it must not say it skipped
+  # a start.
+  mkdir -p "$out_dir/chezmoi-backend/bin"
+  cat >"$out_dir/chezmoi-backend/bin/chezmoi" <<'SH'
+#!/bin/bash
+if [[ "${1:-}" == "data" && "${2:-}" == "--format=json" ]]; then
+  printf '%s\n' "{\"docker_backend\":\"${DOCKER_BACKEND_FIXTURE:?}\"}"
+  exit 0
+fi
+printf 'unexpected chezmoi fixture arguments: %s\n' "$*" >&2
+exit 64
+SH
+  chmod +x "$out_dir/chezmoi-backend/bin/chezmoi"
+  rm -rf "$docker_home/.colima"
+  mkdir -p "$docker_home/.colima/default"
+  printf 'runtime: docker\ndisk: 0\n' >"$docker_home/.colima/default/colima.yaml"
+  env -u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME \
+    HOME="$docker_home" DOCKER_STATE="$doctor_state" DOCKER_BACKEND_FIXTURE=colima \
+    PATH="$out_dir/chezmoi-backend/bin:$docker_stub_bin:$PATH" \
+    /bin/bash home/dot_local/bin/executable_groundwork-doctor --docker \
+    >"$out_dir/doctor-down-colima-disk" 2>&1
+  grep -qF 'This Colima instance has no Docker data disk.' "$out_dir/doctor-down-colima-disk" \
+    || fail "doctor did not report a zero Colima disk while the daemon was down"
+  grep -qF "LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" delete --force && LIMA_HOME=\"$docker_home/.colima/_lima\" limactl disk delete --force \"colima\" && LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" start --disk 100" \
+    "$out_dir/doctor-down-colima-disk" \
+    || fail "doctor did not print the Colima home, profile, and data-disk delete it read"
+  grep -qF 'Docker daemon not reachable; skipping Docker checks.' "$out_dir/doctor-down-colima-disk"
+  assert_not_contains "Run 'colima start'" "$out_dir/doctor-down-colima-disk" \
+    "doctor told a Colima user to start an instance that has no data disk"
+  assert_not_contains 'did not start' "$out_dir/doctor-down-colima-disk" \
+    "doctor claimed it skipped a Colima start"
+  env -u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME \
+    HOME="$docker_home" DOCKER_STATE="$doctor_state" DOCKER_BACKEND_FIXTURE=docker-desktop \
+    PATH="$out_dir/chezmoi-backend/bin:$docker_stub_bin:$PATH" \
+    /bin/bash home/dot_local/bin/executable_groundwork-doctor --docker \
+    >"$out_dir/doctor-down-desktop-disk" 2>&1
+  grep -qF 'This Colima instance has no Docker data disk.' "$out_dir/doctor-down-desktop-disk" \
+    || fail "doctor hid a leftover zero Colima disk from a Docker Desktop user"
+  grep -qF "Run 'colima start', or start your explicitly selected Docker Desktop backend" \
+    "$out_dir/doctor-down-desktop-disk" \
+    || fail "doctor dropped the Docker Desktop hint because a leftover Colima disk existed"
+  assert_not_contains 'did not start' "$out_dir/doctor-down-desktop-disk" \
+    "doctor claimed it skipped a Colima start for a Docker Desktop backend"
+  rm -rf "$docker_home/.colima" "$out_dir/chezmoi-backend"
   if home/dot_local/bin/executable_groundwork-doctor --bogus >/dev/null 2>&1; then
     fail "groundwork-doctor accepted an unknown option"
   fi
