@@ -3534,6 +3534,13 @@ if [[ "${1:-}" == start && "${2:-}" == --help ]]; then
   exit "${COLIMA_CAPABILITY_STATUS:-0}"
 fi
 if [[ "${1:-}" == start ]]; then
+  # groundwork-colima-start adds --disk only for a new profile. On macOS,
+  # Colima reads ~/.colima even when it is absent, so the fixture's existing
+  # profile under ~/.config/colima is not seen there and a size is chosen.
+  if [[ "$#" -eq 5 && "${4:-}" == --disk && "${5:-}" =~ ^[0-9]+$ ]] \
+    && (( ${5} >= 20 && ${5} <= 100 )); then
+    set -- "$1" "$2" "$3"
+  fi
   if [[ "$#" -ne 3 || "${2:-}" != --runtime || "${3:-}" != docker ]]; then
     printf 'colima refused unexpected start arguments: %s\n' "$*" >&2
     exit 64
@@ -4831,8 +4838,10 @@ PY
   # directory. The bundle exists only at the applications-directory child.
   mas_ddg_data_path="/System/Volumes/Data${GROUNDWORK_APPLICATIONS_DIR}/DuckDuckGo.app"
   mas_ddg_data_pre="$(python3 -c 'import json,sys; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":sys.argv[1]}))' "$mas_ddg_data_path")"
-  [[ ! -e "$mas_ddg_data_path" ]] \
-    || fail "the Data-volume fixture must not create the Spotlight path"
+  # On macOS, /System/Volumes/Data firmlinks the same files, so the path can
+  # exist as long as it is the applications-directory bundle itself.
+  [[ ! -e "$mas_ddg_data_path" || "$mas_ddg_data_path" -ef "$ddg_app" ]] \
+    || fail "the Data-volume fixture must not create a separate Spotlight path"
   test -d "$ddg_app" \
     || fail "the Data-volume fixture lost the applications-directory bundle"
   : >"$update_all_log"
