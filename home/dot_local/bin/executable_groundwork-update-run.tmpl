@@ -2314,8 +2314,7 @@ restore_docker_backend() {
 # Colima treats an omitted disk as 0 and creates a 0-byte data disk. Starting
 # that instance hangs until the deadline. Report the home and profile that
 # were read, and never delete the instance. Resolution lives in colima-home.sh
-# so this stays in step with groundwork-doctor. groundwork_colima can call
-# gw_colima_child_home from that same file.
+# so this stays in step with groundwork-doctor.
 colima_home_lib="$HOME/.local/share/groundwork/lib/colima-home.sh"
 colima_home_ready=0
 if [[ -r "$colima_home_lib" ]]; then

@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 # Colima 0.10.3 home and profile resolution, shared by groundwork-doctor and
-# groundwork-update-run. groundwork_colima should call gw_colima_child_home
-# and export the printed path for the colima child only. This file never
-# creates, moves, or deletes a Colima directory or instance.
+# groundwork-update-run. This file never creates, moves, or deletes a Colima
+# directory or instance.
 #
 # Home order matches config/files.go: COLIMA_HOME only when that directory
 # exists, then ~/.colima when it exists, then $XDG_CONFIG_HOME/colima when
@@ -24,14 +23,6 @@ GW_COLIMA_PROFILE_ID=""
 GW_COLIMA_LIMA_HOME=""
 GW_COLIMA_CONFIG=""
 GW_COLIMA_DATADISK=""
-
-# Print ~/.colima when COLIMA_HOME is unset or empty and that directory
-# exists. Otherwise print nothing.
-gw_colima_child_home() {
-  if [[ -z "${COLIMA_HOME:-}" && -d "${HOME:?}/.colima" ]]; then
-    printf '%s\n' "$HOME/.colima"
-  fi
-}
 
 gw_colima_config_home() {
   local home
