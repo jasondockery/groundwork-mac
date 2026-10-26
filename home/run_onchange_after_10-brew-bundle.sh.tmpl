@@ -458,6 +458,16 @@ if [[ -s "$optional_manifest" ]] && grep -qvE '^[[:space:]]*(#.*)?$' "$optional_
   # enforced by the validator's tap allowlist; it does not make a new one.
   # Formula-level rather than whole-tap trust, so it never covers whatever that
   # tap publishes next. `brew trust` is idempotent.
+  if grep -qxF 'brew "ollama"' "$optional_manifest"; then
+    if brew list --cask ollama-app >/dev/null 2>&1; then
+      cat >&2 <<'OLLAMA_CASK'
+Groundwork: the Ollama menu-bar app is still installed.
+  The Apple Silicon formula also provides the ollama command, so this optional install stops until you remove the app:
+    brew uninstall --cask ollama-app
+  That command leaves models in ~/.ollama. Do not add --zap unless you mean to delete those models too; the cask's zap list includes ~/.ollama.
+OLLAMA_CASK
+    fi
+  fi
   if grep -qxF 'brew "cliamp"' "$optional_manifest"; then
     if ! brew trust --formula bjarneo/cliamp/cliamp >/dev/null 2>&1; then
       echo "Groundwork: could not trust bjarneo/cliamp/cliamp; it will fail to load." >&2
