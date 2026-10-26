@@ -196,6 +196,17 @@ honor it only on a graphical Mac. */ -}}
 {{- $imessageGateway = .imessage_gateway -}}
 {{- end -}}
 {{- end -}}
+{{- /* Local inference is a mutable Apple Silicon choice. groundwork-configure
+owns the change, so bootstrap never asks, including on Intel Macs, Linux, and
+WSL. Default false, which is also what an existing machine gets before the key
+exists. A stored bool is copied through on every platform; the Brewfile honors
+it only on darwin arm64. */ -}}
+{{- $localInference := false -}}
+{{- if hasKey . "local_inference" -}}
+{{- if kindIs "bool" .local_inference -}}
+{{- $localInference = .local_inference -}}
+{{- end -}}
+{{- end -}}
 
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 
@@ -226,6 +237,7 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     xcode = {{ $xcode }}
     beta = {{ $beta }}
     imessage_gateway = {{ $imessageGateway }}
+    local_inference = {{ $localInference }}
 
 [edit]
     command = "nvim"

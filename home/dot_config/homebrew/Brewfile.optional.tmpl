@@ -1,6 +1,8 @@
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 {{- $headless := false -}}
 {{- if hasKey . "headless" }}{{- $headless = .headless -}}{{- end -}}
+{{- $localInference := false -}}
+{{- if and (hasKey . "local_inference") (kindIs "bool" .local_inference) }}{{- $localInference = .local_inference -}}{{- end -}}
 # Optional packages: wanted, but never worth failing an update over.
 #
 # Everything in the main Brewfile is required — a failure there means the
@@ -30,4 +32,11 @@
 # Groundwork tools.
 tap "bjarneo/cliamp"
 brew "cliamp"
+{{- end }}
+{{ if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") $localInference -}}
+# Ollama formula: opt-in Apple Silicon local inference. Nothing else depends on
+# it, so a failure here is reported and the update still succeeds. The bottle
+# does not download model weights. The menu-bar cask is omitted while this
+# formula is selected because both provide the ollama command.
+brew "ollama"
 {{- end }}
