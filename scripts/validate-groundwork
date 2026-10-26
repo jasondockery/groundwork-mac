@@ -15950,6 +15950,7 @@ import json
 import pathlib
 import re
 import sys
+import tomllib
 
 inventory_path = pathlib.Path(sys.argv[1])
 root = pathlib.Path(sys.argv[2]).resolve()
@@ -15978,6 +15979,8 @@ required_ids = {
     "shell-quality-tools",
     "homebrew-packages",
     "mise-runtime-channels",
+    "mise-node-alias",
+    "mise-python",
     "corepack-runtime",
     "aider-python-compatibility",
     "tmux-plugin-release",
@@ -16080,13 +16083,85 @@ if manager_by_id["container-images"] != "dockerfile":
 if manager_by_id["github-actions-runners-and-containers"] != "github-actions":
     raise SystemExit("workflow dependencies must remain assigned to Renovate's github-actions manager")
 if manager_by_id["mise-runtime-channels"] != "update-all-mise":
-    raise SystemExit("declared mise runtimes must remain assigned to update-all")
+    raise SystemExit("machine mise upgrades must remain assigned to update-all")
+if manager_by_id["mise-node-alias"] != "mise" or manager_by_id["mise-python"] != "mise":
+    raise SystemExit("the managed mise config must be assigned to Renovate's mise manager")
 shared = next(surface for surface in inventory["surfaces"] if surface["id"] == "shared-preset-reference")
 if shared.get("classification") != "built-in" or shared.get("manager") != "renovate-config":
     raise SystemExit("the versioned shared preset must remain assigned to Renovate")
 renovate_config = json.loads((root / "renovate.json").read_text(encoding="utf-8"))
-if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml", "home/dot_config/mise/config.toml"]:
-    raise SystemExit("Renovate must exclude derived toolchain mirrors and the mise config owned by update-all")
+if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.0.0"]:
+    raise SystemExit("extends must stay on preset 1.0.0 until 1.1.0 is tagged")
+if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml"]:
+    raise SystemExit("Renovate must ignore derived Node mirrors and read the managed mise config")
+if "minimumReleaseAge" in renovate_config:
+    raise SystemExit("the five-day release-age floor belongs to the shared preset, not a local override")
+post_upgrade = renovate_config.get("postUpgradeTasks")
+if post_upgrade != {
+    "commands": ["node tools/sync-toolchain.mjs"],
+    "fileFilters": [".nvmrc", "mise.toml", "package.json"],
+    "executionMode": "branch",
+}:
+    raise SystemExit("postUpgradeTasks fileFilters must list only the files sync-toolchain writes")
+mise_config = tomllib.loads((root / "home/dot_config/mise/config.toml").read_text(encoding="utf-8"))
+if mise_config.get("tools", {}).get("node") != "lts":
+    raise SystemExit("the managed mise config must keep node on the lts alias")
+python_versions = mise_config.get("tools", {}).get("python")
+aider_python = re.compile(r"^3\.12(?:\..*)?$")
+if (
+    not isinstance(python_versions, list)
+    or len(python_versions) != 2
+    or not all(isinstance(version, str) for version in python_versions)
+    or aider_python.fullmatch(python_versions[1]) is None
+    or aider_python.fullmatch(python_versions[0]) is not None
+):
+    raise SystemExit("python must be two strings, with 3.12 or 3.12.* only in the second entry")
+node_alias_rules = [
+    rule
+    for rule in renovate_config.get("packageRules", [])
+    if rule.get("matchDepNames") == ["node"] and rule.get("matchManagers") == ["mise"]
+]
+if node_alias_rules != [{
+    "description": "The managed mise config pins Node to the lts alias. Replacing that alias with a numbered release would open a churn PR on every LTS move. update-all already floats the alias under mise's five-day release-age floor.",
+    "matchManagers": ["mise"],
+    "matchDepNames": ["node"],
+    "matchFileNames": ["home/dot_config/mise/config.toml"],
+    "matchCurrentValue": "/^lts$/",
+    "enabled": False,
+}]:
+    raise SystemExit("the node lts alias must stay disabled in the managed mise config")
+python_rules = [
+    rule
+    for rule in renovate_config.get("packageRules", [])
+    if rule.get("matchDepNames") == ["python"]
+]
+python_versioning_rules = [rule for rule in python_rules if rule.get("versioning") == "semver-partial"]
+python_pin_rules = [
+    rule
+    for rule in python_rules
+    if rule.get("matchCurrentValue") == r"/^3\.12(?:\..*)?$/"
+]
+if python_rules != python_versioning_rules + python_pin_rules:
+    raise SystemExit("Python package rules must be the semver-partial request rule and the 3.12 pin rule")
+if python_versioning_rules != [{
+    "description": "Keep the managed Python request at major.minor. semver-partial writes the two-component request 3.15 when the selected release is 3.15.0, so mise still treats the request as fuzzy and update-all's five-day floor can float patches inside the line. An exact pin would skip that floor.",
+    "matchManagers": ["mise"],
+    "matchDepNames": ["python"],
+    "matchFileNames": ["home/dot_config/mise/config.toml"],
+    "versioning": "semver-partial",
+}]:
+    raise SystemExit("the Python request must stay on semver-partial so mise can float patches inside the line")
+if python_pin_rules != [{
+    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.13\", \"3.12\"] must stay pinned. Renovate's mise manager (44.23.0) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
+    "matchManagers": ["mise"],
+    "matchDepNames": ["python"],
+    "matchFileNames": ["home/dot_config/mise/config.toml"],
+    "matchCurrentValue": "/^3\\.12(?:\\..*)?$/",
+    "enabled": False,
+}]:
+    raise SystemExit("the Python 3.12 pin rule must stay exact and must not add local line-bump approval")
+if any("dependencyDashboardApproval" in rule for rule in python_rules):
+    raise SystemExit("Python line-bump approval belongs to preset 1.1.0, not this repo")
 gitleaks_age_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
