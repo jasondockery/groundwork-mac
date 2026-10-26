@@ -427,7 +427,7 @@ fi
 if ! docker info >/dev/null 2>&1; then
   exit_if_docker_terminal
   [[ "$mode" == summary ]] \
-    || echo "groundwork-docker-tidy: Docker daemon not reachable; cleanup result unavailable. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun."
+    || echo "groundwork-docker-tidy: Docker daemon not reachable; cleanup result unavailable. On a Mac using Colima, run 'groundwork-colima-start'; otherwise start the selected Docker backend, then rerun."
   exit 3
 fi
 

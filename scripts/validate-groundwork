@@ -3452,6 +3452,17 @@ SH
     "$update_all_home/.local/share/groundwork/lib/brew-output.sh"
   cp home/dot_local/share/groundwork/lib/colima-home.sh \
     "$update_all_home/.local/share/groundwork/lib/colima-home.sh"
+  cp home/dot_local/bin/executable_groundwork-colima-start \
+    "$update_all_bin/groundwork-colima-start"
+  # An existing profile keeps groundwork-colima-start from sizing a new disk.
+  # Without ~/.colima or COLIMA_HOME, Colima on Linux reads ~/.config/colima,
+  # so the default profile lives there and ~/.colima stays absent.
+  write_update_all_colima_profile() {
+    mkdir -p "$1/default" "$1/_lima/_disks/colima"
+    printf 'runtime: docker\ndisk: 100\n' >"$1/default/colima.yaml"
+    printf 'existing fixture disk\n' >"$1/_lima/_disks/colima/datadisk"
+  }
+  write_update_all_colima_profile "$update_all_home/.config/colima"
   cp home/dot_local/share/groundwork/lib/sudo-preflight.sh \
     "$update_all_home/.local/share/groundwork/lib/sudo-preflight.sh"
   cp home/dot_local/share/groundwork/lib/reset-signals.c \
@@ -3549,7 +3560,7 @@ SH
     "$update_all_bin/groundwork-docker-tidy" \
     "$update_all_bin/groundwork-repos" "$update_all_bin/groundwork-brew-update" \
     "$update_all_bin/groundwork-platform" "$update_all_bin/docker" \
-    "$update_all_bin/colima" \
+    "$update_all_bin/colima" "$update_all_bin/groundwork-colima-start" \
     "$update_all_fixture/fresh-runner"
   if HOME="$update_all_home" PATH="$update_all_bin:/usr/bin:/bin" \
     "$update_all_bin/brew" list --pinned --full-name >/dev/null 2>&1; then
@@ -6328,6 +6339,7 @@ EOF
   : >"$update_all_log"
   run_fixture_pty_after "$update_all_fixture/docker-work-approved" \
     'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    -u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME \
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
@@ -6347,7 +6359,7 @@ EOF
   printf 'stopped\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
   : >"$update_all_log"
-  mkdir -p "$update_all_home/.colima"
+  write_update_all_colima_profile "$update_all_home/.colima"
   run_fixture_pty_after "$update_all_fixture/docker-work-colima-home" \
     'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
     HOME="$update_all_home" PATH="$update_all_path" \
@@ -6362,13 +6374,14 @@ EOF
   assert_not_contains 'softwareupdate|install-rosetta|Rosetta' \
     "$update_all_fixture/docker-work-colima-home" \
     "the Colima lane tried to install Rosetta"
-  rmdir "$update_all_home/.colima"
+  rm -rf "$update_all_home/.colima"
 
   check "update-all preserves a user-set COLIMA_HOME when ~/.colima exists"
   printf 'stopped\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
   : >"$update_all_log"
-  mkdir -p "$update_all_home/.colima" "$update_all_home/custom-colima"
+  mkdir -p "$update_all_home/.colima"
+  write_update_all_colima_profile "$update_all_home/custom-colima"
   run_fixture_pty_after "$update_all_fixture/docker-work-colima-home-preserved" \
     'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
     HOME="$update_all_home" PATH="$update_all_path" \
@@ -6385,7 +6398,8 @@ EOF
     || fail "Groundwork removed ~/.colima while preserving COLIMA_HOME"
   test -d "$update_all_home/custom-colima" \
     || fail "Groundwork removed the user-set COLIMA_HOME directory"
-  rmdir "$update_all_home/.colima" "$update_all_home/custom-colima"
+  rmdir "$update_all_home/.colima"
+  rm -rf "$update_all_home/custom-colima"
 
   printf 'running\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
@@ -6798,7 +6812,8 @@ EOF
     [[ -n "$lima" ]] || lima="$home/_lima"
     one="LIMA_HOME=\"$lima\" COLIMA_HOME=\"$home\" colima --profile=\"$profile\""
     disk="LIMA_HOME=\"$lima\" limactl disk delete --force \"$id\""
-    printf '%s\n' "${one} delete --force && ${disk} && ${one} start --disk 100"
+    start="LIMA_HOME=\"$lima\" COLIMA_HOME=\"$home\" groundwork-colima-start --profile=\"$profile\""
+    printf '%s\n' "${one} delete --force && ${disk} && ${start}"
   }
   colima_clean_env=(-u COLIMA_HOME -u COLIMA_PROFILE -u LIMA_HOME -u XDG_CONFIG_HOME)
 
@@ -13482,6 +13497,212 @@ EOF
 }
 
 validate_docker() {
+  check "groundwork-colima-start disk sizing"
+  colima_start_root="$out_dir/colima-start"
+  colima_start_home="$colima_start_root/home"
+  colima_start_bin="$colima_start_root/bin"
+  colima_start_config_home="$colima_start_root/config-home"
+  colima_start_log="$colima_start_root/commands.log"
+  mkdir -p "$colima_start_home/.local/bin" \
+    "$colima_start_home/.local/share/groundwork/lib" \
+    "$colima_start_bin" "$colima_start_config_home"
+  cp home/dot_local/share/groundwork/lib/colima-home.sh \
+    "$colima_start_home/.local/share/groundwork/lib/colima-home.sh"
+  cat >"$colima_start_home/.local/bin/groundwork-platform" <<'SH'
+#!/usr/bin/env bash
+printf 'platform\n' >>"$COLIMA_START_LOG"
+printf '%s\n' "${FAKE_PLATFORM:-darwin}"
+SH
+  cat >"$colima_start_bin/df" <<'SH'
+#!/usr/bin/env bash
+printf 'df %s\n' "$*" >>"$COLIMA_START_LOG"
+[[ "${DF_STATUS:-0}" == 0 ]] || exit "$DF_STATUS"
+[[ "$#" -eq 2 && "$1" == -kP && "$2" == "${EXPECTED_DF_PATH:-}" ]] || {
+  printf 'unexpected df arguments: %s\n' "$*" >&2
+  exit 64
+}
+if [[ "${DF_MODE:-valid}" == malformed ]]; then
+  printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 1 0 invalid 0%% %s\n' "$2"
+else
+  printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 1 0 %s 0%% %s\n' \
+    "${DF_AVAILABLE_KIB:?}" "$2"
+fi
+SH
+  cat >"$colima_start_bin/colima" <<'SH'
+#!/usr/bin/env bash
+printf 'colima %s\n' "$*" >>"$COLIMA_START_LOG"
+exit "${COLIMA_START_STATUS:-0}"
+SH
+  chmod +x "$colima_start_home/.local/bin/groundwork-platform" \
+    "$colima_start_bin/df" "$colima_start_bin/colima"
+  colima_start_command() {
+    env HOME="$colima_start_home" COLIMA_HOME="$colima_start_config_home" \
+      COLIMA_START_LOG="$colima_start_log" \
+      EXPECTED_DF_PATH="${EXPECTED_DF_PATH:-}" \
+      DF_AVAILABLE_KIB="${DF_AVAILABLE_KIB:-}" DF_STATUS="${DF_STATUS:-0}" \
+      DF_MODE="${DF_MODE:-valid}" \
+      COLIMA_START_STATUS="${COLIMA_START_STATUS:-0}" \
+      FAKE_PLATFORM="${FAKE_PLATFORM:-darwin}" LIMA_HOME="${LIMA_HOME:-}" \
+      PATH="$colima_start_bin:$PATH" "$@"
+  }
+  colima_start_script=home/dot_local/bin/executable_groundwork-colima-start
+
+  : >"$colima_start_log"
+  colima_start_command /bin/bash "$colima_start_script" --help \
+    >"$colima_start_root/help" || fail "groundwork-colima-start --help failed"
+  test ! -s "$colima_start_log" \
+    || fail "groundwork-colima-start --help ran an external command"
+  for colima_invalid_case in unknown runtime profile; do
+    case "$colima_invalid_case" in
+      unknown) set -- --unknown ;;
+      runtime) set -- --runtime invalid ;;
+      profile) set -- --profile ../outside ;;
+    esac
+    : >"$colima_start_log"
+    if colima_start_command /bin/bash "$colima_start_script" "$@" \
+      >"$colima_start_root/invalid" 2>&1; then
+      fail "groundwork-colima-start accepted invalid arguments: $colima_invalid_case"
+    else
+      colima_start_status=$?
+    fi
+    [[ "$colima_start_status" -eq 64 ]] \
+      || fail "groundwork-colima-start returned $colima_start_status for invalid arguments"
+    test ! -s "$colima_start_log" \
+      || fail "invalid groundwork-colima-start arguments ran an external command"
+  done
+
+  colima_start_lima_parent="$colima_start_root/lima-volume"
+  colima_start_lima_home="$colima_start_lima_parent/lima"
+  mkdir -p "$colima_start_lima_home"
+  : >"$colima_start_log"
+  EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" DF_AVAILABLE_KIB=$((81 * 1048576)) \
+    colima_start_command /bin/bash "$colima_start_script" \
+    --profile work >"$colima_start_root/half-free" \
+    || fail "groundwork-colima-start did not start a new named profile"
+  grep -qxF 'df -kP '"$colima_start_lima_home" "$colima_start_log" \
+    || fail "new profile sizing did not measure the LIMA_HOME filesystem"
+  grep -qxF 'colima --profile work start --disk 40' "$colima_start_log" \
+    || fail "new profile sizing did not floor half of 81 GiB or pass the selected profile"
+  grep -qF 'new profile work will use a 40 GiB data-disk limit' \
+    "$colima_start_root/half-free"
+  grep -qF 'filesystem has about 81.0 GiB free' "$colima_start_root/half-free"
+  grep -qF 'half of current free space, rounded down' "$colima_start_root/half-free"
+
+  : >"$colima_start_log"
+  EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" DF_AVAILABLE_KIB=$((39 * 1048576)) \
+    colima_start_command /bin/bash "$colima_start_script" \
+    >"$colima_start_root/low-space" \
+    || fail "groundwork-colima-start rejected a new instance with 20 GiB free"
+  grep -qxF 'colima start --disk 20' "$colima_start_log" \
+    || fail "groundwork-colima-start did not honor its 20 GiB floor at 39 GiB free"
+  grep -qF '20 GiB floor takes precedence over half-free sizing' \
+    "$colima_start_root/low-space"
+  grep -qF 'sparsely and it grows as used' "$colima_start_root/low-space"
+
+  : >"$colima_start_log"
+  EXPECTED_DF_PATH="$colima_start_config_home" \
+    DF_AVAILABLE_KIB=$((250 * 1048576)) \
+    colima_start_command env -u LIMA_HOME /bin/bash "$colima_start_script" \
+    >"$colima_start_root/capped" \
+    || fail "groundwork-colima-start could not size a default LIMA_HOME profile"
+  grep -qxF 'df -kP '"$colima_start_config_home" "$colima_start_log" \
+    || fail "default sizing did not measure the filesystem that contains Colima's _lima directory"
+  grep -qxF 'colima start --disk 100' "$colima_start_log" \
+    || fail "groundwork-colima-start did not cap the new data disk at 100 GiB"
+
+  : >"$colima_start_log"
+  EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" DF_AVAILABLE_KIB=$((20 * 1048576)) \
+    colima_start_command /bin/bash "$colima_start_script" \
+    >"$colima_start_root/at-floor" \
+    || fail "groundwork-colima-start rejected exactly 20 GiB free"
+  grep -qxF 'colima start --disk 20' "$colima_start_log" \
+    || fail "groundwork-colima-start did not allow exactly 20 GiB free"
+  grep -qF 'new profile default will use a 20 GiB data-disk limit' \
+    "$colima_start_root/at-floor"
+
+  : >"$colima_start_log"
+  EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" DF_AVAILABLE_KIB=$((19 * 1048576)) \
+    colima_start_command /bin/bash "$colima_start_script" \
+    >"$colima_start_root/too-little" 2>&1 && colima_start_status=0 || colima_start_status=$?
+  [[ "$colima_start_status" -ne 0 ]] \
+    || fail "groundwork-colima-start created a new instance with less than 20 GiB free"
+  grep -qF 'at least 20 GiB must be free' "$colima_start_root/too-little"
+  assert_not_contains '^colima start' "$colima_start_log" \
+    "groundwork-colima-start started Colima below its 20 GiB free-space floor"
+
+  for colima_df_case in failed malformed; do
+    : >"$colima_start_log"
+    if [[ "$colima_df_case" == failed ]]; then
+      if EXPECTED_DF_PATH="$colima_start_lima_home" LIMA_HOME="$colima_start_lima_home" \
+        DF_STATUS=1 colima_start_command /bin/bash "$colima_start_script" \
+        >"$colima_start_root/df-failed" 2>&1; then
+        colima_start_status=0
+      else
+        colima_start_status=$?
+      fi
+    else
+      if EXPECTED_DF_PATH="$colima_start_lima_home" LIMA_HOME="$colima_start_lima_home" \
+        DF_MODE=malformed colima_start_command /bin/bash "$colima_start_script" \
+        >"$colima_start_root/df-malformed" 2>&1; then
+        colima_start_status=0
+      else
+        colima_start_status=$?
+      fi
+    fi
+    [[ "$colima_start_status" -ne 0 ]] \
+      || fail "groundwork-colima-start continued after $colima_df_case free-space observation"
+    assert_not_contains '^colima start' "$colima_start_log" \
+      "groundwork-colima-start started Colima after $colima_df_case free-space observation"
+  done
+
+  : >"$colima_start_log"
+  mkdir -p "$colima_start_config_home/work" \
+    "$colima_start_lima_home/_disks/colima-work"
+  printf 'runtime: docker\ndisk: 25\n' \
+    >"$colima_start_config_home/work/colima.yaml"
+  printf 'existing data disk\n' \
+    >"$colima_start_lima_home/_disks/colima-work/datadisk"
+  EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" \
+    colima_start_command /bin/bash "$colima_start_script" \
+    --profile work --runtime docker >"$colima_start_root/existing" \
+    || fail "groundwork-colima-start did not start an existing profile"
+  grep -qxF 'colima --profile work start --runtime docker' "$colima_start_log" \
+    || fail "existing profile was resized or the selected profile/runtime was lost"
+  assert_not_contains '^df ' "$colima_start_log" \
+    "groundwork-colima-start measured free space for an existing profile"
+
+  : >"$colima_start_log"
+  printf 'runtime: docker\ndisk: 0\n' \
+    >"$colima_start_config_home/work/colima.yaml"
+  : >"$colima_start_lima_home/_disks/colima-work/datadisk"
+  EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" \
+    colima_start_command /bin/bash "$colima_start_script" \
+    --profile work >"$colima_start_root/zero-disk" 2>&1 \
+    && colima_start_status=0 || colima_start_status=$?
+  [[ "$colima_start_status" -ne 0 ]] \
+    || fail "groundwork-colima-start launched a profile with a zero-byte data disk"
+  grep -qF 'groundwork-colima-start --profile="work"' "$colima_start_root/zero-disk" \
+    || fail "zero-disk recovery did not route the rebuilt profile through the sizing helper"
+  assert_not_contains '^colima start' "$colima_start_log" \
+    "groundwork-colima-start started a profile with a zero-byte data disk"
+
+  : >"$colima_start_log"
+  FAKE_PLATFORM=linux EXPECTED_DF_PATH="$colima_start_lima_home" \
+    LIMA_HOME="$colima_start_lima_home" DF_AVAILABLE_KIB=$((80 * 1048576)) \
+    colima_start_command /bin/bash "$colima_start_script" \
+    >"$colima_start_root/unsupported-platform" 2>&1 \
+    && colima_start_status=0 || colima_start_status=$?
+  [[ "$colima_start_status" -ne 0 ]] \
+    || fail "groundwork-colima-start ran on an unsupported platform"
+  assert_not_contains '^df |^colima start' "$colima_start_log" \
+    "groundwork-colima-start probed or started Colima on an unsupported platform"
+
   check "Colima instance template"
   # This remains in the Linux Docker suite so macOS template behavior is
   # covered cross-platform. Chezmoi's output function resolves commands from
@@ -14028,7 +14249,7 @@ SH
     >"$out_dir/doctor-down-colima-disk" 2>&1
   grep -qF 'This Colima instance has no Docker data disk.' "$out_dir/doctor-down-colima-disk" \
     || fail "doctor did not report a zero Colima disk while the daemon was down"
-  grep -qF "LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" delete --force && LIMA_HOME=\"$docker_home/.colima/_lima\" limactl disk delete --force \"colima\" && LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" start --disk 100" \
+  grep -qF "LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" colima --profile=\"default\" delete --force && LIMA_HOME=\"$docker_home/.colima/_lima\" limactl disk delete --force \"colima\" && LIMA_HOME=\"$docker_home/.colima/_lima\" COLIMA_HOME=\"$docker_home/.colima\" groundwork-colima-start --profile=\"default\"" \
     "$out_dir/doctor-down-colima-disk" \
     || fail "doctor did not print the Colima home, profile, and data-disk delete it read"
   grep -qF 'Docker daemon not reachable; skipping Docker checks.' "$out_dir/doctor-down-colima-disk"
@@ -14043,7 +14264,7 @@ SH
     >"$out_dir/doctor-down-desktop-disk" 2>&1
   grep -qF 'This Colima instance has no Docker data disk.' "$out_dir/doctor-down-desktop-disk" \
     || fail "doctor hid a leftover zero Colima disk from a Docker Desktop user"
-  grep -qF "Run 'colima start', or start your explicitly selected Docker Desktop backend" \
+  grep -qF "On a Mac using Colima, run 'groundwork-colima-start'; otherwise start the Docker backend selected for this machine" \
     "$out_dir/doctor-down-desktop-disk" \
     || fail "doctor dropped the Docker Desktop hint because a leftover Colima disk existed"
   assert_not_contains 'did not start' "$out_dir/doctor-down-desktop-disk" \

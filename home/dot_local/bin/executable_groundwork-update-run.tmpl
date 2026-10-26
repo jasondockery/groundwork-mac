@@ -2226,12 +2226,16 @@ docker_context_is_canonical_local() {
 # When COLIMA_HOME is unset and ~/.colima is already a directory, point only
 # these invocations at that directory. A value the user already set is kept.
 # Do not create, move, or delete ~/.colima.
-groundwork_colima() {
+groundwork_colima_env() {
   if [[ -z "${COLIMA_HOME:-}" && -d "$HOME/.colima" ]]; then
-    COLIMA_HOME="$HOME/.colima" command colima "$@"
+    COLIMA_HOME="$HOME/.colima" "$@"
   else
-    command colima "$@"
+    "$@"
   fi
+}
+
+groundwork_colima() {
+  groundwork_colima_env command colima "$@"
 }
 
 docker_backend_is_manageable() {
@@ -2282,10 +2286,11 @@ start_docker_backend() {
       ;;
     colima)
       # --runtime docker is stated here as well as in the template: this start
-      # is unattended maintenance, and it must not depend on an existing
-      # instance's stored runtime or on a template a user may have edited.
+      # is unattended maintenance, and its explicit runtime must not depend on
+      # the instance's stored runtime. The managed start helper sizes new
+      # profiles from current host space instead of the template's disk value.
       run_bounded_internal "start Colima" "$docker_start_deadline" "" \
-        groundwork_colima start --runtime docker
+        groundwork_colima_env "$HOME/.local/bin/groundwork-colima-start" --runtime docker
       ;;
     *) return 1 ;;
   esac
