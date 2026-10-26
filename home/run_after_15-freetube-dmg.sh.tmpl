@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# FreeTube pin: {{ include ".chezmoitemplates/freetube-release.json" | sha256sum }}
+# Desktop Macs install the official FreeTube disk image. Homebrew disabled the
+# freetube cask on 2026-09-01 because the app fails its Gatekeeper check:
+# upstream does not notarize this open-source build. After a checksum-matched
+# copy, this script removes only the com.apple.quarantine attribute from that
+# new FreeTube.app. That bypasses Gatekeeper for this one app.
+# It does not read or write ~/Library/Application Support/FreeTube.
+# Bump version, URL, and sha256 together in .chezmoitemplates/freetube-release.json.
+# version is CFBundleShortVersionString. This hook runs on every apply. One
+# plutil read decides whether a download is needed. A newer installed copy is
+# left alone. A download, checksum, mount, copy, permission, or deadline
+# failure warns and setup continues. A checksum mismatch never mounts or
+# copies the image. Mount, copy, and detach each stop after their deadline.
+# The next apply tries again.
+set -euo pipefail
+{{ if and (eq .chezmoi.os "darwin") (not .headless) -}}
+{{- $release := include ".chezmoitemplates/freetube-release.json" | fromJson -}}
+{{- $arm := index $release.assets "arm64" -}}
+{{- $intel := index $release.assets "amd64" }}
+freetube_version={{ printf "%q" $release.version }}
+freetube_arm64_url={{ printf "%q" $arm.url }}
+freetube_arm64_sha256={{ printf "%q" $arm.sha256 }}
+freetube_amd64_url={{ printf "%q" $intel.url }}
+freetube_amd64_sha256={{ printf "%q" $intel.sha256 }}
+freetube_url=""
+freetube_sha256=""
+
+applications_dir="${GROUNDWORK_APPLICATIONS_DIR:-/Applications}"
+dest="${applications_dir}/FreeTube.app"
+work=""
+mount_point=""
+stage=""
+previous=""
+previous_moved=0
+deadline=""
+
+# Same choice as the Herdr hook: gtimeout on macOS, timeout elsewhere.
+# This hook warns and continues when the tool is missing, because a failed
+# FreeTube install must not stop the rest of setup.
+require_deadline() {
+  if [[ -n "$deadline" ]]; then
+    return 0
+  fi
+  if [[ "$(uname -s)" == Darwin ]]; then
+    deadline="gtimeout"
+  else
+    deadline="timeout"
+  fi
+  if ! command -v "$deadline" >/dev/null 2>&1; then
+    deadline=""
+    finish_without_install "GNU timeout is required to install FreeTube. Setup will continue."
+  fi
+}
+
+# 124 is GNU timeout's deadline. 137 is the KILL that follows --kill-after.
+deadline_expired() {
+  [[ "$1" -eq 124 || "$1" -eq 137 ]]
+}
+
+run_bounded() {
+  local seconds="$1"
+  shift
+  "$deadline" --kill-after=5s "$seconds" "$@"
+}
+
+warn() {
+  printf 'Groundwork: %s\n' "$1" >&2
+}
+
+finish_without_install() {
+  warn "$1"
+  exit 0
+}
+
+# 0 equal, 1 left newer, 2 left older, 3 not a dotted numeric version.
+version_relation() {
+  local left="$1" right="$2" i n lv rv
+  local -a l1 l2
+  [[ "$left" =~ ^[0-9]+([.][0-9]+)*$ ]] || return 3
+  [[ "$right" =~ ^[0-9]+([.][0-9]+)*$ ]] || return 3
+  IFS=. read -r -a l1 <<<"$left"
+  IFS=. read -r -a l2 <<<"$right"
+  n=${#l1[@]}
+  [[ ${#l2[@]} -gt $n ]] && n=${#l2[@]}
+  i=0
+  while [[ "$i" -lt "$n" ]]; do
+    lv=0
+    rv=0
+    [[ -n "${l1[$i]:-}" ]] && lv="${l1[$i]}"
+    [[ -n "${l2[$i]:-}" ]] && rv="${l2[$i]}"
+    if ((10#$lv > 10#$rv)); then
+      return 1
+    fi
+    if ((10#$lv < 10#$rv)); then
+      return 2
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# Existence is xattr -p, not the text of an error. Removal happens only on the
+# bundle that was just copied from a checksum-matched image.
+clear_quarantine() {
+  local target="$1"
+  if ! command -v xattr >/dev/null 2>&1; then
+    finish_without_install "xattr is missing, so the FreeTube quarantine attribute was not removed. Setup will continue."
+  fi
+  if xattr -p com.apple.quarantine "$target" >/dev/null 2>&1; then
+    if ! xattr -dr com.apple.quarantine "$target"; then
+      finish_without_install "FreeTube quarantine could not be removed. Setup will continue."
+    fi
+  fi
+}
+
+freetube_is_running() {
+  command -v pgrep >/dev/null 2>&1 || return 1
+  # The bracket stops pgrep from matching its own command line.
+  pgrep -f '/FreeTube[.]app/' >/dev/null 2>&1
+}
+
+permission_denied() {
+  local err_file="$1"
+  [[ -f "$err_file" ]] || return 1
+  grep -q -E 'Permission denied|Operation not permitted' "$err_file"
+}
+
+# A busy image can refuse a normal detach after the verified app is staged.
+# Force is the retry. mount_point stays set when both attempts fail so cleanup
+# does not delete a live mount.
+detach_mount() {
+  local status
+  [[ -n "$mount_point" ]] || return 0
+  status=0
+  run_bounded 60 hdiutil detach "$mount_point" </dev/null >/dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    mount_point=""
+    return 0
+  fi
+  status=0
+  run_bounded 60 hdiutil detach "$mount_point" -force </dev/null >/dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    mount_point=""
+    return 0
+  fi
+  return 1
+}
+
+cleanup() {
+  # Bash 5.2 lets a failing command in an EXIT trap replace the script status.
+  local status=$?
+  detach_mount || true
+  if [[ -n "$stage" && -d "$stage" ]]; then
+    rm -rf -- "$stage" || true
+    stage=""
+  fi
+  if [[ "$previous_moved" == "1" && -n "$previous" && -d "$previous" ]]; then
+    if [[ ! -d "$dest" && -d "${previous}/FreeTube.app" ]]; then
+      mv "${previous}/FreeTube.app" "$dest" || true
+    fi
+    if [[ -d "$dest" ]]; then
+      rm -rf -- "$previous" || true
+      previous=""
+    fi
+  elif [[ -n "$previous" && -d "$previous" ]]; then
+    rm -rf -- "$previous" || true
+    previous=""
+  fi
+  # A live mount is inside the work directory. Delete that tree only after
+  # detach has succeeded and cleared mount_point.
+  if [[ -z "$mount_point" && -n "$work" && -d "$work" ]]; then
+    rm -rf -- "$work" || true
+    work=""
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+# /usr/sbin is not on PATH for every login. Apple Silicon, including Rosetta,
+# reports hw.optional.arm64=1. Intel reports 0, or the key is absent. A missing
+# sysctl binary cannot choose an image, so this apply skips FreeTube.
+if [[ ! -x /usr/sbin/sysctl ]]; then
+  finish_without_install "FreeTube could not read the Mac architecture because /usr/sbin/sysctl is missing. Setup will continue."
+fi
+freetube_arch="amd64"
+sysctl_arm64=""
+if ! sysctl_arm64="$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)"; then
+  sysctl_arm64=""
+fi
+if [[ "$sysctl_arm64" == "1" ]]; then
+  freetube_arch="arm64"
+fi
+if [[ "$freetube_arch" == "arm64" ]]; then
+  freetube_url="$freetube_arm64_url"
+  freetube_sha256="$freetube_arm64_sha256"
+else
+  freetube_url="$freetube_amd64_url"
+  freetube_sha256="$freetube_amd64_sha256"
+fi
+
+if [[ -d "$dest" && ! -L "$dest" ]]; then
+  installed_version="$(plutil -extract CFBundleShortVersionString raw "${dest}/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ -n "$installed_version" ]]; then
+    quarantine_present=0
+    if command -v xattr >/dev/null 2>&1 && xattr -p com.apple.quarantine "$dest" >/dev/null 2>&1; then
+      quarantine_present=1
+    fi
+    # A quarantined bundle is replaced from the verified image. Otherwise a
+    # matching or newer app is left untouched, including its extended attributes.
+    if [[ "$quarantine_present" -eq 0 ]]; then
+      relation=0
+      version_relation "$installed_version" "$freetube_version" || relation=$?
+      if [[ "$relation" -eq 0 ]]; then
+        printf 'Groundwork: FreeTube %s is already installed.\n' "$freetube_version"
+        exit 0
+      fi
+      if [[ "$relation" -eq 1 ]]; then
+        finish_without_install "FreeTube ${installed_version} is newer than pinned ${freetube_version}, so it was left in place."
+      fi
+      if [[ "$relation" -eq 3 ]]; then
+        finish_without_install "FreeTube version ${installed_version} could not be compared with ${freetube_version}, so it was left in place."
+      fi
+    fi
+  fi
+fi
+
+if [[ ! -d "$applications_dir" || -L "$applications_dir" ]]; then
+  finish_without_install "${applications_dir} is not an applications directory. Setup will continue without installing FreeTube."
+fi
+if [[ -L "$dest" ]]; then
+  finish_without_install "${dest} is a symlink, so FreeTube was not replaced."
+fi
+if [[ ! -w "$applications_dir" ]]; then
+  finish_without_install "FreeTube could not be installed because ${applications_dir} is not writable. Setup will continue."
+fi
+
+case "$freetube_url" in
+  https://github.com/FreeTubeApp/FreeTube/releases/download/*) ;;
+  *)
+    finish_without_install "FreeTube URL is not the official GitHub release. Setup will continue without installing it."
+    ;;
+esac
+if [[ ! "$freetube_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+  finish_without_install "FreeTube pin is not a sha256 checksum. Setup will continue without installing it."
+fi
+
+if ! work="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-freetube.XXXXXX")"; then
+  finish_without_install "FreeTube could not prepare a temporary download directory. Setup will continue."
+fi
+dmg="${work}/FreeTube.dmg"
+# Deadline: 15 seconds to connect, 180 seconds for this transfer, three retries.
+# Progress is curl's output. Ctrl-C runs the trap, which detaches a mounted
+# image and deletes only the temporary download. An existing app stays in place
+# until the checksum has matched and the new bundle is ready to replace it.
+printf 'Groundwork: downloading FreeTube %s.\n' "$freetube_version"
+if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  --fail --location --retry 3 --retry-delay 2 \
+  --connect-timeout 15 --max-time 180 \
+  --output "$dmg" \
+  "$freetube_url"; then
+  finish_without_install "FreeTube download failed. Setup will continue, and the next apply will try again."
+fi
+
+actual_sha=""
+if command -v sha256sum >/dev/null 2>&1; then
+  if ! actual_sha="$(sha256sum -- "$dmg" | awk 'NR==1 { print $1 }')"; then
+    finish_without_install "FreeTube checksum could not be read. Setup will continue without installing it."
+  fi
+elif command -v shasum >/dev/null 2>&1; then
+  if ! actual_sha="$(shasum -a 256 -- "$dmg" | awk 'NR==1 { print $1 }')"; then
+    finish_without_install "FreeTube checksum could not be read. Setup will continue without installing it."
+  fi
+else
+  finish_without_install "FreeTube checksum tool is missing. Setup will continue without installing it."
+fi
+if ! actual_sha="$(printf '%s' "$actual_sha" | tr '[:upper:]' '[:lower:]')"; then
+  finish_without_install "FreeTube checksum could not be read. Setup will continue without installing it."
+fi
+if [[ "$actual_sha" != "$freetube_sha256" ]]; then
+  finish_without_install "FreeTube checksum did not match the pinned release. The disk image was not installed."
+fi
+
+mnt="${work}/mnt"
+mkdir -p "$mnt" || finish_without_install "FreeTube could not prepare a mount directory. Setup will continue."
+# 60 seconds for the mount, then 5 seconds after TERM. Stdin is /dev/null so
+# hdiutil cannot wait on a prompt. A deadline expiry sets mount_point first,
+# then the EXIT trap detaches and deletes only this temporary tree.
+require_deadline
+attach_status=0
+run_bounded 60 hdiutil attach "$dmg" -mountpoint "$mnt" -readonly -nobrowse </dev/null >/dev/null || attach_status=$?
+if [[ "$attach_status" -ne 0 ]]; then
+  if deadline_expired "$attach_status"; then
+    mount_point="$mnt"
+    finish_without_install "FreeTube disk image mount timed out. Setup will continue."
+  fi
+  finish_without_install "FreeTube disk image did not mount. Setup will continue."
+fi
+mount_point="$mnt"
+src="${mount_point}/FreeTube.app"
+if [[ ! -d "$src" || -L "$src" ]]; then
+  finish_without_install "The FreeTube disk image has no FreeTube.app bundle. Setup will continue."
+fi
+
+if ! stage="$(mktemp -d "${applications_dir}/.freetube-groundwork.XXXXXX" 2>"${work}/stage.err")"; then
+  if permission_denied "${work}/stage.err"; then
+    finish_without_install "FreeTube could not be copied into ${applications_dir} because permission was denied. Setup will continue."
+  fi
+  finish_without_install "FreeTube could not prepare an install directory in ${applications_dir}. Setup will continue."
+fi
+# 180 seconds for the copy. A partial stage directory is removed by the trap.
+ditto_status=0
+run_bounded 180 ditto "$src" "${stage}/FreeTube.app" </dev/null 2>"${work}/ditto.err" || ditto_status=$?
+if [[ "$ditto_status" -ne 0 ]]; then
+  if deadline_expired "$ditto_status"; then
+    finish_without_install "FreeTube copy timed out. Setup will continue."
+  fi
+  if permission_denied "${work}/ditto.err"; then
+    finish_without_install "FreeTube could not be copied into ${applications_dir} because permission was denied. Setup will continue."
+  fi
+  finish_without_install "FreeTube could not be copied out of the disk image. Setup will continue."
+fi
+if ! detach_mount; then
+  finish_without_install "FreeTube disk image could not be detached. Setup will continue without replacing the app."
+fi
+
+if freetube_is_running; then
+  warn "FreeTube is running, so the existing app was left in place."
+  if [[ -n "$stage" && -d "$stage" ]]; then
+    rm -rf -- "$stage" || true
+    stage=""
+  fi
+  exit 0
+fi
+
+if [[ -d "$dest" ]]; then
+  if ! previous="$(mktemp -d "${applications_dir}/.freetube-groundwork-previous.XXXXXX" 2>"${work}/previous.err")"; then
+    if permission_denied "${work}/previous.err"; then
+      finish_without_install "FreeTube could not be copied into ${applications_dir} because permission was denied. Setup will continue."
+    fi
+    finish_without_install "FreeTube could not move the existing app aside. Setup will continue."
+  fi
+  if [[ -e "${previous}/FreeTube.app" ]]; then
+    finish_without_install "FreeTube could not move the existing app aside because that temporary location already contained one. The existing app was left in place."
+  fi
+  if ! mv "$dest" "${previous}/FreeTube.app"; then
+    finish_without_install "FreeTube could not move the existing app aside. Setup will continue."
+  fi
+  previous_moved=1
+fi
+if ! mv "${stage}/FreeTube.app" "$dest"; then
+  finish_without_install "FreeTube could not be moved into place. Setup will continue."
+fi
+rmdir "$stage" 2>/dev/null || rm -rf -- "$stage" || true
+stage=""
+clear_quarantine "$dest"
+printf 'Groundwork: installed FreeTube %s.\n' "$freetube_version"
+{{ else -}}
+exit 0
+{{ end -}}

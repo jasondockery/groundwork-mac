@@ -333,6 +333,25 @@ has_pending() {
   return 1
 }
 
+# The read-only report lists every pending file. Failure ignores only the two
+# upgrade retries that share this directory: mac-app-store and homebrew-upgrade.
+# Every other filename, including one this helper does not recognize, is
+# package-manager maintenance.
+package_manager_pending() {
+  local pending_file stage
+  [[ -f "$legacy_pending" ]] && return 0
+  [[ -d "$pending_dir" ]] || return 1
+  for pending_file in "$pending_dir"/*; do
+    [[ -f "$pending_file" ]] || continue
+    stage="${pending_file##*/}"
+    case "$stage" in
+      mac-app-store | homebrew-upgrade) ;;
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 append_review() {
   printf '%s\t%s\n' "$1" "$2" >>"$review_records"
 }
@@ -1266,7 +1285,7 @@ rm -f -- "$legacy_pending"
 if [[ "$maintenance_failed" -eq 0 ]]; then
   clear_pending "maintenance-helper"
 fi
-has_pending && maintenance_failed=1
+package_manager_pending && maintenance_failed=1
 
 if [[ -n "$cleanup_receipt_fd" ]]; then
   printf 'homebrew\t%s\nnpm\t%s\npnpm\t%s\nowner-review\t%s\n' \
