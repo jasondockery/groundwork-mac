@@ -81,6 +81,30 @@ ok() { printf '  ok    %s\n' "$1"; }
 warn() { printf '  warn  %s\n' "$1"; }
 note() { printf '  note  %s\n' "$1"; }
 
+# Colima treats an omitted disk as 0 and creates a 0-byte data disk. Starting
+# that instance hangs. Report the home and profile that were read, and never
+# delete the instance. Resolution lives in colima-home.sh so this stays in
+# step with groundwork-update-run.
+gw_doctor_colima_lib() {
+  local script_dir lib
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  lib="$script_dir/../share/groundwork/lib/colima-home.sh"
+  if [[ ! -r "$lib" ]]; then
+    lib="$HOME/.local/share/groundwork/lib/colima-home.sh"
+  fi
+  [[ -r "$lib" ]] || return 1
+  printf '%s\n' "$lib"
+}
+
+gw_doctor_selected_docker_backend() {
+  local data="" chezmoi_bin="" jq_bin=""
+  chezmoi_bin="$(type -P chezmoi 2>/dev/null || true)"
+  jq_bin="$(type -P jq 2>/dev/null || true)"
+  [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] || return 1
+  data="$("$chezmoi_bin" data --format=json 2>/dev/null)" || return 1
+  printf '%s' "$data" | "$jq_bin" -er '.docker_backend // empty'
+}
+
 karabiner_section() {
   heading "Karabiner"
 
@@ -277,6 +301,29 @@ browser_section() {
 docker_section() {
   heading "Docker"
 
+  local colima_disk_status=1 colima_lib="" recovery="" backend=""
+  if colima_lib="$(gw_doctor_colima_lib)"; then
+    # shellcheck source=/dev/null
+    . "$colima_lib"
+    colima_disk_status=0
+    gw_colima_instance_lacks_data_disk || colima_disk_status=$?
+  else
+    warn "Groundwork's Colima home probe is missing."
+    note "Restore it (this runs no install hooks): chezmoi apply --exclude=scripts ~/.local/share/groundwork"
+  fi
+  if [[ "$colima_disk_status" -eq 0 ]]; then
+    warn "This Colima instance has no Docker data disk."
+    if recovery="$(gw_colima_recovery_command)"; then
+      note "Recover with: $recovery"
+    else
+      note "The recovery command was not printed because this home or profile cannot be quoted safely."
+    fi
+    note "Deleting destroys that instance's containers and images. The doctor never deletes anything automatically."
+  elif [[ "$colima_disk_status" -eq 2 ]]; then
+    warn "This Colima profile could not be checked."
+    note "Nothing was deleted. Use a profile name made of letters, numbers, dots, underscores, or hyphens, then rerun groundwork-doctor."
+  fi
+
   local docker_lib="$HOME/.local/share/groundwork/lib/docker-scan.sh" docker_executable
   if [[ ! -r "$docker_lib" ]]; then
     warn "Groundwork's docker-scan probe is missing: $docker_lib — Docker checks skipped."
@@ -294,7 +341,15 @@ docker_section() {
   [[ -n "$GW_DOCKER_JQ" ]] || GW_DOCKER_JQ="/groundwork/unavailable/jq"
   docker() { "$docker_executable" "$@"; }
   if ! docker info >/dev/null 2>&1; then
-    note "Docker daemon not reachable; skipping Docker checks. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun groundwork-doctor."
+    backend=""
+    if [[ "$colima_disk_status" -eq 0 ]]; then
+      backend="$(gw_doctor_selected_docker_backend || true)"
+    fi
+    if [[ "$backend" == "colima" ]]; then
+      note "Docker daemon not reachable; skipping Docker checks."
+    else
+      note "Docker daemon not reachable; skipping Docker checks. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun groundwork-doctor."
+    fi
     return 0
   fi
   ok "Docker daemon is reachable"

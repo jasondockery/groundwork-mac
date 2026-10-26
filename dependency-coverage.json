@@ -129,13 +129,50 @@
       "classification": "intentional-manual",
       "manager": "update-all-mise",
       "paths": ["home/dot_config/mise/config.toml", "home/dot_local/bin/executable_groundwork-update-run.tmpl"],
-      "canonical": "home/dot_config/mise/config.toml",
+      "canonical": "home/dot_local/bin/executable_groundwork-update-run.tmpl",
       "agePolicy": "external-tool-policy",
-      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy before changing a machine runtime.",
-      "scanMatchers": [
-        { "pathPattern": "^home/dot_config/mise/config\\.toml$", "pattern": "version-assignment" }
+      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy to fuzzy machine requests, including the node lts alias and a two-component Python line. Renovate's semver-partial rule keeps the primary Python request at major.minor, so a later patch stays fuzzy and the floor can float it. An exact tag is exempt.",
+      "note": "Renovate reads home/dot_config/mise/config.toml for the primary Python version and writes it as major.minor. update-all remains the machine upgrade path and still floats fuzzy requests, including node = \"lts\" and that Python line, under the five-day floor. The file's version tokens are owned by the mise-node-alias and mise-python surfaces."
+    },
+    {
+      "id": "mise-node-alias",
+      "classification": "built-in",
+      "manager": "mise",
+      "paths": ["home/dot_config/mise/config.toml"],
+      "canonical": "home/dot_config/mise/config.toml#tools.node",
+      "agePolicy": "external-tool-policy",
+      "compensatingControl": "A local package rule disables Renovate updates while the current value is the lts alias. update-all floats that alias under mise's five-day release-age floor.",
+      "extractionMatchers": [
+        { "manager": "mise", "packageFilePattern": "^home/dot_config/mise/config\\.toml$", "depNamePattern": "^node$" }
       ],
-      "note": "Renovate can extract this well-known mise path, so renovate.json explicitly excludes it and leaves update-all as the sole mutation owner."
+      "scanMatchers": [
+        {
+          "pathPattern": "^home/dot_config/mise/config\\.toml$",
+          "pattern": "version-assignment",
+          "linePattern": "^node\\s*="
+        }
+      ],
+      "note": "Renovate's mise manager extracts node = \"lts\". Numbering the alias would churn on every LTS move, so the local rule leaves it disabled."
+    },
+    {
+      "id": "mise-python",
+      "classification": "built-in",
+      "manager": "mise",
+      "paths": ["home/dot_config/mise/config.toml"],
+      "canonical": "home/dot_config/mise/config.toml#tools.python",
+      "agePolicy": "renovate-minimum-release-age",
+      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval is preset 1.1.0, which is not tagged yet, so this repo does not duplicate that rule. The secondary 3.12 array entry is outside mise extraction and is refused if it ever becomes the current value, because Aider still needs audioop.",
+      "extractionMatchers": [
+        { "manager": "mise", "packageFilePattern": "^home/dot_config/mise/config\\.toml$", "depNamePattern": "^python$" }
+      ],
+      "scanMatchers": [
+        {
+          "pathPattern": "^home/dot_config/mise/config\\.toml$",
+          "pattern": "version-assignment",
+          "linePattern": "^python\\s*="
+        }
+      ],
+      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.13\", \"3.12\"] therefore proposes movement of 3.13, such as to 3.15, and leaves 3.12 pinned for Aider."
     },
     {
       "id": "corepack-runtime",

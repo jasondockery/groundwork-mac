@@ -2,21 +2,35 @@
 # instance. Use `colima start --edit` for an existing instance; deleting it
 # destroys that instance's container data. See docs/docker-desktop-to-colima.md.
 #
-# Only the settings that matter are pinned; everything omitted falls back
-# to Colima's defaults. Rationale: containers should run at native speed —
+# Settings that differ from Colima's defaults are pinned, each with a reason.
+# runtime, disk, and sshConfig match Colima's CLI defaults and are still
+# pinned: Colima reads this file as the whole configuration for a new instance,
+# so an omitted key arrives empty, zero, or false instead of the default.
+# Containers should run at native speed:
 # vz is Apple's virtualization framework (faster, lower energy than qemu),
-# virtiofs is the fastest bind-mount option, and Rosetta accelerates the
-# rare amd64-only image on Apple Silicon instead of falling back to QEMU.
-# Pinned explicitly, not left to fall back. Colima reads this file as the whole
-# configuration for a new instance, so an omitted runtime is read as an empty
-# one and `colima start` fails with "unsupported container runtime ''" rather
-# than defaulting to docker.
+# virtiofs is the fastest bind-mount option, and Rosetta, when it is already
+# installed, accelerates the rare amd64-only image on Apple Silicon instead of
+# falling back to QEMU.
+# Pinned explicitly, not left to fall back. An omitted runtime is read as an
+# empty one and `colima start` fails with "unsupported container runtime ''"
+# rather than defaulting to docker.
 runtime: docker
+# Pinned to Colima's normal default: an omitted disk is read as 0 and creates a 0-byte data disk.
+disk: 100
 vmType: vz
 mountType: virtiofs
+# Propagate inotify events into the VM. Colima's default is false, so editors
+# and test runners watching a virtiofs mount would not see host writes.
 mountInotify: true
+# Pinned to Colima's CLI default. An omitted plain bool is read as false and
+# copied over that default, which would stop generating ~/.ssh/config.
+sshConfig: true
 {{ if eq .chezmoi.arch "arm64" -}}
+{{ if stat "/Library/Apple/usr/libexec/oah/libRosettaRuntime" -}}
 rosetta: true
+{{ else -}}
+# Rosetta is not installed, so rosetta is omitted. Colima warns on every start when rosetta is true and Rosetta is absent.
+{{ end -}}
 {{ end -}}
 # Sized per machine at apply time: half the cores (a cap, not a
 # reservation, so generous is fine), and a third of RAM clamped to 4-12 GB

@@ -11,7 +11,7 @@
     },
     "ai-budget.html": {
       "sha256": "971e859557e9f7e2cf0111c985b9d02f14f67bbe0611b7641707e0ac5a64825e",
-      "lastmod": "2026-10-25"
+      "lastmod": "2026-10-26"
     },
     "app-dev.html": {
       "sha256": "e463a06633431544df2223f770fc30acbbb6200597c4e20bd512ad6a342e46a6",
@@ -19,19 +19,19 @@
     },
     "apps.html": {
       "sha256": "33f5ca39f98b66db98816e7386be467bdf128ce6ba42b7721f563aaf70295a6c",
-      "lastmod": "2026-10-25"
+      "lastmod": "2026-10-26"
     },
     "cheatsheet.html": {
       "sha256": "d6e21598793a9abd2be0f91c98035ebbd665a761b42d66e70cea60cf01d3c626",
       "lastmod": "2026-10-24"
     },
     "claude.html": {
-      "sha256": "7ea97894b7fc21ee0399750e3844a3c434facc17a1b5c9489d92185f754048be",
-      "lastmod": "2026-10-16"
+      "sha256": "57ff8e1e884e68237849089308a4d2daba9899e45484f397f384fd651134993a",
+      "lastmod": "2026-10-26"
     },
     "codex.html": {
-      "sha256": "9b5d7e75fa8cf6a740afb82aea97fdaf2abcf5399586607c58a26a9944e5882f",
-      "lastmod": "2026-08-13"
+      "sha256": "95352c90f47ee74188d8cac23a5e4c58103c047d7457ec24c4a75aec560f4da4",
+      "lastmod": "2026-10-26"
     },
     "command-line.html": {
       "sha256": "534c3e56fbe3393369bd8361f3282531058a5f0362dd64ab0ce5c2605eb3247e",
@@ -39,7 +39,7 @@
     },
     "commands.html": {
       "sha256": "894faa060fdffa87baedd8792d83a829a2eff18fa5e7831961dc41a19b63c396",
-      "lastmod": "2026-10-25"
+      "lastmod": "2026-10-26"
     },
     "customizing.html": {
       "sha256": "b26182c6b8b85a57ff4008086ff53a9b0973e1996b2dc620a37c9392f450a688",
@@ -50,7 +50,7 @@
       "lastmod": "2026-08-11"
     },
     "dependencies.html": {
-      "sha256": "be4455e04839ef79260384e5d28b36fc5035e2f093e300374f1d0571a8c1c080",
+      "sha256": "9f8247d05252ecfb31ce29184ca1c9fdb28b044f3d843a7a21f503ebfa52ef36",
       "lastmod": "2026-10-24"
     },
     "development.html": {
@@ -87,7 +87,7 @@
     },
     "glm.html": {
       "sha256": "c2817b8d7c3f7f7531c6072853d1f67f1c564428e5710ace6be534f6b8dd01fe",
-      "lastmod": "2026-10-25"
+      "lastmod": "2026-10-26"
     },
     "glossary.html": {
       "sha256": "60749ac9aea10d681f6e2678ad06eccde053557033b7a5f8a118615da1f2b0f7",
@@ -115,7 +115,7 @@
     },
     "installed.html": {
       "sha256": "da897d4e3863fadb75778b77684dc71df8f882f5f1be9d126df9addb7ae21533",
-      "lastmod": "2026-10-25"
+      "lastmod": "2026-10-26"
     },
     "keyboard.html": {
       "sha256": "de050cec0c5b72215e75f9dea81f4301cef219c5788df609af0aed75e1b60d42",
@@ -146,8 +146,8 @@
       "lastmod": "2026-08-13"
     },
     "platforms.html": {
-      "sha256": "f7d9bdf97230dafdea584111cd9f95e36536972a61fb3bb22085fed2ebb72904",
-      "lastmod": "2026-10-25"
+      "sha256": "135379a787c5b3f2e7f3bde459db989930c6453d5eea8052c51afbc610d4ede1",
+      "lastmod": "2026-10-26"
     },
     "practice.html": {
       "sha256": "3ea20f48ae146d6c46e74c907a7646073c914466d2f40505114c827217e96fcb",
@@ -163,7 +163,7 @@
     },
     "setup.html": {
       "sha256": "2911f2f23339dc424cda2780476bc64b33c2c2e1cbefa28e09bd701a72752e07",
-      "lastmod": "2026-10-25"
+      "lastmod": "2026-10-26"
     },
     "shell.html": {
       "sha256": "0233a91b4e8af00a1e4051947480e953f5b207a92f80cb745d083e3c9a4f5183",
@@ -186,8 +186,8 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "1d913bfce06278899c2a2b03e84c34d6792e2b50996e028225a8ad5c2ebdadcb",
-      "lastmod": "2026-10-25"
+      "sha256": "e368f6b96802c4a6b158a59b69d3b577b158d0bd73bfbd665d3aef3af20e863c",
+      "lastmod": "2026-10-26"
     },
     "web-dev.html": {
       "sha256": "3d8a3134a4ca5d18cae986e6dcfe41448bcb8110928f85475ea428e94a05877b",
