@@ -136,6 +136,7 @@ for cask in "${unique_casks[@]}"; do
         and (.casks[0].token == $token)
         and (.casks[0].version | type) == "string"
         and (.casks[0].sha256 | type) == "string"
+        and (.casks[0].disabled | type) == "boolean"
         and ((.casks[0].variations // {}) | type) == "object"
       ' >/dev/null 2>&1; then
     echo "  UNKNOWN   $cask — unsupported or malformed cask metadata (network? schema change? renamed?)" >&2
@@ -144,6 +145,12 @@ for cask in "${unique_casks[@]}"; do
   fi
   version="$(printf '%s' "$json" | jq -r '.casks[0].version')"
   sha="$(printf '%s' "$json" | jq -r '.casks[0].sha256')"
+  disabled="$(printf '%s' "$json" | jq -r '.casks[0].disabled')"
+  # A disabled cask makes `brew bundle` fail before any later install lane.
+  if [[ "$disabled" == "true" ]]; then
+    echo "  VIOLATION $cask is disabled in Homebrew; a required Brewfile cask would fail brew bundle." >&2
+    status=1
+  fi
   # Architecture matters: a cask can carry per-variation hashes, and Groundwork
   # supports Intel and Apple Silicon. No `|| true` — a jq failure here is fatal.
   if ! bad_variation="$(printf '%s' "$json" | jq -r '
@@ -172,6 +179,7 @@ for exception_cask in "${exception_casks[@]}"; do
         (.casks | type) == "array" and (.casks | length) == 1
         and (.casks[0].token == $token)
         and (.casks[0].sha256 | type) == "string"
+        and (.casks[0].disabled | type) == "boolean"
         and ((.casks[0].variations // {}) | type) == "object"
       ' >/dev/null 2>&1; then
     echo "  UNKNOWN   $exception_cask — unsupported or malformed cask metadata" >&2
@@ -180,8 +188,12 @@ for exception_cask in "${exception_casks[@]}"; do
   fi
   version="$(printf '%s' "$json" | jq -r '.casks[0].version')"
   sha="$(printf '%s' "$json" | jq -r '.casks[0].sha256')"
+  disabled="$(printf '%s' "$json" | jq -r '.casks[0].disabled')"
   auto_updates="$(printf '%s' "$json" | jq -r '.casks[0].auto_updates // false')"
-  if [[ "$sha" != "no_check" && "$version" != "latest" ]]; then
+  if [[ "$disabled" == "true" ]]; then
+    echo "  VIOLATION $exception_cask is disabled in Homebrew; brew bundle would fail it." >&2
+    status=1
+  elif [[ "$sha" != "no_check" && "$version" != "latest" ]]; then
     echo "  STALE     $exception_cask now HAS a checksum (version=$version sha=$sha)." >&2
     echo "            Move it into the checksum-safe Brewfile and remove its bypass." >&2
     status=1
