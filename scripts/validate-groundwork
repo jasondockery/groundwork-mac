@@ -4831,8 +4831,10 @@ PY
   # directory. The bundle exists only at the applications-directory child.
   mas_ddg_data_path="/System/Volumes/Data${GROUNDWORK_APPLICATIONS_DIR}/DuckDuckGo.app"
   mas_ddg_data_pre="$(python3 -c 'import json,sys; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":sys.argv[1]}))' "$mas_ddg_data_path")"
-  [[ ! -e "$mas_ddg_data_path" ]] \
-    || fail "the Data-volume fixture must not create the Spotlight path"
+  # On macOS, /System/Volumes/Data firmlinks the same files, so the path can
+  # exist as long as it is the applications-directory bundle itself.
+  [[ ! -e "$mas_ddg_data_path" || "$mas_ddg_data_path" -ef "$ddg_app" ]] \
+    || fail "the Data-volume fixture must not create a separate Spotlight path"
   test -d "$ddg_app" \
     || fail "the Data-volume fixture lost the applications-directory bundle"
   : >"$update_all_log"
