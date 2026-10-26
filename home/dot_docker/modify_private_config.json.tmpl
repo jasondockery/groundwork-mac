@@ -1,33 +1,72 @@
 #!/usr/bin/env python3
 {{- $developer := includeTemplate "developer-settings" . | fromJson }}
 import json
-from pathlib import Path
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-original = sys.stdin.read()
+original = sys.stdin.buffer.read()
 {{ if and (eq .chezmoi.os "darwin") (eq (get $developer "docker_backend") "colima") -}}
+# Docker Desktop and Colima rewrite this file (currentContext, credsStore,
+# auths, and their own formatting). Groundwork only adds the Homebrew CLI
+# plugin directory when it is missing and sets credsStore when that key is
+# absent. Existing auths, an existing credsStore, and every other key stay.
+# When those two requirements are already met, the input passes through
+# byte-for-byte: re-serializing an unchanged config makes chezmoi report that
+# the file changed on this machine and this update also changes it.
 try:
-    config = json.loads(original) if original.strip() else {}
+    try:
+        text = original.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("the file is not valid UTF-8") from error
+    config = json.loads(text) if text.strip() else {}
     if not isinstance(config, dict):
         raise ValueError("Docker configuration must be an object")
     directories = config.get("cliPluginsExtraDirs", [])
     if not isinstance(directories, list) or any(not isinstance(item, str) for item in directories):
         raise ValueError("cliPluginsExtraDirs must be a list of paths")
-    brew = next((str(path) for path in (Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")) if path.is_file()), None)
+    if "auths" in config and not isinstance(config["auths"], dict):
+        raise ValueError("auths must be an object")
+    if "credsStore" in config and not isinstance(config["credsStore"], str):
+        raise ValueError("credsStore must be a string")
+    brew = next(
+        (str(path) for path in (Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")) if path.is_file()),
+        None,
+    )
     if brew is None:
+        brew = shutil.which("brew")
+    if not brew:
         raise ValueError("Homebrew is required to configure Docker plugins")
-    prefix = subprocess.run([brew, "--prefix"], check=True, capture_output=True, text=True, timeout=10).stdout.strip()
-    if not prefix.startswith("/") or "\n" in prefix:
+    prefix = subprocess.run(
+        [brew, "--prefix"], check=True, capture_output=True, text=True, timeout=10
+    ).stdout.strip()
+    if (
+        not prefix.startswith("/")
+        or any(ord(char) < 32 or ord(char) == 127 for char in prefix)
+    ):
         raise ValueError("Homebrew returned an invalid prefix")
     plugins = str(Path(prefix) / "lib/docker/cli-plugins")
+    changed = False
     if plugins not in directories:
         config["cliPluginsExtraDirs"] = [*directories, plugins]
-    config.setdefault("credsStore", "osxkeychain")
+        changed = True
+    if "credsStore" not in config:
+        config["credsStore"] = "osxkeychain"
+        changed = True
+except json.JSONDecodeError:
+    print(
+        "Groundwork: Docker configuration was preserved: the file is not valid JSON",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from None
 except (ValueError, OSError, subprocess.SubprocessError) as error:
     print(f"Groundwork: Docker configuration was preserved: {error}", file=sys.stderr)
-    raise SystemExit(1)
-print(json.dumps(config, indent=2, ensure_ascii=False))
+    raise SystemExit(1) from error
+if not changed:
+    sys.stdout.buffer.write(original)
+else:
+    sys.stdout.write(json.dumps(config, indent=2, ensure_ascii=False) + "\n")
 {{- else }}
-sys.stdout.write(original)
+sys.stdout.buffer.write(original)
 {{- end }}

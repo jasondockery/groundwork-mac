@@ -3352,7 +3352,40 @@ SH
   chmod +x "$update_all_bin/cp"
   cat >"$update_all_bin/plutil" <<'SH'
 #!/usr/bin/env bash
-case "${2:-}" in
+key=""
+plist=""
+if [[ "${1:-}" == "-extract" && "${3:-}" == "raw" && $# -ge 4 ]]; then
+  key="$2"
+  plist="$4"
+fi
+# A real Info.plist wins. An empty or non-plist file keeps the ChatGPT
+# defaults the adoption fixtures already depend on.
+if [[ -n "$plist" && -s "$plist" ]]; then
+  python_status=0
+  python3 - "$key" "$plist" <<'PY' || python_status=$?
+import plistlib
+import sys
+key, path = sys.argv[1], sys.argv[2]
+try:
+    with open(path, "rb") as handle:
+        data = plistlib.load(handle)
+except Exception:
+    sys.exit(2)
+if not isinstance(data, dict):
+    sys.exit(2)
+value = data.get(key)
+if not isinstance(value, str) or value == "":
+    sys.exit(1)
+sys.stdout.write(value + "\n")
+PY
+  if [[ "$python_status" -eq 0 ]]; then
+    exit 0
+  fi
+  if [[ "$python_status" -eq 1 ]]; then
+    exit 1
+  fi
+fi
+case "$key" in
   CFBundleIdentifier) printf '%s\n' "${CHATGPT_BUNDLE_ID:-com.openai.codex}" ;;
   CFBundleShortVersionString) printf '%s\n' "${CHATGPT_SHORT_VERSION:-26.803.81509}" ;;
   CFBundleVersion) printf '%s\n' "${CHATGPT_BUILD_VERSION:-81509}" ;;
@@ -3364,7 +3397,15 @@ SH
 #!/usr/bin/env bash
 printf '%s: Mach-O 64-bit executable arm64\n' "${1:-unknown}"
 SH
-  chmod +x "$update_all_bin/plutil" "$update_all_bin/file"
+  cat >"$update_all_bin/mdimport" <<'SH'
+#!/usr/bin/env bash
+[[ "$#" -eq 1 ]] || exit 64
+if [[ -n "${GROUNDWORK_TEST_LOG:-}" ]]; then
+  printf 'mdimport %s\n' "$1" >>"$GROUNDWORK_TEST_LOG"
+fi
+exit "${MDIMPORT_STATUS:-0}"
+SH
+  chmod +x "$update_all_bin/plutil" "$update_all_bin/file" "$update_all_bin/mdimport"
   cat >"$update_all_bin/groundwork-platform" <<'SH'
 #!/usr/bin/env bash
 echo "${FAKE_PLATFORM:-linux}"
@@ -3482,6 +3523,9 @@ exit 64
 SH
   cat >"$update_all_bin/colima" <<'SH'
 #!/usr/bin/env bash
+if [[ -n "${GROUNDWORK_TEST_LOG:-}" ]]; then
+  printf 'colima-env COLIMA_HOME=%s\n' "${COLIMA_HOME:-unset}" >>"$GROUNDWORK_TEST_LOG"
+fi
 if [[ "${1:-}" == start && "${2:-}" == --help ]]; then
   exit "${COLIMA_CAPABILITY_STATUS:-0}"
 fi
@@ -4713,6 +4757,365 @@ EOF
     "$update_all_home/.local/state/groundwork/receipts/update-all-maintenance-latest.tsv"
   rm -f "$update_all_home"/.mas-updated-*
 
+  check "update-all verifies an unindexed Mac App Store update from its bundle"
+  # Spotlight can omit an app mas just updated. The bundle, its bundle id, and
+  # a non-empty Mac App Store receipt are the source of truth. A missing bundle
+  # or a changed bundle id stays a real identity failure, and that failure must
+  # not also be reported as package-manager maintenance.
+  ddg_app="$GROUNDWORK_APPLICATIONS_DIR/DuckDuckGo.app"
+  mas_ddg_pre="$(python3 -c 'import json,sys; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":sys.argv[1]}))' "$ddg_app")"
+  mas_ddg_outdated="$(python3 -c 'import json; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","newVersion":"1.212.0"}))')"
+  write_mas_bundle() {
+    python3 - "$1" "$2" "$3" "${4:-receipt}" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+app, bundle_id, version, receipt = sys.argv[1:]
+root = Path(app)
+info = root / "Contents" / "Info.plist"
+receipt_path = root / "Contents" / "_MASReceipt" / "receipt"
+info.parent.mkdir(parents=True, exist_ok=True)
+receipt_path.parent.mkdir(parents=True, exist_ok=True)
+with info.open("wb") as handle:
+    plistlib.dump({
+        "CFBundleIdentifier": bundle_id,
+        "CFBundleShortVersionString": version,
+    }, handle)
+receipt_path.write_bytes(receipt.encode())
+PY
+  }
+  rm -rf -- "$ddg_app"
+  write_mas_bundle "$ddg_app" com.duckduckgo.macos.browser 1.212.0
+  : >"$update_all_log"
+  rm -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    "$update_all_home/.local/state/groundwork/update-all-pending/homebrew" \
+    "$update_all_home/.local/state/groundwork/update-all-pending/npm" \
+    "$update_all_home/.local/state/groundwork/update-all-pending/pnpm"
+  if ! run_fixture_pty "$update_all_fixture/darwin-mas-indexed-late" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    ; then
+    cat "$update_all_fixture/darwin-mas-indexed-late" >&2
+    fail "an updated App Store bundle that Spotlight has not indexed was not verified"
+  fi
+  grep -qF 'changed from 1.211.0 to 1.212.0; the bundle identifier matches and the Mac App Store receipt is a non-empty regular file.' \
+    "$update_all_fixture/darwin-mas-indexed-late" \
+    || fail "bundle verification did not name the bundle id and regular receipt"
+  grep -qF 'Verified updated        1' "$update_all_fixture/darwin-mas-indexed-late"
+  grep -qF 'Mac App Store apps      updated-and-verified' \
+    "$update_all_fixture/darwin-mas-indexed-late"
+  grep -qF 'Package-manager maintenance completed.' \
+    "$update_all_fixture/darwin-mas-indexed-late"
+  assert_not_contains 'Package-manager maintenance is incomplete|lost or changed its installed identity' \
+    "$update_all_fixture/darwin-mas-indexed-late" \
+    "a verified unindexed App Store update was treated as lost identity or failed maintenance"
+  [[ "$(grep -c "^mdimport $ddg_app$" "$update_all_log")" -eq 1 ]] \
+    || fail "bundle verification did not run exactly one bounded mdimport of the app"
+  grep -qxF 'brew autoremove' "$update_all_log" \
+    || fail "a verified unindexed App Store update skipped Homebrew maintenance"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a verified unindexed App Store update left the Mac App Store lane pending"
+  rm -f "$update_all_home"/.mas-updated-*
+
+  check "update-all verifies a Data-volume Spotlight path from the applications directory"
+  # mas 7 emits kMDItemPath as /System/Volumes/Data plus the applications
+  # directory. The bundle exists only at the applications-directory child.
+  mas_ddg_data_path="/System/Volumes/Data${GROUNDWORK_APPLICATIONS_DIR}/DuckDuckGo.app"
+  mas_ddg_data_pre="$(python3 -c 'import json,sys; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":sys.argv[1]}))' "$mas_ddg_data_path")"
+  [[ ! -e "$mas_ddg_data_path" ]] \
+    || fail "the Data-volume fixture must not create the Spotlight path"
+  test -d "$ddg_app" \
+    || fail "the Data-volume fixture lost the applications-directory bundle"
+  : >"$update_all_log"
+  if ! run_fixture_pty "$update_all_fixture/darwin-mas-data-volume" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_data_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    ; then
+    cat "$update_all_fixture/darwin-mas-data-volume" >&2
+    fail "a Data-volume Spotlight path was not verified from the applications directory"
+  fi
+  grep -qF 'changed from 1.211.0 to 1.212.0; the bundle identifier matches and the Mac App Store receipt is a non-empty regular file.' \
+    "$update_all_fixture/darwin-mas-data-volume" \
+    || fail "a Data-volume Spotlight path was not verified from its bundle"
+  [[ "$(grep -c "^mdimport $ddg_app$" "$update_all_log")" -eq 1 ]] \
+    || fail "a Data-volume Spotlight path was not reindexed at the applications-directory child"
+  assert_not_contains "^mdimport /System/Volumes/Data" "$update_all_log" \
+    "bundle verification opened the Spotlight Data-volume path"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a verified Data-volume path left the Mac App Store lane pending"
+  rm -f "$update_all_home"/.mas-updated-*
+
+  check "update-all rejects a Data-volume path outside the applications directory"
+  # The applications-directory bundle is a valid target-version app. Accepting
+  # any Data-volume parent and then opening that basename would verify it.
+  mas_ddg_other_pre="$(python3 -c 'import json; print(json.dumps({"adamID":663592361,"name":"DuckDuckGo","version":"1.211.0","bundleID":"com.duckduckgo.macos.browser","path":"/System/Volumes/Data/Other/DuckDuckGo.app"}))')"
+  : >"$update_all_log"
+  mas_data_other_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-data-volume-other" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_other_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_data_other_exit=$?
+  [[ "$mas_data_other_exit" -ne 0 ]] \
+    || fail "a Data-volume path outside the applications directory produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-data-volume-other" \
+    || fail "a Data-volume path outside the applications directory was not lost identity"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-data-volume-other" \
+    "a Data-volume path outside the applications directory was verified"
+  assert_not_contains '^mdimport ' "$update_all_log" \
+    "a Data-volume path outside the applications directory was opened"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a rejected Data-volume path left no Mac App Store retry record"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  rm -rf -- "$ddg_app"
+  : >"$update_all_log"
+  mas_missing_bundle_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-missing" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_missing_bundle_exit=$?
+  [[ "$mas_missing_bundle_exit" -ne 0 ]] \
+    || fail "a missing App Store bundle produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-bundle-missing"
+  grep -qF 'The app bundle is missing or incomplete.' \
+    "$update_all_fixture/darwin-mas-bundle-missing"
+  assert_not_contains 'Package-manager maintenance is incomplete|^mdimport ' \
+    "$update_all_fixture/darwin-mas-bundle-missing" \
+    "a missing App Store bundle failed package-manager maintenance or indexed a path that is not there"
+  assert_not_contains '^mdimport ' "$update_all_log" \
+    "a missing App Store bundle was passed to mdimport"
+  grep -qxF 'brew autoremove' "$update_all_log" \
+    || fail "a missing App Store bundle skipped Homebrew maintenance"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a missing App Store bundle left no Mac App Store retry record"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/homebrew" \
+    || fail "a missing App Store bundle recorded a Homebrew maintenance failure"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/npm"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/pnpm"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  write_mas_bundle "$ddg_app" com.example.changed 1.212.0
+  : >"$update_all_log"
+  mas_changed_bundle_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-id-changed" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_changed_bundle_exit=$?
+  [[ "$mas_changed_bundle_exit" -ne 0 ]] \
+    || fail "a changed App Store bundle id produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-bundle-id-changed"
+  grep -qF 'Its bundle identifier changed.' \
+    "$update_all_fixture/darwin-mas-bundle-id-changed"
+  assert_not_contains 'Package-manager maintenance is incomplete' \
+    "$update_all_fixture/darwin-mas-bundle-id-changed" \
+    "a changed App Store bundle id failed package-manager maintenance"
+  grep -qxF 'brew autoremove' "$update_all_log" \
+    || fail "a changed App Store bundle id skipped Homebrew maintenance"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  test ! -e "$update_all_home/.local/state/groundwork/update-all-pending/homebrew"
+  rm -rf -- "$ddg_app"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  check "update-all rejects a bundle version that is neither previous nor target"
+  # An empty post-update mas list must not treat 9.9.9, or any version other
+  # than the target, as a verified update. The previous version keeps its
+  # existing failure. Anything else fails and leaves the App Store lane pending.
+  rm -rf -- "$ddg_app"
+  write_mas_bundle "$ddg_app" com.duckduckgo.macos.browser 9.9.9
+  : >"$update_all_log"
+  mas_wrong_version_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-wrong-version" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_wrong_version_exit=$?
+  [[ "$mas_wrong_version_exit" -ne 0 ]] \
+    || fail "a bundle version other than the target produced a false complete result"
+  grep -qF 'bundle version is 9.9.9, which is neither the previous version 1.211.0 nor the target 1.212.0.' \
+    "$update_all_fixture/darwin-mas-bundle-wrong-version" \
+    || fail "a mismatched bundle version did not name both the previous version and the target"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-bundle-wrong-version" \
+    "a mismatched bundle version was reported as verified"
+  assert_not_contains 'Package-manager maintenance is incomplete' \
+    "$update_all_fixture/darwin-mas-bundle-wrong-version" \
+    "a mismatched bundle version failed package-manager maintenance"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a mismatched bundle version left no Mac App Store retry record"
+  rm -rf -- "$ddg_app"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  check "update-all rejects an unindexed bundle still at its previous version"
+  rm -rf -- "$ddg_app"
+  write_mas_bundle "$ddg_app" com.duckduckgo.macos.browser 1.211.0
+  : >"$update_all_log"
+  mas_previous_version_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-bundle-previous-version" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_previous_version_exit=$?
+  [[ "$mas_previous_version_exit" -ne 0 ]] \
+    || fail "a bundle still at its previous version produced a false complete result"
+  grep -qF 'is still at 1.211.0; the bundle was not updated to 1.212.0.' \
+    "$update_all_fixture/darwin-mas-bundle-previous-version" \
+    || fail "a bundle still at its previous version did not keep the still-at failure"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-bundle-previous-version" \
+    "a bundle still at its previous version was reported as verified"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    || fail "a bundle still at its previous version left no Mac App Store retry record"
+  rm -rf -- "$ddg_app"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  check "update-all rejects symlinked Contents and _MASReceipt directories"
+  # A complete target-version bundle behind either symlink would verify if the
+  # directory symlink were followed. Both must stay lost-identity failures.
+  mas_write_contents_symlink() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+app = Path(sys.argv[1])
+bundle_id, version = sys.argv[2:]
+real = app.parent / "DuckDuckGo-contents-real"
+if app.exists() or app.is_symlink():
+    raise SystemExit("app path already exists")
+real.mkdir(parents=True)
+info = real / "Info.plist"
+receipt = real / "_MASReceipt" / "receipt"
+receipt.parent.mkdir(parents=True)
+with info.open("wb") as handle:
+    plistlib.dump({
+        "CFBundleIdentifier": bundle_id,
+        "CFBundleShortVersionString": version,
+    }, handle)
+receipt.write_bytes(b"x")
+app.mkdir()
+(app / "Contents").symlink_to(real, target_is_directory=True)
+PY
+  }
+  mas_write_receipt_dir_symlink() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+app = Path(sys.argv[1])
+bundle_id, version = sys.argv[2:]
+real = app.parent / "DuckDuckGo-receipt-real"
+if app.exists() or app.is_symlink():
+    raise SystemExit("app path already exists")
+contents = app / "Contents"
+contents.mkdir(parents=True)
+info = contents / "Info.plist"
+with info.open("wb") as handle:
+    plistlib.dump({
+        "CFBundleIdentifier": bundle_id,
+        "CFBundleShortVersionString": version,
+    }, handle)
+real.mkdir(parents=True)
+(real / "receipt").write_bytes(b"x")
+(contents / "_MASReceipt").symlink_to(real, target_is_directory=True)
+PY
+  }
+  rm -rf -- "$ddg_app" "$GROUNDWORK_APPLICATIONS_DIR/DuckDuckGo-contents-real"
+  mas_write_contents_symlink "$ddg_app" com.duckduckgo.macos.browser 1.212.0
+  : >"$update_all_log"
+  mas_contents_link_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-contents-symlink" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_contents_link_exit=$?
+  [[ "$mas_contents_link_exit" -ne 0 ]] \
+    || fail "a symlinked Contents directory produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-contents-symlink" \
+    || fail "a symlinked Contents directory was not a lost-identity failure"
+  grep -qF 'The app bundle is missing or incomplete.' \
+    "$update_all_fixture/darwin-mas-contents-symlink"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-contents-symlink" \
+    "a symlinked Contents directory was reported as verified"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  rm -rf -- "$ddg_app" "$GROUNDWORK_APPLICATIONS_DIR/DuckDuckGo-contents-real"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
+  rm -rf -- "$ddg_app" "$GROUNDWORK_APPLICATIONS_DIR/DuckDuckGo-receipt-real"
+  mas_write_receipt_dir_symlink "$ddg_app" com.duckduckgo.macos.browser 1.212.0
+  : >"$update_all_log"
+  mas_receipt_link_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-receipt-symlink" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_ddg_pre" MAS_OUTDATED="$mas_ddg_outdated" \
+    MAS_POST_INSTALLED='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_receipt_link_exit=$?
+  [[ "$mas_receipt_link_exit" -ne 0 ]] \
+    || fail "a symlinked _MASReceipt directory produced a false complete result"
+  grep -qF 'lost or changed its installed identity after update' \
+    "$update_all_fixture/darwin-mas-receipt-symlink" \
+    || fail "a symlinked _MASReceipt directory was not a lost-identity failure"
+  grep -qF 'Its Mac App Store receipt is missing, empty, or not a regular file.' \
+    "$update_all_fixture/darwin-mas-receipt-symlink"
+  assert_not_contains 'Groundwork verified' \
+    "$update_all_fixture/darwin-mas-receipt-symlink" \
+    "a symlinked _MASReceipt directory was reported as verified"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  rm -rf -- "$ddg_app" "$GROUNDWORK_APPLICATIONS_DIR/DuckDuckGo-receipt-real"
+  rm -f "$update_all_home"/.mas-updated-* \
+    "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+
   # A visible authorization refusal is isolated to the exact app. No mutation
   # starts, the app is action-required, and later independent lanes continue.
   : >"$update_all_log"
@@ -5943,8 +6346,54 @@ EOF
   grep -qxF 'colima start --runtime docker' "$update_all_log" \
     || fail "the approved maintenance cycle did not start Colima with the exact Docker runtime"
   grep -qxF 'colima stop' "$update_all_log"
+  [[ "$(grep -c '^colima-env COLIMA_HOME=unset$' "$update_all_log")" -eq 3 ]] \
+    || fail "Colima was given COLIMA_HOME when ~/.colima does not exist"
   assert_not_contains 'docker-desktop-start|docker-desktop-stop' "$update_all_log" \
     "the work profile changed the nonselected Docker Desktop backend"
+
+  check "update-all sets COLIMA_HOME when ~/.colima already exists"
+  printf 'stopped\n' >"$docker_runtime_state"
+  rm -f "$update_all_stamp" "$docker_pending"
+  : >"$update_all_log"
+  mkdir -p "$update_all_home/.colima"
+  run_fixture_pty_after "$update_all_fixture/docker-work-colima-home" \
+    'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    HOME="$update_all_home" PATH="$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    || fail "an approved Colima cycle with an existing ~/.colima failed"
+  [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/.colima$" "$update_all_log")" -eq 3 ]] \
+    || fail "Groundwork did not set COLIMA_HOME for every Colima invocation, including start --help"
+  test -d "$update_all_home/.colima" \
+    || fail "Groundwork removed ~/.colima while pointing COLIMA_HOME at it"
+  assert_not_contains 'softwareupdate|install-rosetta|Rosetta' \
+    "$update_all_fixture/docker-work-colima-home" \
+    "the Colima lane tried to install Rosetta"
+  rmdir "$update_all_home/.colima"
+
+  check "update-all preserves a user-set COLIMA_HOME when ~/.colima exists"
+  printf 'stopped\n' >"$docker_runtime_state"
+  rm -f "$update_all_stamp" "$docker_pending"
+  : >"$update_all_log"
+  mkdir -p "$update_all_home/.colima" "$update_all_home/custom-colima"
+  run_fixture_pty_after "$update_all_fixture/docker-work-colima-home-preserved" \
+    'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
+    HOME="$update_all_home" PATH="$update_all_path" \
+    COLIMA_HOME="$update_all_home/custom-colima" \
+    GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
+    DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    || fail "an approved Colima cycle with a user-set COLIMA_HOME failed"
+  [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/custom-colima$" "$update_all_log")" -eq 3 ]] \
+    || fail "Groundwork replaced a user-set COLIMA_HOME on start --help, start, or stop"
+  assert_not_contains "^colima-env COLIMA_HOME=$update_all_home/.colima$" \
+    "$update_all_log" "Groundwork pointed Colima at ~/.colima despite COLIMA_HOME"
+  test -d "$update_all_home/.colima" \
+    || fail "Groundwork removed ~/.colima while preserving COLIMA_HOME"
+  test -d "$update_all_home/custom-colima" \
+    || fail "Groundwork removed the user-set COLIMA_HOME directory"
+  rmdir "$update_all_home/.colima" "$update_all_home/custom-colima"
 
   printf 'running\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
@@ -6124,6 +6573,29 @@ EOF
     || fail "--skip-maintenance reported success while earlier maintenance was pending"
   assert_recovery_hierarchy "$update_all_fixture/darwin-skip-with-pending" \
     "the skip-pending runner output"
+  rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
+
+  # An unrecognized pending filename is package-manager maintenance. A successful
+  # upgrade lane clears its own retry record before this check, so the two
+  # ignored names are proved by groundwork-cleanup while those files remain.
+  rm -f "$update_all_stamp"
+  mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
+  printf 'unrecognized stage\n' \
+    >"$update_all_home/.local/state/groundwork/update-all-pending/future-manager"
+  set +e
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" --skip-maintenance \
+    >"$update_all_fixture/darwin-skip-unknown-pending" 2>&1
+  update_all_status=$?
+  set -e
+  [[ "$update_all_status" -ne 0 ]] \
+    || fail "an unknown pending filename was not treated as package-manager maintenance"
+  grep -qF 'earlier package-manager maintenance is still pending.' \
+    "$update_all_fixture/darwin-skip-unknown-pending" \
+    || fail "an unknown pending filename did not keep the maintenance reminder"
+  test -f "$update_all_home/.local/state/groundwork/update-all-pending/future-manager" \
+    || fail "--skip-maintenance cleared an unknown pending filename"
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
   # BEHAVIOR, not wiring text: a failed upgrade whose downloads re-fetch (exit
@@ -7045,6 +7517,42 @@ EOF
     "a Homebrew upgrade reminder recommended an ineffective cleanup-only repair"
   rm -f "$update_all_home/.local/state/groundwork/update-all-pending/homebrew-upgrade"
   rmdir "$update_all_home/.local/state/groundwork/update-all-pending" 2>/dev/null || true
+
+  # A Mac App Store verification retry is not package-manager maintenance.
+  # The reminder must send the user back through update-all.
+  mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
+  printf '2001-01-01T00:00:00Z Mac App Store incomplete: attempted=1 verified=0 remaining=0 timed-out=0 failed=0 action-required=0 unexplained=1\n' \
+    >"$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  run_reminder "$reminder_dir/mas-pending-output"
+  grep -qF 'could not finish a required Mac App Store update' \
+    "$reminder_dir/mas-pending-output" \
+    || fail "a pending Mac App Store update was mislabeled as package maintenance"
+  grep -qF 'Run update-all again to retry the complete update transaction.' \
+    "$reminder_dir/mas-pending-output" \
+    || fail "the Mac App Store reminder omitted its update-all retry"
+  assert_not_contains 'package-manager maintenance|groundwork-cleanup' \
+    "$reminder_dir/mas-pending-output" \
+    "a Mac App Store reminder recommended package-manager cleanup"
+  rm -f "$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  rmdir "$update_all_home/.local/state/groundwork/update-all-pending" 2>/dev/null || true
+
+  # A manager record still names package-manager maintenance, and the Mac App
+  # Store record keeps the complete update-all retry beside it.
+  mkdir -p "$update_all_home/.local/state/groundwork/update-all-pending"
+  printf '2001-01-01T00:00:00Z Homebrew maintenance failed (exit 1)\n' \
+    >"$update_all_home/.local/state/groundwork/update-all-pending/homebrew"
+  printf '2001-01-01T00:00:00Z Mac App Store incomplete: attempted=1 verified=0 remaining=1 timed-out=0 failed=0 action-required=0 unexplained=0\n' \
+    >"$update_all_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  run_reminder "$reminder_dir/mas-and-manager-output"
+  grep -qF 'could not finish package-manager maintenance' \
+    "$reminder_dir/mas-and-manager-output" \
+    || fail "a manager record lost its package-manager headline beside a Mac App Store record"
+  grep -qF 'Run update-all again to retry the complete update transaction.' \
+    "$reminder_dir/mas-and-manager-output" \
+    || fail "a Mac App Store record lost its update-all retry beside a manager record"
+  grep -qF 'groundwork-cleanup --yes' "$reminder_dir/mas-and-manager-output" \
+    || fail "a manager record lost its maintenance-only retry beside a Mac App Store record"
+  rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
   # Docker scratch maintenance has its own pending record and repair route; it
   # must not masquerade as package-manager maintenance or recommend the
@@ -8183,6 +8691,39 @@ EOF
   test -f "$cleanup_home/.local/state/groundwork/update-all-pending/pnpm"
   rm -f "$cleanup_home/.local/state/groundwork/update-all-pending/pnpm"
   mv "$cleanup_fixture/repos.conf.saved" "$cleanup_home/.config/groundwork/repos.conf"
+
+  # An unknown filename is pending maintenance. The two upgrade retries that
+  # share the directory are not, and a successful cleanup leaves them in place.
+  mkdir -p "$cleanup_home/.local/state/groundwork/update-all-pending"
+  printf 'unrecognized stage\n' \
+    >"$cleanup_home/.local/state/groundwork/update-all-pending/future-manager"
+  set +e
+  env "${cleanup_env[@]}" "$cleanup_command" --yes \
+    >"$cleanup_fixture/unknown-pending" 2>&1
+  cleanup_status=$?
+  set -e
+  [[ "$cleanup_status" -ne 0 ]] \
+    || fail "groundwork-cleanup treated an unknown pending filename as complete"
+  grep -qF 'package-manager maintenance is incomplete' \
+    "$cleanup_fixture/unknown-pending" \
+    || fail "an unknown pending filename did not fail package-manager maintenance"
+  test -f "$cleanup_home/.local/state/groundwork/update-all-pending/future-manager" \
+    || fail "groundwork-cleanup removed an unknown pending filename"
+  rm -f "$cleanup_home/.local/state/groundwork/update-all-pending/future-manager"
+  printf 'app store retry\n' \
+    >"$cleanup_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  printf 'upgrade retry\n' \
+    >"$cleanup_home/.local/state/groundwork/update-all-pending/homebrew-upgrade"
+  env "${cleanup_env[@]}" "$cleanup_command" --yes \
+    >"$cleanup_fixture/ignored-upgrade-pending" 2>&1 \
+    || fail "mac-app-store and homebrew-upgrade pending files failed package-manager maintenance"
+  assert_not_contains 'package-manager maintenance is incomplete' \
+    "$cleanup_fixture/ignored-upgrade-pending" \
+    "an upgrade retry was reported as package-manager maintenance"
+  test -f "$cleanup_home/.local/state/groundwork/update-all-pending/mac-app-store"
+  test -f "$cleanup_home/.local/state/groundwork/update-all-pending/homebrew-upgrade"
+  rm -f "$cleanup_home/.local/state/groundwork/update-all-pending/mac-app-store" \
+    "$cleanup_home/.local/state/groundwork/update-all-pending/homebrew-upgrade"
 
   # One canonical store selected by different pnpm majors is review-only. The
   # unrelated trusted v10 store remains eligible.
@@ -17271,6 +17812,141 @@ EOF
   grep -q '^inherit = "core"$' "$codex_config_once"
   test "$(grep -c '^\[shell_environment_policy\]$' "$codex_config_once")" = 1
   test "$(grep -c '^experimental_use_profile = true$' "$codex_config_once")" = 1
+
+  check "Docker config merge preserves app-written keys"
+  docker_config_dir="$out_dir/docker-config-merge"
+  mkdir -p "$docker_config_dir/bin"
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    docker_plugin_dir="$(/opt/homebrew/bin/brew --prefix)/lib/docker/cli-plugins"
+    docker_merge_path="$PATH"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    docker_plugin_dir="$(/usr/local/bin/brew --prefix)/lib/docker/cli-plugins"
+    docker_merge_path="$PATH"
+  else
+    docker_plugin_dir="/opt/homebrew/lib/docker/cli-plugins"
+    cat >"$docker_config_dir/bin/brew" <<'SH'
+#!/bin/sh
+[ "$1" = "--prefix" ] || exit 64
+printf '%s\n' /opt/homebrew
+SH
+    chmod +x "$docker_config_dir/bin/brew"
+    docker_merge_path="$docker_config_dir/bin:$PATH"
+  fi
+  render darwin false arm64 home/dot_docker/modify_private_config.json.tmpl \
+    "$docker_config_dir/merge.py" true
+  render darwin false arm64 home/dot_docker/modify_private_config.json.tmpl \
+    "$docker_config_dir/passthrough.py"
+  python3 -m py_compile "$docker_config_dir/merge.py" "$docker_config_dir/passthrough.py"
+  docker_settled="$docker_config_dir/settled.json"
+  docker_once="$docker_config_dir/once.json"
+  docker_twice="$docker_config_dir/twice.json"
+  docker_err="$docker_config_dir/stderr"
+  # Docker and Colima keep their own key order and spacing. When the plugin
+  # directory and some credsStore are already present, the bytes stay put.
+  python3 - "$docker_settled" "$docker_plugin_dir" <<'PY'
+import pathlib, sys
+path, plugins = sys.argv[1:]
+pathlib.Path(path).write_bytes(
+    (
+        '{ "currentContext" : "colima", "credsStore" : "desktop",\n'
+        '  "auths" : { "registry.example.test" : { "auth" : "fixture-token" } },\n'
+        f'  "cliPluginsExtraDirs" : [ "{plugins}" ], "extra" : true }}\n'
+    ).encode()
+)
+PY
+  : >"$docker_err"
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_settled" >"$docker_once" 2>"$docker_err"
+  cmp -s "$docker_settled" "$docker_once" \
+    || fail "Docker config merge rewrote a file that already had its required keys"
+  assert_not_contains 'fixture-token|registry.example.test' "$docker_err" \
+    "Docker config merge printed registry configuration"
+  docker_added="$docker_config_dir/needs-plugin.json"
+  python3 - "$docker_added" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(
+    '{"currentContext":"colima","credsStore":"desktop",'
+    '"auths":{"registry.example.test":{"auth":"fixture-token"}}}\n',
+    encoding="utf-8",
+)
+PY
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_added" >"$docker_once" 2>"$docker_err"
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_once" >"$docker_twice" 2>"$docker_err"
+  cmp -s "$docker_once" "$docker_twice" \
+    || fail "Docker config merge was not idempotent after adding the plugin directory"
+  python3 - "$docker_once" "$docker_plugin_dir" <<'PY'
+import json, sys
+path, plugins = sys.argv[1:]
+config = json.load(open(path, encoding="utf-8"))
+if config.get("credsStore") != "desktop":
+    raise SystemExit("existing credsStore was replaced")
+if config.get("currentContext") != "colima":
+    raise SystemExit("currentContext was dropped")
+auths = config.get("auths")
+if not isinstance(auths, dict) or "registry.example.test" not in auths:
+    raise SystemExit("auths were dropped")
+if auths["registry.example.test"].get("auth") != "fixture-token":
+    raise SystemExit("auth material was changed")
+if plugins not in config.get("cliPluginsExtraDirs", []):
+    raise SystemExit("Homebrew plugin directory was not added")
+PY
+  docker_creds="$docker_config_dir/needs-creds.json"
+  python3 - "$docker_creds" "$docker_plugin_dir" <<'PY'
+import pathlib, sys
+path, plugins = sys.argv[1:]
+pathlib.Path(path).write_text(
+    '{"auths":{"registry.example.test":{"auth":"fixture-token"}},'
+    f'"cliPluginsExtraDirs":["{plugins}"]}}\n',
+    encoding="utf-8",
+)
+PY
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_creds" >"$docker_once" 2>"$docker_err"
+  python3 - "$docker_once" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1], encoding="utf-8"))
+if config.get("credsStore") != "osxkeychain":
+    raise SystemExit("a missing credsStore was not set to osxkeychain")
+if "registry.example.test" not in config.get("auths", {}):
+    raise SystemExit("auths were dropped while setting credsStore")
+PY
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_once" >"$docker_twice" 2>"$docker_err"
+  cmp -s "$docker_once" "$docker_twice" \
+    || fail "Docker config merge rewrote a file after credsStore was already set"
+  docker_invalid="$docker_config_dir/invalid.json"
+  printf '%s\n' '{"auths":{"registry.example.test":{"auth":"fixture-token"}' \
+    >"$docker_invalid"
+  docker_merge_status=0
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_invalid" >"$docker_once" 2>"$docker_err" || docker_merge_status=$?
+  [[ "$docker_merge_status" -ne 0 ]] \
+    || fail "invalid Docker config JSON was accepted"
+  assert_not_contains 'fixture-token|registry.example.test' "$docker_err" \
+    "a rejected Docker config printed registry configuration"
+  printf '%s\n' '{"cliPluginsExtraDirs":"not-a-list","auths":{"registry.example.test":{"auth":"fixture-token"}}}' \
+    >"$docker_invalid"
+  docker_merge_status=0
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_invalid" >"$docker_once" 2>"$docker_err" || docker_merge_status=$?
+  [[ "$docker_merge_status" -ne 0 ]] \
+    || fail "a malformed cliPluginsExtraDirs value was accepted"
+  printf '%s\n' '{"auths":["not-an-object"],"credsStore":1}' >"$docker_invalid"
+  docker_merge_status=0
+  PATH="$docker_merge_path" python3 "$docker_config_dir/merge.py" \
+    <"$docker_invalid" >"$docker_once" 2>"$docker_err" || docker_merge_status=$?
+  [[ "$docker_merge_status" -ne 0 ]] \
+    || fail "a non-object auths value or non-string credsStore was accepted"
+  assert_not_contains 'fixture-token' "$docker_err" \
+    "a rejected Docker config printed credential material"
+  # A non-Colima render does not own the file at all, even when the plugin
+  # directory Groundwork would have added is missing.
+  PATH="$docker_merge_path" python3 "$docker_config_dir/passthrough.py" \
+    <"$docker_added" >"$docker_once" 2>"$docker_err"
+  cmp -s "$docker_added" "$docker_once" \
+    || fail "a Docker Desktop render rewrote ~/.docker/config.json"
 
   check "docs coverage audit mutation tests"
   python3 tests/test_audit_docs_coverage.py

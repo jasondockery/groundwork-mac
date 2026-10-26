@@ -1,0 +1,13 @@
+{
+  "version": "0.25.3",
+  "assets": {
+    "arm64": {
+      "url": "https://github.com/FreeTubeApp/FreeTube/releases/download/v0.25.3-beta/freetube-0.25.3-beta-mac-arm64.dmg",
+      "sha256": "2b445d64f5e56a873debea50c785cd41400bdabc387f0d67fc7be745b2b9146e"
+    },
+    "amd64": {
+      "url": "https://github.com/FreeTubeApp/FreeTube/releases/download/v0.25.3-beta/freetube-0.25.3-beta-mac-x64.dmg",
+      "sha256": "40fb6c671ec75905e035968ec0c14bfe717643730af80536e625d191455f49bf"
+    }
+  }
+}
