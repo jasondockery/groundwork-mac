@@ -3454,12 +3454,15 @@ SH
     "$update_all_home/.local/share/groundwork/lib/colima-home.sh"
   cp home/dot_local/bin/executable_groundwork-colima-start \
     "$update_all_bin/groundwork-colima-start"
-  mkdir -p "$update_all_home/.colima/default" \
-    "$update_all_home/.colima/_lima/_disks/colima"
-  printf 'runtime: docker\ndisk: 100\n' \
-    >"$update_all_home/.colima/default/colima.yaml"
-  printf 'existing fixture disk\n' \
-    >"$update_all_home/.colima/_lima/_disks/colima/datadisk"
+  # An existing profile keeps groundwork-colima-start from sizing a new disk.
+  # Without ~/.colima or COLIMA_HOME, Colima on Linux reads ~/.config/colima,
+  # so the default profile lives there and ~/.colima stays absent.
+  write_update_all_colima_profile() {
+    mkdir -p "$1/default" "$1/_lima/_disks/colima"
+    printf 'runtime: docker\ndisk: 100\n' >"$1/default/colima.yaml"
+    printf 'existing fixture disk\n' >"$1/_lima/_disks/colima/datadisk"
+  }
+  write_update_all_colima_profile "$update_all_home/.config/colima"
   cp home/dot_local/share/groundwork/lib/sudo-preflight.sh \
     "$update_all_home/.local/share/groundwork/lib/sudo-preflight.sh"
   cp home/dot_local/share/groundwork/lib/reset-signals.c \
@@ -6356,7 +6359,7 @@ EOF
   printf 'stopped\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
   : >"$update_all_log"
-  mkdir -p "$update_all_home/.colima"
+  write_update_all_colima_profile "$update_all_home/.colima"
   run_fixture_pty_after "$update_all_fixture/docker-work-colima-home" \
     'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
     HOME="$update_all_home" PATH="$update_all_path" \
@@ -6371,13 +6374,14 @@ EOF
   assert_not_contains 'softwareupdate|install-rosetta|Rosetta' \
     "$update_all_fixture/docker-work-colima-home" \
     "the Colima lane tried to install Rosetta"
-  rmdir "$update_all_home/.colima"
+  rm -rf "$update_all_home/.colima"
 
   check "update-all preserves a user-set COLIMA_HOME when ~/.colima exists"
   printf 'stopped\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
   : >"$update_all_log"
-  mkdir -p "$update_all_home/.colima" "$update_all_home/custom-colima"
+  mkdir -p "$update_all_home/.colima"
+  write_update_all_colima_profile "$update_all_home/custom-colima"
   run_fixture_pty_after "$update_all_fixture/docker-work-colima-home-preserved" \
     'temporarily for Groundwork scratch maintenance? [y/N]' 'yes\n' env \
     HOME="$update_all_home" PATH="$update_all_path" \
@@ -6394,7 +6398,8 @@ EOF
     || fail "Groundwork removed ~/.colima while preserving COLIMA_HOME"
   test -d "$update_all_home/custom-colima" \
     || fail "Groundwork removed the user-set COLIMA_HOME directory"
-  rmdir "$update_all_home/.colima" "$update_all_home/custom-colima"
+  rmdir "$update_all_home/.colima"
+  rm -rf "$update_all_home/custom-colima"
 
   printf 'running\n' >"$docker_runtime_state"
   rm -f "$update_all_stamp" "$docker_pending"
