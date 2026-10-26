@@ -348,7 +348,7 @@ docker_section() {
     if [[ "$backend" == "colima" ]]; then
       note "Docker daemon not reachable; skipping Docker checks."
     else
-      note "Docker daemon not reachable; skipping Docker checks. Run 'colima start', or start your explicitly selected Docker Desktop backend, then rerun groundwork-doctor."
+      note "Docker daemon not reachable; skipping Docker checks. On a Mac using Colima, run 'groundwork-colima-start'; otherwise start the Docker backend selected for this machine, then rerun groundwork-doctor."
     fi
     return 0
   fi
