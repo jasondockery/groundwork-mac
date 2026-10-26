@@ -171,6 +171,21 @@
   <div class="stage"><div class="n">5</div><div class="body"><div class="t">Verify and commit</div><div class="d">Run the relevant check, then commit with a message that says what changed and why.</div></div></div>
 </div>
 
+<h2><span class="hash" aria-hidden="true">#</span>A second Codex account</h2>
+<p>Codex keeps its local state, including <code>config.toml</code> and your global <code>AGENTS.md</code>, in <code>CODEX_HOME</code>, which defaults to <code>~/.codex</code>. Pointing <code>CODEX_HOME</code> at a second folder gives you a second account with its own sign-in. Your first account stays where it is. The same steps work on Linux and WSL; on Omarchy, use <code>omarchy agent account add codex Work</code> instead.</p>
+<div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">second Codex account</span></div><pre><code><span class="comment"># 1. a short command for the second account, in your personal shell file</span>
+<span class="prompt">$ </span>cat &gt;&gt; ~/.zshrc.local &lt;&lt;'EOF'
+alias codex2='CODEX_HOME="$HOME/.codex2" codex'
+EOF
+<span class="comment"># 2. share Groundwork's global agent instructions with the new folder</span>
+<span class="prompt">$ </span>mkdir -p ~/.codex2
+<span class="prompt">$ </span>ln -s ~/.codex/AGENTS.md ~/.codex2/AGENTS.md
+<span class="comment"># 3. load the command, sign in, and confirm the account</span>
+<span class="prompt">$ </span>source ~/.zshrc
+<span class="prompt">$ </span>codex2 login
+<span class="prompt">$ </span>codex2 login status</code></pre></div>
+<p>Run <code>codex login status</code> and <code>codex2 login status</code> and check that each shows the account you expect. Groundwork merges one setting into <code>~/.codex/config.toml</code> only, so the second folder starts from Codex&apos;s defaults plus whatever you configure there. In T3 Code, add a second Codex provider in Settings › Providers; its guide explains how a second account can also share threads with the first.</p>
+
 <h2><span class="hash" aria-hidden="true">#</span>Good first prompts</h2>
 <div class="prompt-card"><span class="who">inspect</span>Read <code>AGENTS.md</code>, inspect this repo, and summarize the project structure and validation commands. Do not edit files yet.</div>
 <div class="prompt-card"><span class="who">small change</span>Make the smallest change needed to fix this issue. Show me the plan first, then run the relevant validation after editing.</div>
@@ -180,6 +195,8 @@
 <ul>
   <li><a href="https://developers.openai.com/codex" target="_blank" rel="noopener">OpenAI Codex docs</a> — current entry point for Codex surfaces and workflows.</li>
   <li><a href="https://developers.openai.com/codex/codex-manual.md" target="_blank" rel="noopener">Codex manual</a> — detailed reference for CLI, app, config, skills, plugins, MCP, and permissions.</li>
+  <li><a href="https://learn.chatgpt.com/docs/config-file/config-advanced" target="_blank" rel="noopener">Advanced configuration</a> — where <code>CODEX_HOME</code> keeps local state and how credentials are stored, for running a second account.</li>
+  <li><a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-codex.md" target="_blank" rel="noopener">T3 Code Codex providers</a> — adding a second Codex account to T3 Code, including shared threads.</li>
   <li><a href="agents.html">Groundwork agent rules</a> — how this repo keeps one shared agent contract across tools.</li>
 </ul>
 

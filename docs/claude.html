@@ -203,6 +203,32 @@
 </table>
 <p>Rule of thumb: spend a heavier model on decisions you&apos;d want a senior engineer&apos;s judgment on — design, security-sensitive changes, review — and let a lighter model burn through mechanical work where a wrong guess is cheap to catch and fix.</p>
 
+<h2><span class="hash" aria-hidden="true">#</span>A second Claude account</h2>
+<p>Claude Code keeps its sign-in, settings, history, and memory in one folder, <code>~/.claude</code> by default. The <code>CLAUDE_CONFIG_DIR</code> environment variable points it at a different folder, so a second folder can hold a second account, such as a work plan beside a personal one. Your first account stays where it is. Groundwork does not create the second account for you; the setup is three steps in files Groundwork never overwrites, and the same steps work on Linux and WSL.</p>
+<div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">second Claude account</span></div><pre><code><span class="comment"># 1. a short command for the second account, in your personal shell file</span>
+<span class="prompt">$ </span>cat &gt;&gt; ~/.zshrc.local &lt;&lt;'EOF'
+alias claude2='CLAUDE_CONFIG_DIR="$HOME/.claude2" claude'
+EOF
+<span class="comment"># 2. share Groundwork's instructions and keybindings with the new folder</span>
+<span class="prompt">$ </span>mkdir -p ~/.claude2
+<span class="prompt">$ </span>ln -s ~/.claude/CLAUDE.md ~/.claude/keybindings.json ~/.claude2/
+<span class="comment"># 3. load the command, then sign in with the second account</span>
+<span class="prompt">$ </span>source ~/.zshrc
+<span class="prompt">$ </span>claude2 auth login</code></pre></div>
+<p>Now <code>claude</code> runs the first account and <code>claude2</code> runs the second, side by side in different panes if you like. <code>claude2 auth status</code> confirms which account a folder is signed in to. Step 2 uses links rather than copies, so <code>chezmoi apply</code> updates to those two files reach both accounts.</p>
+<table class="keytable">
+  <tr><td><strong>Separate per account</strong></td><td>Sign-in, <code>settings.json</code> (including permission and auto mode rules), history, memory, and sessions. <code>claude2 --continue</code> cannot resume a conversation that the first account started.</td></tr>
+  <tr><td><strong>Shared</strong></td><td>Only what you link. Link <code>settings.json</code> too if both accounts should follow the same permission rules.</td></tr>
+  <tr><td><strong>T3 Code</strong></td><td>In Settings › Providers, add a second Claude provider and set its config directory to <code>~/.claude2</code>. Leave the first provider&apos;s config directory empty.</td></tr>
+  <tr><td><strong>Claude desktop app</strong></td><td>Holds one account at a time, and switching means signing out. Use the CLI or T3 Code for the second account.</td></tr>
+  <tr><td><strong>Omarchy</strong></td><td>Omarchy has its own account switcher, <code>omarchy agent account add claude Work</code>, which also shares history and settings between accounts. Use that there instead of these steps.</td></tr>
+  <tr><td><strong>Undo</strong></td><td>Delete the <code>claude2</code> line from <code>~/.zshrc.local</code>. The <code>~/.claude2</code> folder holds that account&apos;s history, so remove it only when you no longer need it.</td></tr>
+</table>
+<div class="callout note">
+  <span class="label">Use CLAUDE_CONFIG_DIR, not HOME</span>
+  <p>Changing <code>HOME</code> to separate accounts puts the sign-in where other tools, such as T3 Code, will not look for it. Set <code>CLAUDE_CONFIG_DIR</code> for both the sign-in and every later run.</p>
+</div>
+
 <h2><span class="hash" aria-hidden="true">#</span>The contract is the same as every agent's</h2>
 <p>Claude Code reads this repo&apos;s <code>AGENTS.md</code> through a thin adapter, inspects before editing, and is expected to verify before claiming done — the shared contract <a href="agents.html">AI agents &amp; rules</a> defines for every tool. What differs per tool is the surface, not the discipline: inspect, plan, edit, verify, review, commit.</p>
 
@@ -217,6 +243,8 @@
   <li><a href="https://code.claude.com/docs/en/quickstart" target="_blank" rel="noopener">Claude Code quickstart</a> — start here if you have never run Claude Code: install it and walk through a first real task.</li>
   <li><a href="https://code.claude.com/docs" target="_blank" rel="noopener">Claude Code docs</a> — the full docs hub: every surface, workflow, and setting, once you&apos;re past the basics.</li>
   <li><a href="https://code.claude.com/docs/en/cli-reference" target="_blank" rel="noopener">CLI reference</a> — every command and flag in one place, for scripting Claude Code or tuning a session precisely.</li>
+  <li><a href="https://code.claude.com/docs/en/env-vars" target="_blank" rel="noopener">Environment variables</a> — what <code>CLAUDE_CONFIG_DIR</code> and the other variables change, for running a second account or scripting Claude Code.</li>
+  <li><a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-claude.md" target="_blank" rel="noopener">T3 Code Claude providers</a> — adding a second Claude account to T3 Code.</li>
   <li><a href="https://code.claude.com/docs/en/permission-modes" target="_blank" rel="noopener">Permission modes</a> — the full detail behind Manual, Accept edits, Plan, Auto, and Bypass permissions, for tightening or loosening how much an agent can do unsupervised.</li>
   <li><a href="https://claude.com/download" target="_blank" rel="noopener">Claude app downloads</a> — the desktop and mobile apps.</li>
   <li><a href="agents.html">Groundwork agent rules</a> — how this repo keeps one shared agent contract across tools.</li>
