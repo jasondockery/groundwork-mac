@@ -152,6 +152,10 @@ release authority — including merging or closing a pull request, publishing a
 tag or release, broadening managed macOS defaults, and any material expansion of
 approved scope.
 
+Independent review (`skills/independent-code-review`) budget per candidate: 2
+rounds expected, hard ceiling 4. At the ceiling, escalate to the owner instead of
+starting another round.
+
 ## Concurrency: single-writer by default
 One task, one writing agent. This governs concurrency only. Reasoning and
 workflow: `docs/worktrees.html`; branch model: `specs/branch-lifecycle.md`.
