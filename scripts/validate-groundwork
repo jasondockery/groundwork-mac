@@ -13946,6 +13946,8 @@ case "$*" in
   'info --format {{.Driver}}') echo overlayfs ;;
   'system df --format'*) printf 'Build Cache\t7.2GB\t7.2GB\n' ;;
   'system df') printf 'TYPE TOTAL ACTIVE SIZE RECLAIMABLE\n' ;;
+  'buildx inspect')
+    cat "$state/buildx-inspect" 2>/dev/null || printf 'Name:          default\nDriver:        docker\n' ;;
   'images --no-trunc --filter label=dev.roost.ephemeral=true --format {{.ID}}')
     awk -F'\t' '$3 == "true" { print $1 }' "$imgs" ;;
   'images --no-trunc --filter label=dev.roost.ephemeral=true --format {{.ID}}'*)
@@ -15235,6 +15237,50 @@ EOF
   [[ "$cache_status" -eq 3 ]] || fail "daemon-wide cache cleanup accepted ambient DOCKER_HOST"
   test ! -s "$cache_state/argv.log" \
     || fail "daemon-wide cache cleanup queried Docker after refusing ambient DOCKER_HOST"
+
+  # Builder cache is pruned on the selected buildx builder, so acting mode
+  # refuses an ambient BUILDX_BUILDER before any Docker query and a selected
+  # builder whose driver is not the daemon's own before any prune. The dry run
+  # reports the same verdict on its acting line.
+  docker_state_init "$cache_state"
+  set +e
+  BUILDX_BUILDER=shared-remote \
+    docker_run "$cache_state" "$docker_stub_bin:$PATH" groundwork-docker-cache-tidy --yes \
+    >"$out_dir/cache-buildx-env-refused" 2>&1
+  cache_status=$?
+  set -e
+  [[ "$cache_status" -eq 3 ]] || fail "daemon-wide cache cleanup accepted ambient BUILDX_BUILDER"
+  test ! -s "$cache_state/argv.log" \
+    || fail "daemon-wide cache cleanup queried Docker after refusing ambient BUILDX_BUILDER"
+  for cache_driver in docker-container remote kubernetes; do
+    docker_state_init "$cache_state"
+    printf 'Name:          shared\nDriver:        %s\n' "$cache_driver" >"$cache_state/buildx-inspect"
+    set +e
+    docker_run "$cache_state" "$docker_stub_bin:$PATH" groundwork-docker-cache-tidy --yes \
+      >"$out_dir/cache-buildx-driver-refused" 2>&1
+    cache_status=$?
+    set -e
+    [[ "$cache_status" -eq 3 ]] \
+      || fail "daemon-wide cache cleanup accepted a $cache_driver buildx builder"
+    grep -qF "uses the $cache_driver driver" "$out_dir/cache-buildx-driver-refused" \
+      || fail "the $cache_driver builder refusal did not name the driver"
+    assert_no_matches "a $cache_driver builder refusal still reached a prune" \
+      grep -n 'prune' "$cache_state/argv.log"
+    docker_run "$cache_state" "$docker_stub_bin:$PATH" groundwork-docker-cache-tidy \
+      >"$out_dir/cache-buildx-driver-dry"
+    grep -qF -- "--yes would refuse: the selected buildx builder uses the $cache_driver driver" \
+      "$out_dir/cache-buildx-driver-dry" \
+      || fail "the dry run did not report the $cache_driver builder refusal"
+  done
+  unset cache_driver
+  docker_state_init "$cache_state"
+  docker_run "$cache_state" "$docker_stub_bin:$PATH" groundwork-docker-cache-tidy >"$out_dir/cache-acting-allowed"
+  grep -qF -- "--yes is allowed: local endpoint and the daemon's own builder" "$out_dir/cache-acting-allowed" \
+    || fail "the dry run did not report that acting mode may proceed"
+  BUILDX_BUILDER=shared-remote \
+    docker_run "$cache_state" "$docker_stub_bin:$PATH" groundwork-docker-cache-tidy >"$out_dir/cache-acting-env"
+  grep -qF -- "--yes would refuse: BUILDX_BUILDER is set" "$out_dir/cache-acting-env" \
+    || fail "the dry run did not report the ambient BUILDX_BUILDER refusal"
 
   check "groundwork-docker-cache-tidy: real deadline runtime"
   install_fixture_runtime_runner \
