@@ -169,6 +169,8 @@ workflow: `docs/worktrees.html`; branch model: `specs/branch-lifecycle.md`.
   what was verified — the next agent starts from what is on disk.
 - A reviewing agent reports; it does not also implement what it found, until the
   owner explicitly reassigns it.
+- Independent review budget: 2 rounds expected, hard ceiling 4. At the ceiling,
+  escalate to the owner instead of starting another round.
 
 ## Safety
 - Confirm before destructive or irreversible actions: deleting files,
