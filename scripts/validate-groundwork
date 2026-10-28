@@ -13408,6 +13408,14 @@ FAULT
     render darwin false arm64 home/dot_zshrc.tmpl "$copylast_dir/zshrc"
     mkdir -p "$copylast_dir/zdot"
     cp "$copylast_dir/zshrc" "$copylast_dir/zdot/.zshrc"
+    # The proof is about the rendered .zshrc, so the host's global startup files
+    # stay out of it. Ubuntu's /etc/zsh/zshrc runs compinit, and on a host with a
+    # world-writable fpath directory (/usr/share/zsh on the GitHub ubuntu-26.04
+    # image) compinit stops at its "insecure directories" y/n question. That
+    # question takes the first typed key as its answer, so the probe command
+    # arrives mangled and its sentinel never prints. /etc/zshenv still runs;
+    # NO_GLOBAL_RCS only skips the global zprofile, zshrc and zlogin.
+    printf 'setopt NO_GLOBAL_RCS\n' >"$copylast_dir/zdot/.zshenv"
     tmux -L "$copylast_socket" new-window -c "$copylast_dir" \
       "env ZDOTDIR='$copylast_dir/zdot' HOME='$copylast_dir/zdot' zsh -i"
     zsh_pane="$(tmux -L "$copylast_socket" display-message -p '#{pane_id}')"
