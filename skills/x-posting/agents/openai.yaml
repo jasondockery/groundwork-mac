@@ -1,0 +1,4 @@
+interface:
+  display_name: "X Posting"
+  short_description: "Draft X posts and threads; publish via xurl"
+  default_prompt: "Use $x-posting to draft a short X thread announcing this release for my review."

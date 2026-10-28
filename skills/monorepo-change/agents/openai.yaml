@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monorepo Change"
+  short_description: "pnpm, Turborepo, tsconfig, Docker changes"
+  default_prompt: "Use $monorepo-change to check this pnpm and Turborepo change for dependency placement and cache correctness."

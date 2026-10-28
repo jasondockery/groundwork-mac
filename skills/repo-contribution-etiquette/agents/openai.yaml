@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repo contribution etiquette"
+  short_description: "Own-repo workflow vs. upstream approval rules"
+  default_prompt: "Use $repo-contribution-etiquette to check what this GitHub write needs before it goes out."

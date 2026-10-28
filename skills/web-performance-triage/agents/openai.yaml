@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Performance Triage"
+  short_description: "Slow or 504 Next.js routes to the slow query"
+  default_prompt: "Use $web-performance-triage to triage why this Next.js route times out during navigation."

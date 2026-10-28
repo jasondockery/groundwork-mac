@@ -1,0 +1,4 @@
+interface:
+  display_name: "API contract change"
+  short_description: "Ship APIs consumers can use from the contract alone"
+  default_prompt: "Use $api-contract-change to design or change this API and its OpenAPI contract."

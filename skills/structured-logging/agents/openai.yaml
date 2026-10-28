@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured logging"
+  short_description: "Emit logs as an operator-facing contract"
+  default_prompt: "Use $structured-logging to review these log events, levels, fields, and operator rendering."

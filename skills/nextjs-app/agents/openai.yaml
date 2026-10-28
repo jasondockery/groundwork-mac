@@ -1,0 +1,4 @@
+interface:
+  display_name: "Next.js App"
+  short_description: "App Router rendering, data, titles, middleware"
+  default_prompt: "Use $nextjs-app to review this Next.js App Router page's rendering mode and server data fetching."

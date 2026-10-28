@@ -1,0 +1,4 @@
+interface:
+  display_name: "Form Layout"
+  short_description: "React form sections, fields, validation, autofill"
+  default_prompt: "Use $form-layout to lay out and validate this React form with the shared form controls."

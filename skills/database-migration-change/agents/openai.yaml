@@ -1,0 +1,4 @@
+interface:
+  display_name: "Database migration change"
+  short_description: "Immutable, expand-migrate-contract migrations"
+  default_prompt: "Use $database-migration-change to write this migration safely with expand-migrate-contract."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "SQL query performance"
+  short_description: "Indexed, bounded, plan-proven queries"
+  default_prompt: "Use $sql-query-performance to make this query fast and prove it with a plan."

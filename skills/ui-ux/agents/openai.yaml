@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI and UX"
+  short_description: "React UI structure, actions, lists, detail pages"
+  default_prompt: "Use $ui-ux to review this React page's action hierarchy, list rows, and navigation ownership."

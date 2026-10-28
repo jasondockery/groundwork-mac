@@ -1,0 +1,4 @@
+interface:
+  display_name: "AWS SST Deploy"
+  short_description: "SST and OpenNext deploys, guards, cleanup"
+  default_prompt: "Use $aws-sst-deploy to review this SST deploy workflow change for mutation guards and OpenNext determinism."

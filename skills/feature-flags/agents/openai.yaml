@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature flags"
+  short_description: "Govern runtime flags from decision to removal"
+  default_prompt: "Use $feature-flags to decide, register, prove, and schedule removal for this runtime flag."

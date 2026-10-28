@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multi-step Workflows"
+  short_description: "Durable, accessible Next.js save-and-advance flows"
+  default_prompt: "Use $multi-step-workflows to implement and verify this resumable Next.js wizard flow."

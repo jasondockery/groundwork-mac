@@ -1,0 +1,4 @@
+interface:
+  display_name: "URL State Navigation"
+  short_description: "Next.js URL state, push vs replace, history"
+  default_prompt: "Use $url-state-navigation to make this Next.js list's filters and selection restorable from the URL."
