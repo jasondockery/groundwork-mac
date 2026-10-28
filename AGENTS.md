@@ -36,6 +36,11 @@ in Groundwork's own terms. Load `skills/repeatable-agent-execution/SKILL.md`
 before the first edit in a checkout or worktree, before final proof, and
 whenever setup, a check suite, or a skip control is costing repeated rework.
 
+Compass skills this repository selected beyond that required set are listed in
+`compass.skills.json` and projected under `skills/`; load the one that matches
+the work from there. GitHub writes (issues, branches, commits, pull requests,
+comments, reviews) follow `repo-contribution-etiquette`.
+
 - Start simple; complexity must be earned by evidence.
 - Treat user, developer, CI, compute, network, and storage time as resources.
 - Bound finite work and fail explicitly.
@@ -205,7 +210,7 @@ Load the skill before the first edit in its area.
 - **`skills/validate-groundwork`** — validation or proof selection, failed CI
   or workflow diagnosis, historical failure closure, exact-SHA receipts, or
   changes to validation behavior.
-- **`skills/toolchain-authority`** — `.node-version`, `.nvmrc`, repository `mise.toml`, `packageManager`, engines, Corepack ownership, Node setup in CI, Renovate toolchain behavior, or Node/pnpm version prose and fixtures.
+- **`skills/groundwork-toolchain-authority`** (with Compass `skills/toolchain-authority`) — `.node-version`, `.nvmrc`, repository `mise.toml`, `packageManager`, engines, Corepack ownership, Node setup in CI, Renovate toolchain behavior, or Node/pnpm version prose and fixtures.
 - **`skills/docker-lifecycle`** — any Dockerfile change, local image build, or
   Docker helper. Proof-only builds use
   `groundwork-docker-build-scratch <purpose> <context> --rm-after`, or
