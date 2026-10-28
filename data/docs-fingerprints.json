@@ -50,7 +50,7 @@
       "lastmod": "2026-08-11"
     },
     "dependencies.html": {
-      "sha256": "60cd04578946bfa816cdb598664e45fff33c1eba855764eb206459791bcc697c",
+      "sha256": "f1888a4ddb0347867945f4a1efff807766c93234ba48ea02bd3ddde7ebe89c6b",
       "lastmod": "2026-10-28"
     },
     "development.html": {
@@ -186,7 +186,7 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "3ff5fe7d18332df7c46f6807ade1ada6e3b570292c8bd7d3628180f7f622d6c1",
+      "sha256": "3345a932cba5bb8f3d2ab901a1249a9048215c39e0502a182ddc87fc0f5ec592",
       "lastmod": "2026-10-28"
     },
     "web-dev.html": {

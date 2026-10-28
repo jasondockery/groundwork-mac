@@ -16212,7 +16212,7 @@ if shared.get("classification") != "built-in" or shared.get("manager") != "renov
     raise SystemExit("the versioned shared preset must remain assigned to Renovate")
 renovate_config = json.loads((root / "renovate.json").read_text(encoding="utf-8"))
 if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.1.1"]:
-    raise SystemExit("extends must stay on preset 1.1.0")
+    raise SystemExit("extends must stay on preset 1.1.1")
 if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml"]:
     raise SystemExit("Renovate must ignore derived Node mirrors and read the managed mise config")
 if "minimumReleaseAge" in renovate_config:
@@ -16314,7 +16314,7 @@ if python_pin_rules != [{
 }]:
     raise SystemExit("the Python 3.12 pin rule must stay exact and must not add local line-bump approval")
 if any("dependencyDashboardApproval" in rule for rule in python_rules):
-    raise SystemExit("Python line-bump approval belongs to preset 1.1.0, not this repo")
+    raise SystemExit("Python line-bump approval belongs to preset 1.1.1, not this repo")
 gitleaks_age_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
