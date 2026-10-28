@@ -9096,8 +9096,11 @@ EOF
   env "${cleanup_env[@]}" "$cleanup_command" --yes --force >/dev/null
 
   # A healthy command that stays quiet long enough emits a heartbeat and still
-  # succeeds before its hard deadline.
-  env "${cleanup_env[@]}" GROUNDWORK_MAINTENANCE_POLL_SECONDS=1 \
+  # succeeds before its hard deadline. The real 2-second quiet stage and the
+  # 1-second heartbeat do not depend on poll latency, so this case uses the
+  # fixture's 0.05-second poll; the process-tree deadline below keeps the
+  # production 1-second poll.
+  env "${cleanup_env[@]}" \
     GROUNDWORK_MAINTENANCE_DEADLINE_SECONDS=5 \
     BREW_MAINTENANCE_DELAY=2 "$cleanup_command" --yes --force \
     >"$cleanup_fixture/heartbeat" 2>&1 \
