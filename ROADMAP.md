@@ -152,6 +152,10 @@ Owner action (a human enables this when ready, not code work):
       the old blanket symlink used to cover for free; its output is verified
       by `scripts/check-compass-adoption.mjs`. `AGENTS.md` now routes to the
       three newly-arrived shared skills.
+      **Updated 2026-10-28:** re-projected to `885103f` (PR #53), adding 25
+      shared skills and taking over the `toolchain-authority` name; Groundwork's
+      own Node/pnpm rules moved to the local `groundwork-toolchain-authority`
+      extension (collision tracked in jasondockery/compass#25).
 
 ## Review-derived product backlog (2026-07-31)
 

@@ -164,6 +164,9 @@ workflow: `docs/worktrees.html`; branch model: `specs/branch-lifecycle.md`.
   what was verified — the next agent starts from what is on disk.
 - A reviewing agent reports; it does not also implement what it found, until the
   owner explicitly reassigns it.
+- This section wins over `skills/agent-orchestration`: lanes, makers, and
+  delegation described there need the owner's approval of an orchestration plan
+  they have seen before any sub-agent is used.
 
 ## Safety
 - Confirm before destructive or irreversible actions: deleting files,
@@ -205,7 +208,31 @@ Load the skill before the first edit in its area.
 - **`skills/validate-groundwork`** — validation or proof selection, failed CI
   or workflow diagnosis, historical failure closure, exact-SHA receipts, or
   changes to validation behavior.
-- **`skills/toolchain-authority`** — `.node-version`, `.nvmrc`, repository `mise.toml`, `packageManager`, engines, Corepack ownership, Node setup in CI, Renovate toolchain behavior, or Node/pnpm version prose and fixtures.
+- **`skills/toolchain-authority`**, then **`skills/groundwork-toolchain-authority`** —
+  `.node-version`, `.nvmrc`, repository `mise.toml`, `packageManager`, engines,
+  Corepack ownership, Node setup in CI, Renovate toolchain behavior, or Node/pnpm
+  version prose and fixtures. Load the shared skill first, then the Groundwork
+  extension. The two authority files are `.node-version` (Node) and
+  `package.json#packageManager` (pnpm); run `pnpm toolchain:sync` after changing
+  one and `pnpm check:toolchain` before handoff (`pnpm check:outdated` reports
+  drift).
+- **`skills/shell-script-change`** — any new or edited `.sh`, `.bash`, or `.zsh`
+  script, installer, updater, or bootstrap script. `skills/safe-mutating-cli`
+  and `skills/interactive-cli-ux` still apply to what the script does and asks.
+- **`skills/ci-workflow-change`** — `.github/workflows/`, composite actions, CI
+  scripts, required-check names, or a failing hosted run. The workflow checkers
+  under `scripts/` stay Groundwork's proof.
+- **`skills/github-delivery-workflow`** — shaping an issue, opening or updating a
+  pull request, moving status, handoffs, and closing work.
+- **`skills/repo-contribution-etiquette`** — before filing an issue, pushing a
+  branch, opening or reviewing a pull request, or commenting on any repository,
+  and to decide what needs the owner's approval. It decides whether a write is
+  permitted; `github-delivery-workflow` decides how it is shaped.
+- **`skills/independent-code-review`** — before marking a pull request ready, when
+  reviewing a candidate, repairing findings, or handling bot or hosted-review
+  comments. The reviewer is read-only and reports, matching the single-writer
+  rule below. Groundwork has not set a review round budget or hard ceiling; ask
+  the owner rather than assuming numbers.
 - **`skills/docker-lifecycle`** — any Dockerfile change, local image build, or
   Docker helper. Proof-only builds use
   `groundwork-docker-build-scratch <purpose> <context> --rm-after`, or
