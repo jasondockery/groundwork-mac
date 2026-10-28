@@ -16105,8 +16105,8 @@ shared = next(surface for surface in inventory["surfaces"] if surface["id"] == "
 if shared.get("classification") != "built-in" or shared.get("manager") != "renovate-config":
     raise SystemExit("the versioned shared preset must remain assigned to Renovate")
 renovate_config = json.loads((root / "renovate.json").read_text(encoding="utf-8"))
-if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.0.0"]:
-    raise SystemExit("extends must stay on preset 1.0.0 until 1.1.0 is tagged")
+if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.1.0"]:
+    raise SystemExit("extends must stay on preset 1.1.0")
 if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml"]:
     raise SystemExit("Renovate must ignore derived Node mirrors and read the managed mise config")
 if "minimumReleaseAge" in renovate_config:
@@ -17561,7 +17561,7 @@ PY
   grep -qE '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' Dockerfile
   # Renovate owns dependency updates (renovate.json) through the shared preset; a
   # dependabot.yml would create duplicate PRs, so its absence is the guarded state.
-  grep -q '"github>jasondockery/renovate-config#1.0.0"' renovate.json
+  grep -q '"github>jasondockery/renovate-config#1.1.0"' renovate.json
   grep -Fq 'evaluates routine updates for branch and PR creation on every daily run after the applicable five-day maturity floor' renovate.json
   grep -Fq 'GHCR does not expose a Renovate releaseTimestamp for the Gitleaks tags' renovate.json
   grep -Fq 'Groundwork&apos;s Gitleaks container uses an exact local age-check exception' docs/dependencies.html
