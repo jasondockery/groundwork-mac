@@ -27,7 +27,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Record job start
@@ -147,7 +147,7 @@ jobs:
             --result "$result" \
             --scope "stamp, package, deploy, and link the Groundwork documentation" \
             --platform-os linux \
-            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-image "${ImageOS:-ubuntu-26.04}" \
             --platform-arch "$RUNNER_ARCH" \
             --job-budget-seconds 300 \
             --started-epoch "$JOB_STARTED_EPOCH" \

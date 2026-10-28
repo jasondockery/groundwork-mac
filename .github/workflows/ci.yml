@@ -28,7 +28,7 @@ env:
 jobs:
   workflow-lint:
     name: workflow-lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       actions: read # Zizmor SARIF telemetry reads the current workflow run.
@@ -125,7 +125,7 @@ jobs:
             --result "$result" \
             --scope "Zizmor pedantic workflow audit and SARIF publication" \
             --platform-os linux \
-            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-image "${ImageOS:-ubuntu-26.04}" \
             --platform-arch "$RUNNER_ARCH" \
             --job-budget-seconds 60 \
             --workflow-safety-timeout-seconds 600 \
@@ -149,7 +149,7 @@ jobs:
 
   static_linux:
     name: static-linux
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # 13 min = the setup step's own 6-min worst case + this job's 300s (5-min)
     # validator budget below + ~1 min checkout/Node/Corepack overhead, with a
     # small margin. Sized against what the validator is declared entitled to
@@ -219,7 +219,7 @@ jobs:
 
   update_contract_linux:
     name: update-contract-linux
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # 17 min = the setup step's own 6-min worst case + this job's 480s (8-min)
     # validator budget below + ~1 min checkout/Node/Corepack overhead, with a
     # small margin. Was already 15 min before this change, which left the
@@ -284,7 +284,7 @@ jobs:
 
   docker_contract_linux:
     name: docker-contract-linux
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # 15 min = the setup step's own 6-min worst case + this job's 420s (7-min)
     # validator budget below + ~1 min checkout/Node/Corepack overhead, with a
     # small margin. Same reasoning as static-linux: sized against what the
@@ -414,7 +414,7 @@ jobs:
 
   secret-scan:
     name: secret-scan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Record job start
@@ -487,7 +487,7 @@ jobs:
             --result "$result" \
             --scope "Gitleaks over the complete repository history" \
             --platform-os linux \
-            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-image "${ImageOS:-ubuntu-26.04}" \
             --platform-arch "$RUNNER_ARCH" \
             --job-budget-seconds 60 \
             --workflow-safety-timeout-seconds 600 \
@@ -513,7 +513,7 @@ jobs:
 
   docker-build:
     name: docker-build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Record job start
@@ -655,7 +655,7 @@ jobs:
             --result "$result" \
             --scope "build, load, smoke, and dispose the exact amd64 Groundwork image" \
             --platform-os linux \
-            --platform-image "${ImageOS:-ubuntu-24.04}" \
+            --platform-image "${ImageOS:-ubuntu-26.04}" \
             --platform-arch "$RUNNER_ARCH" \
             --job-budget-seconds 240 \
             --workflow-safety-timeout-seconds 1800 \
@@ -688,7 +688,7 @@ jobs:
       - docker-build
       - workflow-lint
       - secret-scan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Record gate start

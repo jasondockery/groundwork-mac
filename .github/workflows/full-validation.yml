@@ -24,7 +24,7 @@ env:
 jobs:
   full_linux:
     name: full-linux
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - name: Record job start
@@ -160,7 +160,7 @@ jobs:
     needs:
       - full_linux
       - full_macos
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Record gate start
