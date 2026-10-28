@@ -48,7 +48,7 @@ What Renovate manages here:
   leaves the Python array alone and adds nothing when those already match.
   The allowlist is those three files.
   Python line-bump Dependency Dashboard approval is not a local rule. It
-  comes from preset `github>jasondockery/renovate-config#1.1.0`, which this
+  comes from preset `github>jasondockery/renovate-config#1.1.1`, which this
   repo extends.
 
 `dependency-coverage.json` also records the intentional manual lanes: Homebrew
@@ -85,7 +85,7 @@ Operating notes:
   removed 2026-07-03 when Renovate took over. Dependabot alerts can stay
   enabled as a data source.
 - Policy is defined once in `renovate-config`. This repo pins
-  `github>jasondockery/renovate-config#1.1.0`, so shared policy changes reach it
+  `github>jasondockery/renovate-config#1.1.1`, so shared policy changes reach it
   through a reviewed preset-version update. The preset repository retains its
   behavior freeze until all of its consumers complete versioned adoption;
   pinning this repo alone does not lift that freeze.
