@@ -161,7 +161,7 @@
       "paths": ["home/dot_config/mise/config.toml"],
       "canonical": "home/dot_config/mise/config.toml#tools.python",
       "agePolicy": "renovate-minimum-release-age",
-      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval is preset 1.1.0, which is not tagged yet, so this repo does not duplicate that rule. The secondary 3.12 array entry is outside mise extraction and is refused if it ever becomes the current value, because Aider still needs audioop.",
+      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval comes from preset 1.1.0, so this repo does not duplicate that rule. The secondary 3.12 array entry is outside mise extraction and is refused if it ever becomes the current value, because Aider still needs audioop.",
       "extractionMatchers": [
         { "manager": "mise", "packageFilePattern": "^home/dot_config/mise/config\\.toml$", "depNamePattern": "^python$" }
       ],

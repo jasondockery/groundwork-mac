@@ -16105,8 +16105,8 @@ shared = next(surface for surface in inventory["surfaces"] if surface["id"] == "
 if shared.get("classification") != "built-in" or shared.get("manager") != "renovate-config":
     raise SystemExit("the versioned shared preset must remain assigned to Renovate")
 renovate_config = json.loads((root / "renovate.json").read_text(encoding="utf-8"))
-if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.0.0"]:
-    raise SystemExit("extends must stay on preset 1.0.0 until 1.1.0 is tagged")
+if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.1.1"]:
+    raise SystemExit("extends must stay on preset 1.1.0")
 if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml"]:
     raise SystemExit("Renovate must ignore derived Node mirrors and read the managed mise config")
 if "minimumReleaseAge" in renovate_config:
@@ -17561,7 +17561,7 @@ PY
   grep -qE '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' Dockerfile
   # Renovate owns dependency updates (renovate.json) through the shared preset; a
   # dependabot.yml would create duplicate PRs, so its absence is the guarded state.
-  grep -q '"github>jasondockery/renovate-config#1.0.0"' renovate.json
+  grep -q '"github>jasondockery/renovate-config#1.1.1"' renovate.json
   grep -Fq 'evaluates routine updates for branch and PR creation on every daily run after the applicable five-day maturity floor' renovate.json
   grep -Fq 'GHCR does not expose a Renovate releaseTimestamp for the Gitleaks tags' renovate.json
   grep -Fq 'Groundwork&apos;s Gitleaks container uses an exact local age-check exception' docs/dependencies.html
@@ -18767,6 +18767,116 @@ SH
       || fail "the fixture's Corepack shim executed successfully with no cache and the registry disabled; it cannot demonstrate the network dependency this fix removes"
     grep -qF 'Network access disabled' "$out_dir/pnpm-corepack-executed" \
       || fail "the fixture must reproduce Corepack's own network-disabled error to prove the old executed-proof shape would have failed here"
+  fi
+
+  check "repo-pinned Node 25+ installs get the pinned Corepack"
+  # Field regression (#47): the convergence script asks mise for the GLOBAL
+  # Node only, so a Node a repository pins and `mise install`s itself came up
+  # without corepack or pnpm from Node 25 on. Fully stubbed (no real Node, mise
+  # or network), so it runs on every host.
+  unbundled_fixture="$out_dir/unbundled-node-fixture"
+  rm -rf "$unbundled_fixture"
+  mkdir -p "$unbundled_fixture/home/.local/share/groundwork" "$unbundled_fixture/bin"
+  unbundled_fixture="$(cd "$unbundled_fixture" && pwd -P)"
+  cp home/dot_local/share/groundwork/node-toolchain.env \
+    "$unbundled_fixture/home/.local/share/groundwork/node-toolchain.env"
+  unbundled_pin="$(sed -n 's/^GROUNDWORK_COREPACK_VERSION=//p' home/dot_local/share/groundwork/node-toolchain.env)"
+  unbundled_npm_log="$unbundled_fixture/npm.log"
+  unbundled_mise_log="$unbundled_fixture/mise.log"
+  : >"$unbundled_npm_log"
+  : >"$unbundled_mise_log"
+  # `corepack enable pnpm --install-directory <dir>` writes a shim whose target
+  # lives under corepack/, which is what the script's ownership test looks for.
+  cat >"$unbundled_fixture/corepack-stub" <<'STUB'
+#!/bin/sh
+ln -sf "$(dirname "$0")/../lib/node_modules/corepack/dist/pnpm.js" "$4/pnpm"
+STUB
+  chmod +x "$unbundled_fixture/corepack-stub"
+  # name:has-corepack:pnpm-kind (none|corepack|foreign)
+  for unbundled_spec in 24.1.0:no:none 25.2.0:yes:corepack 26.12.0:yes:corepack 26.12.1:no:none 26.13.0:no:foreign; do
+    IFS=: read -r unbundled_version unbundled_has_corepack unbundled_pnpm <<<"$unbundled_spec"
+    unbundled_root="$unbundled_fixture/installs/node/$unbundled_version"
+    mkdir -p "$unbundled_root/bin" "$unbundled_root/lib/node_modules/corepack/dist"
+    printf '#!/bin/sh\necho v%s\n' "$unbundled_version" >"$unbundled_root/bin/node"
+    # The fake npm stands in for `npm install -g corepack@<pin>` beside ITS Node.
+    cat >"$unbundled_root/bin/npm" <<SH
+#!/bin/sh
+printf '%s %s\n' "$unbundled_version" "\$*" >>"$unbundled_npm_log"
+[ "\$1 \$2" = "install -g" ] || exit 1
+cp "$unbundled_fixture/corepack-stub" "$unbundled_root/bin/corepack"
+SH
+    printf '#!/bin/sh\n' >"$unbundled_root/lib/node_modules/corepack/dist/pnpm.js"
+    if [ "$unbundled_has_corepack" = yes ]; then
+      cp "$unbundled_fixture/corepack-stub" "$unbundled_root/bin/corepack"
+    fi
+    case "$unbundled_pnpm" in
+      corepack) ln -s ../lib/node_modules/corepack/dist/pnpm.js "$unbundled_root/bin/pnpm" ;;
+      foreign) printf '#!/bin/sh\necho user-installed\n' >"$unbundled_root/bin/pnpm" ;;
+    esac
+    chmod +x "$unbundled_root"/bin/* "$unbundled_root/lib/node_modules/corepack/dist/pnpm.js"
+  done
+  cat >"$unbundled_fixture/bin/mise" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >>"$unbundled_mise_log"
+case "\$1" in
+  which) printf '%s\n' "$unbundled_fixture/installs/node/\${UNBUNDLED_ACTIVE:-25.2.0}/bin/node" ;;
+  where) printf '%s\n' "$unbundled_fixture/installs/node/\${2#node@}" ;;
+  ls)
+    [ "\$3" = node ] || exit 0
+    printf 'node 24.1.0 ~/.config/mise/config.toml lts\nnode 25.2.0 ~/.config/mise/config.toml latest\n'
+    printf 'node 26.12.0\nnode 26.12.1 ~/repo/mise.toml 26.12.1\nnode 26.13.0\n'
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$unbundled_fixture/bin/mise"
+  unbundled_status=0
+  HOME="$unbundled_fixture/home" PATH="$unbundled_fixture/bin:/usr/bin:/bin" \
+    /bin/bash "$repo/home/run_after_15-pnpm-corepack.sh" \
+    >"$out_dir/unbundled-node-run" 2>&1 || unbundled_status=$?
+  [ "$unbundled_status" -eq 0 ] || {
+    sed -n '1,60p' "$out_dir/unbundled-node-run" >&2
+    fail "the convergence script must succeed while repairing a repo-pinned Node (exit $unbundled_status)"
+  }
+  [ "$(cat "$unbundled_npm_log")" = "26.12.1 install -g corepack@$unbundled_pin" ] \
+    || fail "only the unbundled Node lacking Corepack may get the pinned corepack; npm calls were: $(tr '\n' '|' <"$unbundled_npm_log")"
+  [ -x "$unbundled_fixture/installs/node/26.12.1/bin/corepack" ] \
+    || fail "the repo-pinned Node 26 install must have Corepack after convergence"
+  case "$(readlink -f "$unbundled_fixture/installs/node/26.12.1/bin/pnpm" 2>/dev/null)" in
+    */corepack/*) ;;
+    *) fail "the repo-pinned Node 26 install must have a Corepack pnpm shim" ;;
+  esac
+  grep -qx 'reshim' "$unbundled_mise_log" \
+    || fail "converging a repo-pinned Node must reshim so the mise pnpm shim finds it"
+  [ ! -e "$unbundled_fixture/installs/node/24.1.0/bin/corepack" ] \
+    || fail "a Node that still bundles Corepack must not be touched"
+  [ "$("$unbundled_fixture/installs/node/26.13.0/bin/pnpm")" = "user-installed" ] \
+    || fail "a pnpm the user installed under a repo-pinned Node must be left alone"
+  # Converged is quiet: a second run makes no further npm calls.
+  HOME="$unbundled_fixture/home" PATH="$unbundled_fixture/bin:/usr/bin:/bin" \
+    /bin/bash "$repo/home/run_after_15-pnpm-corepack.sh" >/dev/null 2>&1 \
+    || fail "the convergence script must stay green on a converged machine"
+  [ "$(wc -l <"$unbundled_npm_log" | tr -d ' ')" = 1 ] \
+    || fail "a converged machine must not reinstall Corepack"
+  # The doctor names the exact repair for an unbundled Node that lacks Corepack.
+  unbundled_doctor_path="$unbundled_fixture/installs/node/26.13.0/bin:$unbundled_fixture/bin:/usr/bin:/bin"
+  rm -f "$unbundled_fixture/installs/node/26.13.0/bin/pnpm" # so the doctor sees a Node 26 without pnpm
+  if PATH="$unbundled_doctor_path" command -v corepack >/dev/null 2>&1; then
+    skip_current_check requires-no-ambient-corepack \
+      "a system corepack on the isolated doctor PATH would hide the missing-Corepack warning"
+  else
+    HOME="$unbundled_fixture/home" UNBUNDLED_ACTIVE=26.13.0 PATH="$unbundled_doctor_path" \
+      /bin/bash home/dot_local/bin/executable_groundwork-doctor --node-toolchain \
+      >"$out_dir/unbundled-doctor-out" 2>&1 || true
+    grep -qF "npm install -g corepack@$unbundled_pin" "$out_dir/unbundled-doctor-out" \
+      || {
+        sed -n '1,40p' "$out_dir/unbundled-doctor-out" >&2
+        fail "the doctor must print the exact fix for an unbundled Node without Corepack"
+      }
+    grep -qF "$unbundled_fixture/installs/node/26.13.0/bin" "$out_dir/unbundled-doctor-out" \
+      || fail "the doctor's Corepack fix must name the affected Node's bin directory"
+    grep -qF 'mise-installed Node 25+' "$out_dir/unbundled-doctor-out" \
+      || fail "the doctor must name the configured unbundled-Node threshold, not a hardcoded one"
   fi
 
   check "line endings stay LF"

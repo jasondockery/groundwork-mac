@@ -33,7 +33,10 @@ python = ["3.13", "3.12"]
 # Install Corepack shims after installing each Node version, so pnpm exists
 # without a competing global install. Node <25 bundles Corepack; Node 25 dropped
 # it from the distribution, so the migration script installs a pinned userland
-# Corepack when the bundled one is absent rather than assuming Node ships it.
+# Corepack beside every mise-installed Node 25+ that lacks one, including a Node a
+# repository pins and installs itself, rather than assuming Node ships it. That
+# happens on the next `chezmoi apply`; `groundwork-doctor --node-toolchain` names
+# the exact fix for a Node that has not been converged yet.
 node.corepack = true
 # Source an existing uv-managed .venv when entering a project, but do not create
 # one implicitly. Project setup should stay explicit with `uv init`, `uv sync`,
