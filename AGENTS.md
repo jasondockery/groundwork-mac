@@ -36,6 +36,11 @@ in Groundwork's own terms. Load `skills/repeatable-agent-execution/SKILL.md`
 before the first edit in a checkout or worktree, before final proof, and
 whenever setup, a check suite, or a skip control is costing repeated rework.
 
+Compass skills this repository selected beyond that required set are listed in
+`compass.skills.json` and projected under `skills/`; load the one that matches
+the work from there. GitHub writes (issues, branches, commits, pull requests,
+comments, reviews) follow `repo-contribution-etiquette`.
+
 - Start simple; complexity must be earned by evidence.
 - Treat user, developer, CI, compute, network, and storage time as resources.
 - Bound finite work and fail explicitly.
