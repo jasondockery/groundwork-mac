@@ -227,6 +227,7 @@
         <tr><td><code>delta</code></td><td>Delta means change; this makes Git changes easier to read.</td></tr>
         <tr><td><code>dust</code></td><td>A friendlier <code>du</code> that shows what is taking space. Think "disk usage, sorted tree."</td></tr>
         <tr><td><code>duf</code></td><td>Disk usage/free utility: the readable replacement for <code>df</code>.</td></tr>
+        <tr><td><code>ncdu</code></td><td>NCurses Disk Usage: a keyboard-driven browser of the same "what is taking space" question. Think "walk into the big folders."</td></tr>
         <tr><td><code>btop</code></td><td>A "better top": live CPU, memory, and process view of the whole machine.</td></tr>
         <tr><td><code>tokei</code></td><td>Japanese for clock/time; here it quickly counts code by language.</td></tr>
         <tr><td><code>hyperfine</code></td><td>A benchmarking tool for fine-grained timing comparisons.</td></tr>
@@ -333,6 +334,30 @@
         <p>A large file may be the only copy of something important. Inspect it, identify the owner, check backups, and use Trash when practical so recovery remains possible.</p>
       </div>
 
+      <h3 id="disk-browse">Browse disk usage visually</h3>
+      <p><code>largest</code> gives a ranked list. When you want to walk around instead, use <code>ncdu</code> in any terminal (macOS, Linux, and WSL), or GrandPerspective on a personal desktop Mac. Both ship with their upstream defaults; Groundwork changes none of their settings.</p>
+      <table class="keytable">
+        <tr><td><code>ncdu -x ~</code></td><td>Scan your home folder on one filesystem, then use the arrow keys or <kbd>Enter</kbd> to open folders, <kbd>?</kbd> for help, and <kbd>q</kbd> to quit. Its delete key asks before removing anything; the guidance above still applies.</td></tr>
+        <tr><td><strong>GrandPerspective</strong></td><td>A treemap: each rectangle is a file, sized by how much space it uses. Open a folder from its window and hover to see paths. It is installed from the optional Brewfile on personal desktop Macs; managed Macs keep the terminal tools only.</td></tr>
+      </table>
+
+      <h3 id="disk-clean">groundwork-disk-clean: free tool-owned caches after a preview</h3>
+      <p><code>groundwork-disk-clean</code> asks each tool Groundwork already uses what it could free, shows every path or image with its size in bytes, and then asks a separate <kbd>y</kbd>/<kbd>N</kbd> question per category. Nothing is removed until every question is answered, and the default answer is no. Just before acting, it checks the plan again and skips a category whose plan changed. It ends with a receipt of what was removed, what failed, and what was left.</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">groundwork-disk-clean</span></div>
+        <pre><code><span class="prompt">$ </span>groundwork-disk-clean            <span class="comment"># preview, then ask per category</span>
+<span class="prompt">$ </span>groundwork-disk-clean --dry-run  <span class="comment"># preview only</span></code></pre>
+      </div>
+      <table class="keytable">
+        <tr><td><strong>Homebrew</strong></td><td><code>brew cleanup --prune=all</code>: old downloads and superseded versions. Installed formulae and casks stay. <code>update-all</code> already runs this, so it is often empty.</td></tr>
+        <tr><td><strong>mise</strong></td><td><code>mise uninstall</code> of the exact versions <code>mise ls --prunable</code> lists: versions no tracked config and no running process uses. A removed version reinstalls when a project asks for it.</td></tr>
+        <tr><td><strong>Docker images</strong></td><td><code>docker image rm --no-prune</code> of dangling (untagged) images older than 24 hours that no container uses. Tagged images and Groundwork scratch images stay.</td></tr>
+        <tr><td><strong>Docker build cache</strong></td><td><code>docker buildx prune --force --filter until=24h</code>. Docker reports this size rounded, so the question says "about".</td></tr>
+        <tr><td><strong>Colima disk</strong></td><td><code>colima ssh -- sudo fstrim -a</code> on a running Colima VM, so space freed inside it returns to the Mac. No data in the VM is deleted, and Colima also does this when it starts.</td></tr>
+      </table>
+      <p>Two values differ from the tools' own defaults, each on purpose: Docker image and build-cache cleanup keep anything from the last 24 hours (Docker's default keeps nothing), so a build another project just finished keeps its cache; and dangling images are removed by exact ID with <code>--no-prune</code> (Docker's default also removes untagged parents), so the space freed matches the preview.</p>
+      <p>It never touches your files and projects, application data, Docker volumes, containers, pnpm or npm caches (<code>groundwork-cleanup</code> owns those), or a remote Docker host, and it never starts Docker or Colima for you. Without a terminal, or with <code>--dry-run</code>, it only previews; no flag deletes without asking. <code>update-all</code> never runs it, and it refuses to run inside an <code>update-all</code> transaction.</p>
+
       <h3>copy-context — sharing exact files with another AI tool</h3>
       <p>When a chat app or outside reviewer cannot see your repo, copy a small, explicit bundle instead of pasting random snippets. <code>copy-context</code> takes files or folders, expands folders through <code>rg --files</code> when available, and puts path-labeled contents on the clipboard. It works the same way inside tmux because it is just a shell command.</p>
       <div class="terminal">
@@ -350,6 +375,7 @@
         <tr><td><code>delta</code></td><td>Makes <code>git diff</code> readable — syntax-highlighted, line-by-line</td></tr>
         <tr><td><code>dust</code></td><td>Shows what's eating disk space, as a tree (a friendlier <code>du</code>)</td></tr>
         <tr><td><code>duf</code></td><td>Free disk space in clean tables (a friendlier <code>df</code>)</td></tr>
+        <tr><td><code>ncdu</code></td><td>Browse disk usage interactively with the arrow keys; <code>ncdu -x ~</code> stays on one filesystem</td></tr>
         <tr><td><code>btop</code></td><td>Live CPU, memory, and process monitor (a friendlier <code>top</code>) — your first stop when the machine feels slow</td></tr>
         <tr><td><code>tokei</code></td><td>Counts lines of code in a project, by language</td></tr>
         <tr><td><code>hyperfine</code></td><td>Benchmarks a command properly, over many runs</td></tr>

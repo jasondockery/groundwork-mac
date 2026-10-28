@@ -33,6 +33,13 @@
 tap "bjarneo/cliamp"
 brew "cliamp"
 {{- end }}
+{{ if and (eq .chezmoi.os "darwin") (not $headless) (get $developer "personal_apps") -}}
+# GrandPerspective: visual disk-usage map beside `largest` and ncdu on personal
+# desktop Macs. Optional because nothing depends on it and its cask requires
+# macOS 14 or newer, so an older Mac reports it and the update still succeeds.
+# Managed Macs keep the terminal tools only; install it yourself if you want it.
+cask "grandperspective"
+{{- end }}
 {{ if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") $localInference -}}
 # Ollama formula: opt-in Apple Silicon local inference. Nothing else depends on
 # it, so a failure here is reported and the update still succeeds. The bottle

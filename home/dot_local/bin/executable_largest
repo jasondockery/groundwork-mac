@@ -25,6 +25,11 @@ The scan stays on one filesystem. On macOS, grant your terminal Full Disk
 Access for a more complete root-drive scan. On Linux, permission errors may
 require rerunning the same command with sudo.
 
+To browse interactively instead, run `ncdu -x PATH` (arrow keys open folders,
+q quits). Personal desktop Macs also get GrandPerspective, a visual map.
+To free tool-owned caches, run groundwork-disk-clean: it previews first and
+deletes only what you confirm.
+
 More help:
   groundwork-help largest
   https://jasondockery.github.io/groundwork/shell.html
@@ -50,6 +55,8 @@ EOF
   Package caches    update-all runs supported Homebrew, npm, and cadenced pnpm
                     maintenance automatically. Use groundwork-cleanup for the
                     advanced report or an immediate supported pass.
+  Tool caches       groundwork-disk-clean previews Homebrew, mise, Docker, and
+                    Colima space and frees only the categories you confirm.
   Containers        Run `docker system df`; prune from Docker only after checking
                     stopped containers, images, build cache, and volumes.
   Xcode data        Remove runtimes in Xcode Settings and unavailable simulators

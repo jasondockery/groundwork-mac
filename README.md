@@ -227,6 +227,8 @@ groundwork-help                     # show Groundwork commands, aliases, keys, a
 groundwork-help update              # filter the command catalog
 groundwork-docs                     # open the docs from the active Groundwork source checkout
 largest ~                           # find large files/folders, then show cleanup guidance
+ncdu -x ~                           # browse disk usage interactively (q quits)
+groundwork-disk-clean               # preview what Homebrew, mise, Docker, and Colima can free; asks before each
 groundwork-doctor                   # read-only health report, including Karabiner process memory and legacy Docker proof tags
 groundwork-karabiner-restart        # supported restart request; succeeds only after the root Core Service PID changes
 groundwork-docker-tidy              # dry-run tidy of ephemeral-labeled Docker scratch images, by enumeration (--yes to act)
@@ -313,6 +315,7 @@ home/
   dot_local/bin/executable_groundwork-platform # reports darwin / linux / wsl2 / wsl1 / wsl-unknown / unsupported
   dot_local/bin/executable_groundwork-distro # reports the distro ID; --family reports debian / fedora / arch / opensuse / unknown
   dot_local/bin/executable_largest    # guided largest-file/folder scanner over dust
+  dot_local/bin/executable_groundwork-disk-clean  # preview-first cleanup of tool-owned caches
   dot_local/bin/executable_groundwork-doctor # read-only machine health report
   dot_local/bin/executable_groundwork-karabiner-restart # supported restart plus root Core Service PID verification
   dot_local/bin/executable_groundwork-docker-tidy # label-scoped Docker tidy by enumeration, dry run by default
