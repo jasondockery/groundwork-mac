@@ -4863,6 +4863,7 @@ EOF
   # sudo, authorization and per-app deadlines, terminal interrupts, heartbeat,
   # and owned-tree cancellation. Every remaining MAS case is a receipt or
   # bundle-identity policy matrix, so it uses the direct fixture runner.
+  check "update-all Mac App Store receipt policy matrices"
   install_fixture_policy_runner \
     "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
 
@@ -5400,6 +5401,9 @@ PY
     || fail "an action-required App Store update replaced the prior success timestamp"
 
   check "update-all remaining transaction policy matrices"
+  # Idempotent: each policy check states its own direct fixture runner.
+  install_fixture_policy_runner \
+    "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
 
   printf 'previous-success\n' >"$update_all_stamp"
   : >"$update_all_log"
