@@ -172,7 +172,7 @@
           "linePattern": "^python\\s*="
         }
       ],
-      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.13\", \"3.12\"] therefore proposes movement of 3.13, such as to 3.15, and leaves 3.12 pinned for Aider."
+      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.15\", \"3.12\"] therefore proposes movement of 3.15 to the next minor line and leaves 3.12 pinned for Aider."
     },
     {
       "id": "corepack-runtime",

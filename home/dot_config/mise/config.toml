@@ -16,9 +16,9 @@ node = "lts"
 # Corepack's shim resolves per-repository on every invocation, parent and child
 # alike, so there is exactly one authority. See the migration in
 # run_after_15-pnpm-corepack.sh and `groundwork-doctor --node-toolchain`.
-# 3.13 is the default project Python. 3.12 is kept available for pinned tool
+# 3.15 is the default project Python. 3.12 is kept available for pinned tool
 # runtimes such as Aider, whose dependency path still imports audioop.
-python = ["3.13", "3.12"]
+python = ["3.15", "3.12"]
 
 # Global Node CLIs: mise's npm backend replaces `npm i -g` / `pnpm add -g`.
 # Keep personal additions outside this chezmoi-managed file:

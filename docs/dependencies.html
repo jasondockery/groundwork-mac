@@ -164,7 +164,7 @@
         <li>Maintains an always-current <strong>Dependency Dashboard</strong> issue: every pending update, what is held by the maturity floor or rate limits, and what requires approval. Ticking an approval checkbox releases that held update for a future run.</li>
         <li>Opens security PRs on the next daily runner pass, explicitly bypassing the routine schedule, age floor, and rate limits. Renovate does not merge them: a human reviews and merges each PR after its required CI succeeds.</li>
         <li>Updates things that are not npm packages at all: <strong>GitHub Actions pinned to commit SHAs</strong> (it moves the pin and the human-readable version comment together) and <strong>Docker base-image digests</strong>.</li>
-        <li>On Groundwork, proposes the first entry of <code>python = ["3.13", "3.12"]</code> and leaves <code>3.12</code> in place. Dependency Dashboard approval for that Python line comes from shared preset <code>1.1.0</code>, which Groundwork extends.</li>
+        <li>On Groundwork, proposes the first entry of <code>python = ["3.15", "3.12"]</code> and leaves <code>3.12</code> in place. Dependency Dashboard approval for that Python line comes from shared preset <code>1.1.0</code>, which Groundwork extends.</li>
         <li>Embeds each package's <strong>release notes in the PR body</strong>, so the review starts with what changed, not with hunting for a changelog.</li>
       </ul>
       <div class="callout note">
