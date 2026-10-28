@@ -281,6 +281,11 @@ class Fixture:
         self.datadisk = colima / "_lima/_disks/colima/datadisk"
         self.write_bytes(self.datadisk, 2 * 1048576)
         (self.state / "colima-running").write_text("")
+        # A relative trusted root makes groundwork-cleanup warn on stderr,
+        # which the preview must show rather than drop.
+        config = self.home / ".config/groundwork"
+        config.mkdir(parents=True)
+        (config / "repos.local.conf").write_text("trusted_pnpm_store_root = relative/store\n")
 
     def env(self, **extra) -> dict:
         env = {
@@ -430,6 +435,8 @@ class DiskCleanTests(unittest.TestCase):
         self.assertIn("Would remove Library/Homebrew/vendor/bundle/ruby/3.3.0/", out)
         self.assertIn("This operation would free approximately 165.4MB of disk space.", out)
         self.assertIn("Package-manager maintenance report", out)
+        self.assertIn("groundwork-cleanup messages:\n    groundwork-cleanup: ignored a relative "
+                      "trusted pnpm store root: relative/store", out)
         self.assertIn("Runs:  groundwork-cleanup --yes (brew autoremove; brew cleanup --prune=all;", out)
         # Docker: the owner's dry run and its acting verdict.
         self.assertIn("DAEMON-WIDE", out)

@@ -435,6 +435,10 @@ print_packages() {
   fi
   echo "  groundwork-cleanup report (read-only):"
   indent "$dir/report"
+  if [[ -s "$dir/report.err" ]]; then
+    echo "  groundwork-cleanup messages:"
+    indent "$dir/report.err"
+  fi
   echo "  Runs:  groundwork-cleanup --yes (brew autoremove; brew cleanup --prune=all;"
   echo "         npm cache verify; pnpm store prune only when the report says due)"
 }
@@ -582,6 +586,10 @@ plan_docker() {
 print_docker() {
   echo "  groundwork-docker-cache-tidy dry run (read-only):"
   indent "$1/report"
+  if [[ -s "$1/report.err" ]]; then
+    echo "  groundwork-docker-cache-tidy messages:"
+    indent "$1/report.err"
+  fi
   echo "  Runs:  groundwork-docker-cache-tidy --yes (daemon-wide, every project: stopped"
   echo "         containers, dangling images, builder cache toward the target above)"
 }
