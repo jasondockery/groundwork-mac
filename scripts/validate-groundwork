@@ -13002,6 +13002,33 @@ SH
         fi
         sleep 0.1
       done
+      # A timeout here is only diagnosable from the pane itself, so report what
+      # it held, which tool versions ran, and what the pane's own processes wait
+      # on. Trailing empty rows are trimmed first: a plain tail of a 50-row pane
+      # shows only blank rows and hides a prompt sitting near the top. Only the
+      # pane's processes are listed, never the whole host. This never changes
+      # the result.
+      {
+        local pane_pid pane_pids child
+        echo "tmux fixture diagnostics for $pane: $(tmux -V 2>&1), $(zsh --version 2>&1 | head -n 1)"
+        tmux -L "$copylast_socket" display-message -p -t "$pane" \
+          'pane_dead=#{pane_dead} command=#{pane_current_command} size=#{pane_width}x#{pane_height}' 2>&1
+        echo "pane content (trailing empty rows trimmed):"
+        tmux -L "$copylast_socket" capture-pane -p -S - -t "$pane" 2>&1 \
+          | awk 'NF { last = NR } { row[NR] = $0 } END { for (i = 1; i <= last; i++) print row[i] }' \
+          | tail -n 40
+        pane_pid="$(tmux -L "$copylast_socket" display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null)"
+        if [[ "$pane_pid" =~ ^[0-9]+$ ]]; then
+          pane_pids="$pane_pid"
+          for child in $(pgrep -P "$pane_pid" 2>/dev/null); do pane_pids+=",$child"; done
+          echo "pane processes:"
+          ps -o pid,ppid,stat,wchan,etime,args -p "$pane_pids" 2>&1
+          if [[ -d "/proc/$pane_pid/fd" ]]; then
+            echo "pane process open files:"
+            ls -l "/proc/$pane_pid/fd" 2>&1
+          fi
+        fi
+      } >&2 || true
       fail "tmux fixture pane never printed $sentinel"
     }
     copylast_window() { # start a scenario script as a pane's only process
