@@ -4691,6 +4691,182 @@ EOF
     || fail "the Mac App Store exact-ID lane was not reflected in the final receipt"
   rm -f "$update_all_home"/.mas-updated-*
 
+  # Authorization has its own deadline and owned process group. A silent
+  # password helper times out without reaching mas, then the next exact app can
+  # authorize and update. The unrelated process and owned-child checks prove
+  # the cancellation boundary.
+  rm -f "$update_all_home/.mas-auth-count" "$update_all_home/.mas-auth-owned-child" \
+    "$update_all_home"/.mas-updated-*
+  : >"$update_all_log"
+  /bin/sleep 20 &
+  mas_auth_unrelated_pid=$!
+  mas_auth_timeout_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-auth-timeout" \
+    "$update_all_fixture/pty-mas-passwords" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    GROUNDWORK_TEST_REALTIME_CLOCK=1 \
+    GROUNDWORK_MAS_AUTH_DEADLINE_SECONDS=1 \
+    GROUNDWORK_TEST_MAS_AUTH_KILL_GRACE_SECONDS=0.1 \
+    MAS_INSTALLED="$mas_installed_both" MAS_OUTDATED="$mas_outdated_both" \
+    MAS_POST_INSTALLED="$mas_partial_both" \
+    SUDO_AUTH_READ=1 SUDO_AUTH_HANG_ONCE=1 FAKE_PLATFORM=darwin \
+    "$update_all_fixture/darwin-runner" || mas_auth_timeout_exit=$?
+  [[ "$mas_auth_timeout_exit" -ne 0 ]] \
+    || fail "a timed-out authorization produced a false complete result"
+  kill -0 "$mas_auth_unrelated_pid" 2>/dev/null \
+    || fail "the authorization timeout terminated an unrelated process"
+  kill "$mas_auth_unrelated_pid" 2>/dev/null || true
+  wait "$mas_auth_unrelated_pid" 2>/dev/null || true
+  mas_auth_owned_pid="$(cat "$update_all_home/.mas-auth-owned-child")"
+  ! kill -0 "$mas_auth_owned_pid" 2>/dev/null \
+    || fail "the authorization timeout left its owned child running"
+  assert_not_contains '^mas update 497799835$' "$update_all_log" \
+    "timed-out authorization reached the first MAS mutation"
+  if ! grep -qxF 'mas update 1593408455' "$update_all_log"; then
+    cat "$update_all_fixture/darwin-mas-auth-timeout" >&2
+    cat "$update_all_log" >&2
+    fail "timed-out authorization suppressed the next exact MAS app"
+  fi
+  grep -qF 'Mac App Store action required: 1' \
+    "$update_all_fixture/darwin-mas-auth-timeout"
+
+  # A literal terminal interrupt while fake sudo is reading its password is
+  # delivered to the foreground terminal group. The runner propagates 130,
+  # records the exact app, and leaves no owned authorization child behind.
+  rm -f "$update_all_home/.mas-auth-count" \
+    "$update_all_home/.mas-auth-owned-child" "$update_all_home"/.mas-updated-*
+  : >"$update_all_log"
+  mas_auth_cancel_exit=0
+  run_fixture_pty_after "$update_all_fixture/darwin-mas-auth-cancelled" \
+    'Password:' '\x03' env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    MAS_INSTALLED="$mas_xcode_264" MAS_OUTDATED="$mas_xcode_outdated" \
+    SUDO_AUTH_PROMPT=1 SUDO_AUTH_READ=1 SUDO_AUTH_CHILD=1 \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    || mas_auth_cancel_exit=$?
+  [[ "$mas_auth_cancel_exit" -eq 130 ]] \
+    || fail "foreground sudo cancellation surfaced as $mas_auth_cancel_exit"
+  mas_auth_cancelled_child="$(cat "$update_all_home/.mas-auth-owned-child")"
+  ! kill -0 "$mas_auth_cancelled_child" 2>/dev/null \
+    || fail "foreground sudo cancellation left its owned child running"
+  assert_not_contains '^sudo -n mas update|^mas update|^mise upgrade' \
+    "$update_all_log" \
+    "foreground sudo cancellation continued into later mutation"
+  grep -qF $'mas-app\t497799835\tXcode\t26.4\t26.5\tcancelled\t130\tauthorization' \
+    "$update_all_home/.local/state/groundwork/receipts/update-all-maintenance-latest.tsv" \
+    || fail "foreground sudo cancellation left no exact per-app receipt"
+
+  # One hung App Store app owns one bounded process group. Its timeout must not
+  # kill an unrelated process or suppress the next exact app, and the receipt
+  # must separate attempted, verified, remaining, and timed-out outcomes.
+  printf 'previous-success\n' >"$update_all_stamp"
+  : >"$update_all_log"
+  /bin/sleep 20 &
+  mas_unrelated_pid=$!
+  mas_timeout_exit=0
+  run_fixture_pty "$update_all_fixture/darwin-mas-timeout" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
+    GROUNDWORK_TEST_REALTIME_CLOCK=1 \
+    GROUNDWORK_MAS_APP_DEADLINE_SECONDS=1 \
+    GROUNDWORK_TEST_MAS_CANCEL_GRACE_SECONDS=1 \
+    MAS_INSTALLED="$mas_installed_both" MAS_OUTDATED="$mas_outdated_both" \
+    MAS_POST_INSTALLED="$mas_partial_both" \
+    MAS_HANG_ID=497799835 FAKE_PLATFORM=darwin \
+    "$update_all_fixture/darwin-runner" || mas_timeout_exit=$?
+  [[ "$mas_timeout_exit" -ne 0 ]] \
+    || fail "a timed-out App Store app produced a false complete result"
+  kill -0 "$mas_unrelated_pid" 2>/dev/null \
+    || fail "the MAS timeout terminated an unrelated process"
+  kill "$mas_unrelated_pid" 2>/dev/null || true
+  wait "$mas_unrelated_pid" 2>/dev/null || true
+  mas_owned_pid="$(cat "$update_all_home/.mas-owned-child-497799835")"
+  ! kill -0 "$mas_owned_pid" 2>/dev/null \
+    || fail "the MAS timeout left its owned child process running"
+  grep -qxF 'mas update 497799835' "$update_all_log"
+  grep -qxF 'mas update 1593408455' "$update_all_log" \
+    || fail "one hung App Store app suppressed the next exact app"
+  grep -qF 'Mac App Store update: Xcode (ID 497799835; deadline 1s)' \
+    "$update_all_fixture/darwin-mas-timeout" \
+    || fail "the timed App Store lane omitted its authenticated app identity"
+  grep -qF 'Mac App Store attempted: 2' "$update_all_fixture/darwin-mas-timeout"
+  grep -qF 'Mac App Store verified updated: 1' "$update_all_fixture/darwin-mas-timeout"
+  grep -qF 'Mac App Store remaining: 1' "$update_all_fixture/darwin-mas-timeout"
+  grep -qF 'Mac App Store timed out: 1' "$update_all_fixture/darwin-mas-timeout"
+  grep -qxF 'previous-success' "$update_all_stamp" \
+    || fail "an incomplete MAS lane replaced the prior success timestamp"
+  rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
+
+  # Sanitized work-laptop journey: Homebrew returns 1 without literal Error
+  # output, MAS visibly requests authorization, then one exact app becomes
+  # silent long enough to emit an elapsed heartbeat. Its bounded cancellation
+  # closes only that owned tree and the next exact MAS app still runs. The
+  # retained work-laptop Homebrew log is unavailable on this personal machine,
+  # so this proves diagnostics and isolation only; it does not diagnose or
+  # close the original Homebrew root cause.
+  printf 'previous-success\n' >"$update_all_stamp"
+  : >"$update_all_log"
+  rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
+  /bin/sleep 120 &
+  combined_unrelated_pid=$!
+  combined_exit=0
+  run_fixture_pty "$update_all_fixture/work-laptop-sanitized" \
+    "$update_all_fixture/pty-empty-input" env \
+    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULAE='git' BREW_FORMULA_OUTDATED='git' BREW_CASKS='' BREW_UPGRADE_STATUS=1 \
+    GROUNDWORK_TEST_REALTIME_CLOCK=1 \
+    GROUNDWORK_MAS_APP_DEADLINE_SECONDS=3 \
+    GROUNDWORK_TEST_MAS_HEARTBEAT_SECONDS=1 \
+    GROUNDWORK_TEST_MAS_CANCEL_GRACE_SECONDS=1 \
+    MAS_INSTALLED="$mas_installed_both" MAS_OUTDATED="$mas_outdated_both" \
+    MAS_POST_INSTALLED="$mas_partial_both" \
+    MAS_HANG_ID=497799835 SUDO_AUTH_PROMPT=1 FAKE_PLATFORM=darwin \
+    "$update_all_fixture/darwin-runner" || combined_exit=$?
+  [[ "$combined_exit" -ne 0 ]] \
+    || fail "the sanitized work-laptop partial failure produced a false complete result"
+  kill -0 "$combined_unrelated_pid" 2>/dev/null \
+    || fail "the sanitized MAS cancellation terminated an unrelated process"
+  kill "$combined_unrelated_pid" 2>/dev/null || true
+  wait "$combined_unrelated_pid" 2>/dev/null || true
+  combined_owned_pid="$(cat "$update_all_home/.mas-owned-child-497799835")"
+  ! kill -0 "$combined_owned_pid" 2>/dev/null \
+    || fail "the sanitized MAS cancellation left its owned child running"
+  grep -qF 'Errors: 1 authoritative command failure' \
+    "$update_all_fixture/work-laptop-sanitized"
+  grep -qF 'Failed sub-lane: Homebrew formula upgrade (exit 1)' \
+    "$update_all_fixture/work-laptop-sanitized"
+  grep -qF 'Failed exact package token(s): git' \
+    "$update_all_fixture/work-laptop-sanitized"
+  grep -qF '(Homebrew produced no output.)' "$update_all_fixture/work-laptop-sanitized"
+  assert_not_contains 'Errors: none observed' "$update_all_fixture/work-laptop-sanitized" \
+    "a silent Homebrew exit 1 still produced a false no-error receipt"
+  grep -qF 'Password:' "$update_all_fixture/work-laptop-sanitized" \
+    || fail "the sanitized MAS journey omitted its visible authentication request"
+  grep -qF 'Still running: Mac App Store update for Xcode (ID 497799835)' \
+    "$update_all_fixture/work-laptop-sanitized" \
+    || fail "the silent MAS journey omitted exact authenticated elapsed progress"
+  grep -qF 'Mac App Store timed out: 1' "$update_all_fixture/work-laptop-sanitized"
+  grep -qxF 'mas update 1593408455' "$update_all_log" \
+    || fail "the silent MAS timeout suppressed the next exact App Store app"
+  grep -qxF 'previous-success' "$update_all_stamp" \
+    || fail "the sanitized partial failure replaced the prior success timestamp"
+  rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
+
+  # The cases above own the real Mac App Store runtime boundary: foreground
+  # sudo, authorization and per-app deadlines, terminal interrupts, heartbeat,
+  # and owned-tree cancellation. Every remaining MAS case is a receipt or
+  # bundle-identity policy matrix, so it uses the direct fixture runner.
+  check "update-all Mac App Store receipt policy matrices"
+  install_fixture_policy_runner \
+    "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
+
   # `mas outdated --json --inaccurate` renames the same two fields
   # `mas list --json` does: trackId -> adamID, trackName -> name. Verified
   # against real mas 7.x output on a work machine, where `mas outdated`
@@ -5151,75 +5327,6 @@ PY
   grep -qxF 'mise upgrade --minimum-release-age 5d' "$update_all_log" \
     || fail "failed Mac App Store authorization suppressed the independent mise lane"
 
-  # Authorization has its own deadline and owned process group. A silent
-  # password helper times out without reaching mas, then the next exact app can
-  # authorize and update. The unrelated process and owned-child checks prove
-  # the cancellation boundary.
-  rm -f "$update_all_home/.mas-auth-count" "$update_all_home/.mas-auth-owned-child" \
-    "$update_all_home"/.mas-updated-*
-  : >"$update_all_log"
-  /bin/sleep 20 &
-  mas_auth_unrelated_pid=$!
-  mas_auth_timeout_exit=0
-  run_fixture_pty "$update_all_fixture/darwin-mas-auth-timeout" \
-    "$update_all_fixture/pty-mas-passwords" env \
-    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
-    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
-    GROUNDWORK_TEST_REALTIME_CLOCK=1 \
-    GROUNDWORK_MAS_AUTH_DEADLINE_SECONDS=1 \
-    GROUNDWORK_TEST_MAS_AUTH_KILL_GRACE_SECONDS=0.1 \
-    MAS_INSTALLED="$mas_installed_both" MAS_OUTDATED="$mas_outdated_both" \
-    MAS_POST_INSTALLED="$mas_partial_both" \
-    SUDO_AUTH_READ=1 SUDO_AUTH_HANG_ONCE=1 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-runner" || mas_auth_timeout_exit=$?
-  [[ "$mas_auth_timeout_exit" -ne 0 ]] \
-    || fail "a timed-out authorization produced a false complete result"
-  kill -0 "$mas_auth_unrelated_pid" 2>/dev/null \
-    || fail "the authorization timeout terminated an unrelated process"
-  kill "$mas_auth_unrelated_pid" 2>/dev/null || true
-  wait "$mas_auth_unrelated_pid" 2>/dev/null || true
-  mas_auth_owned_pid="$(cat "$update_all_home/.mas-auth-owned-child")"
-  ! kill -0 "$mas_auth_owned_pid" 2>/dev/null \
-    || fail "the authorization timeout left its owned child running"
-  assert_not_contains '^mas update 497799835$' "$update_all_log" \
-    "timed-out authorization reached the first MAS mutation"
-  if ! grep -qxF 'mas update 1593408455' "$update_all_log"; then
-    cat "$update_all_fixture/darwin-mas-auth-timeout" >&2
-    cat "$update_all_log" >&2
-    fail "timed-out authorization suppressed the next exact MAS app"
-  fi
-  grep -qF 'Mac App Store action required: 1' \
-    "$update_all_fixture/darwin-mas-auth-timeout"
-
-  # A literal terminal interrupt while fake sudo is reading its password is
-  # delivered to the foreground terminal group. The runner propagates 130,
-  # records the exact app, and leaves no owned authorization child behind.
-  rm -f "$update_all_home/.mas-auth-count" \
-    "$update_all_home/.mas-auth-owned-child" "$update_all_home"/.mas-updated-*
-  : >"$update_all_log"
-  mas_auth_cancel_exit=0
-  run_fixture_pty_after "$update_all_fixture/darwin-mas-auth-cancelled" \
-    'Password:' '\x03' env \
-    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
-    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
-    MAS_INSTALLED="$mas_xcode_264" MAS_OUTDATED="$mas_xcode_outdated" \
-    SUDO_AUTH_PROMPT=1 SUDO_AUTH_READ=1 SUDO_AUTH_CHILD=1 \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
-    || mas_auth_cancel_exit=$?
-  [[ "$mas_auth_cancel_exit" -eq 130 ]] \
-    || fail "foreground sudo cancellation surfaced as $mas_auth_cancel_exit"
-  mas_auth_cancelled_child="$(cat "$update_all_home/.mas-auth-owned-child")"
-  ! kill -0 "$mas_auth_cancelled_child" 2>/dev/null \
-    || fail "foreground sudo cancellation left its owned child running"
-  assert_not_contains '^sudo -n mas update|^mas update|^mise upgrade' \
-    "$update_all_log" \
-    "foreground sudo cancellation continued into later mutation"
-  grep -qF $'mas-app\t497799835\tXcode\t26.4\t26.5\tcancelled\t130\tauthorization' \
-    "$update_all_home/.local/state/groundwork/receipts/update-all-maintenance-latest.tsv" \
-    || fail "foreground sudo cancellation left no exact per-app receipt"
-
   # Cleanup-uncertain and terminal signal statuses propagate immediately from
   # authorization. They cannot be laundered into action-required continuation.
   for auth_terminal_status in 125 129 130 143; do
@@ -5244,49 +5351,6 @@ PY
     grep -qF $'process-status\t'"$auth_terminal_status" \
       "$update_all_home/.local/state/groundwork/receipts/update-all-maintenance-latest.tsv"
   done
-
-  # One hung App Store app owns one bounded process group. Its timeout must not
-  # kill an unrelated process or suppress the next exact app, and the receipt
-  # must separate attempted, verified, remaining, and timed-out outcomes.
-  printf 'previous-success\n' >"$update_all_stamp"
-  : >"$update_all_log"
-  /bin/sleep 20 &
-  mas_unrelated_pid=$!
-  mas_timeout_exit=0
-  run_fixture_pty "$update_all_fixture/darwin-mas-timeout" \
-    "$update_all_fixture/pty-empty-input" env \
-    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
-    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    BREW_FORMULA_OUTDATED='' BREW_CASKS='' \
-    GROUNDWORK_TEST_REALTIME_CLOCK=1 \
-    GROUNDWORK_MAS_APP_DEADLINE_SECONDS=1 \
-    GROUNDWORK_TEST_MAS_CANCEL_GRACE_SECONDS=1 \
-    MAS_INSTALLED="$mas_installed_both" MAS_OUTDATED="$mas_outdated_both" \
-    MAS_POST_INSTALLED="$mas_partial_both" \
-    MAS_HANG_ID=497799835 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-runner" || mas_timeout_exit=$?
-  [[ "$mas_timeout_exit" -ne 0 ]] \
-    || fail "a timed-out App Store app produced a false complete result"
-  kill -0 "$mas_unrelated_pid" 2>/dev/null \
-    || fail "the MAS timeout terminated an unrelated process"
-  kill "$mas_unrelated_pid" 2>/dev/null || true
-  wait "$mas_unrelated_pid" 2>/dev/null || true
-  mas_owned_pid="$(cat "$update_all_home/.mas-owned-child-497799835")"
-  ! kill -0 "$mas_owned_pid" 2>/dev/null \
-    || fail "the MAS timeout left its owned child process running"
-  grep -qxF 'mas update 497799835' "$update_all_log"
-  grep -qxF 'mas update 1593408455' "$update_all_log" \
-    || fail "one hung App Store app suppressed the next exact app"
-  grep -qF 'Mac App Store update: Xcode (ID 497799835; deadline 1s)' \
-    "$update_all_fixture/darwin-mas-timeout" \
-    || fail "the timed App Store lane omitted its authenticated app identity"
-  grep -qF 'Mac App Store attempted: 2' "$update_all_fixture/darwin-mas-timeout"
-  grep -qF 'Mac App Store verified updated: 1' "$update_all_fixture/darwin-mas-timeout"
-  grep -qF 'Mac App Store remaining: 1' "$update_all_fixture/darwin-mas-timeout"
-  grep -qF 'Mac App Store timed out: 1' "$update_all_fixture/darwin-mas-timeout"
-  grep -qxF 'previous-success' "$update_all_stamp" \
-    || fail "an incomplete MAS lane replaced the prior success timestamp"
-  rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
 
   # A non-timeout failure is isolated the same way and remains distinct from a
   # later app that updated and verified successfully.
@@ -5336,62 +5400,8 @@ PY
   grep -qxF 'previous-success' "$update_all_stamp" \
     || fail "an action-required App Store update replaced the prior success timestamp"
 
-  # Sanitized work-laptop journey: Homebrew returns 1 without literal Error
-  # output, MAS visibly requests authorization, then one exact app becomes
-  # silent long enough to emit an elapsed heartbeat. Its bounded cancellation
-  # closes only that owned tree and the next exact MAS app still runs. The
-  # retained work-laptop Homebrew log is unavailable on this personal machine,
-  # so this proves diagnostics and isolation only; it does not diagnose or
-  # close the original Homebrew root cause.
-  printf 'previous-success\n' >"$update_all_stamp"
-  : >"$update_all_log"
-  rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
-  /bin/sleep 120 &
-  combined_unrelated_pid=$!
-  combined_exit=0
-  run_fixture_pty "$update_all_fixture/work-laptop-sanitized" \
-    "$update_all_fixture/pty-empty-input" env \
-    HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
-    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    BREW_FORMULAE='git' BREW_FORMULA_OUTDATED='git' BREW_CASKS='' BREW_UPGRADE_STATUS=1 \
-    GROUNDWORK_TEST_REALTIME_CLOCK=1 \
-    GROUNDWORK_MAS_APP_DEADLINE_SECONDS=3 \
-    GROUNDWORK_TEST_MAS_HEARTBEAT_SECONDS=1 \
-    GROUNDWORK_TEST_MAS_CANCEL_GRACE_SECONDS=1 \
-    MAS_INSTALLED="$mas_installed_both" MAS_OUTDATED="$mas_outdated_both" \
-    MAS_POST_INSTALLED="$mas_partial_both" \
-    MAS_HANG_ID=497799835 SUDO_AUTH_PROMPT=1 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-runner" || combined_exit=$?
-  [[ "$combined_exit" -ne 0 ]] \
-    || fail "the sanitized work-laptop partial failure produced a false complete result"
-  kill -0 "$combined_unrelated_pid" 2>/dev/null \
-    || fail "the sanitized MAS cancellation terminated an unrelated process"
-  kill "$combined_unrelated_pid" 2>/dev/null || true
-  wait "$combined_unrelated_pid" 2>/dev/null || true
-  combined_owned_pid="$(cat "$update_all_home/.mas-owned-child-497799835")"
-  ! kill -0 "$combined_owned_pid" 2>/dev/null \
-    || fail "the sanitized MAS cancellation left its owned child running"
-  grep -qF 'Errors: 1 authoritative command failure' \
-    "$update_all_fixture/work-laptop-sanitized"
-  grep -qF 'Failed sub-lane: Homebrew formula upgrade (exit 1)' \
-    "$update_all_fixture/work-laptop-sanitized"
-  grep -qF 'Failed exact package token(s): git' \
-    "$update_all_fixture/work-laptop-sanitized"
-  grep -qF '(Homebrew produced no output.)' "$update_all_fixture/work-laptop-sanitized"
-  assert_not_contains 'Errors: none observed' "$update_all_fixture/work-laptop-sanitized" \
-    "a silent Homebrew exit 1 still produced a false no-error receipt"
-  grep -qF 'Password:' "$update_all_fixture/work-laptop-sanitized" \
-    || fail "the sanitized MAS journey omitted its visible authentication request"
-  grep -qF 'Still running: Mac App Store update for Xcode (ID 497799835)' \
-    "$update_all_fixture/work-laptop-sanitized" \
-    || fail "the silent MAS journey omitted exact authenticated elapsed progress"
-  grep -qF 'Mac App Store timed out: 1' "$update_all_fixture/work-laptop-sanitized"
-  grep -qxF 'mas update 1593408455' "$update_all_log" \
-    || fail "the silent MAS timeout suppressed the next exact App Store app"
-  grep -qxF 'previous-success' "$update_all_stamp" \
-    || fail "the sanitized partial failure replaced the prior success timestamp"
-  rm -f "$update_all_home"/.mas-updated-* "$update_all_home"/.mas-owned-child-*
   check "update-all remaining transaction policy matrices"
+  # Idempotent: each policy check states its own direct fixture runner.
   install_fixture_policy_runner \
     "$update_all_home/.local/share/groundwork/lib/maintenance-runner.sh"
 
@@ -9090,8 +9100,11 @@ EOF
   env "${cleanup_env[@]}" "$cleanup_command" --yes --force >/dev/null
 
   # A healthy command that stays quiet long enough emits a heartbeat and still
-  # succeeds before its hard deadline.
-  env "${cleanup_env[@]}" GROUNDWORK_MAINTENANCE_POLL_SECONDS=1 \
+  # succeeds before its hard deadline. The real 2-second quiet stage and the
+  # 1-second heartbeat do not depend on poll latency, so this case uses the
+  # fixture's 0.05-second poll; the process-tree deadline below keeps the
+  # production 1-second poll.
+  env "${cleanup_env[@]}" \
     GROUNDWORK_MAINTENANCE_DEADLINE_SECONDS=5 \
     BREW_MAINTENANCE_DELAY=2 "$cleanup_command" --yes --force \
     >"$cleanup_fixture/heartbeat" 2>&1 \
