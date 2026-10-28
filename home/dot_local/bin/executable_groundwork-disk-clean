@@ -714,7 +714,7 @@ category_note() {
   case "$1" in
     homebrew) printf 'Formulae and casks you installed stay. brew autoremove is not run here.' ;;
     mise) printf 'Versions a tracked config or running process uses stay. A removed version reinstalls on demand.' ;;
-    docker-images) printf 'Tagged images, images any container uses, images newer than 24 hours, and Groundwork scratch images stay.' ;;
+    docker-images) printf 'Tagged images, images any container uses, images newer than 24 hours, and Groundwork scratch images stay. Sizes are as Docker reports them; a layer another image shares is not freed.' ;;
     docker-build-cache) printf 'Cache used in the last 24 hours stays. Docker reports this size rounded; the receipt shows its before and after figures.' ;;
     colima) printf 'No data in the VM is deleted. The space returned depends on free space inside the VM and is measured after the trim.' ;;
   esac

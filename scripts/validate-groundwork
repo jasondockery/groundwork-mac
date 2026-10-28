@@ -9795,6 +9795,11 @@ SH
   grep -qF 'nothing to tidy' "$pnpm_fixture/no-pnpm-output"
   test ! -s "$pnpm_log"
 
+  check "groundwork-disk-clean: preview, consent, bounded receipt, update-all isolation"
+  # Logging shims on a closed PATH stand in for brew, mise, docker, and
+  # colima; a pseudo-terminal drives every confirmation state.
+  python3 -B scripts/test-disk-clean
+
   check "groundwork-doctor --storage stays read-only, opt-in, and honest"
   storage_fixture="$out_dir/doctor-storage-fixture"
   storage_home="$storage_fixture/home"

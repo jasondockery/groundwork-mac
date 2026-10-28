@@ -156,9 +156,43 @@ def image_json(identifier: str, created: str, size: int, labels=None) -> str:
     )
 
 
+# Policy tests use a direct runner, like the validator's fixture policy
+# runner; only the deadline runtime test loads the real bounded runner.
+DIRECT_RUNNER = r"""#!/usr/bin/env bash
+run_bounded_internal() {
+  local label="$1" seconds="$2" output="$3" status=0
+  shift 3
+  : "$label" "$seconds"
+  if [[ -n "$output" ]]; then
+    ("$@" </dev/null >"$output") || status=$?
+  else
+    ("$@" </dev/null) || status=$?
+  fi
+  return "$status"
+}
+run_bounded() {
+  local label="$1"
+  shift
+  echo "  Running: $label (fixture direct runner)"
+  run_bounded_internal "$label" "${deadline:-1}" "" "$@"
+}
+run_bounded_capture() {
+  local label="$1" output="$2"
+  shift 2
+  run_bounded_internal "$label" "${observe_deadline:-1}" "$output" "$@"
+}
+exit_if_terminal_status() {
+  case "$1" in
+    125 | 129 | 130 | 143) exit "$1" ;;
+  esac
+}
+"""
+
+
 class Fixture:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, real_runner: bool = False):
         self.root = root
+        self.real_runner = real_runner
         self.home = root / "home"
         self.state = root / "state"
         self.shims = root / "shims"
@@ -187,7 +221,10 @@ class Fixture:
         platform = local_bin / "groundwork-platform"
         platform.write_text('#!/bin/bash\nprintf "%s\\n" "${FIXTURE_PLATFORM:-linux}"\n')
         platform.chmod(0o755)
-        shutil.copy(LIBS / "maintenance-runner.sh", lib / "maintenance-runner.sh")
+        if self.real_runner:
+            shutil.copy(LIBS / "maintenance-runner.sh", lib / "maintenance-runner.sh")
+        else:
+            (lib / "maintenance-runner.sh").write_text(DIRECT_RUNNER)
         shutil.copy(LIBS / "colima-home.sh", lib / "colima-home.sh")
         shutil.copy(LOCK_LIB, lock / "update-lock.sh")
         # Production accepts Docker only from platform-owned roots. The fixture
@@ -471,6 +508,7 @@ class DiskCleanTests(unittest.TestCase):
         self.assertFalse(self.fx.mise_path.exists())
 
     def test_deadline_stops_a_step_and_reports_it(self):
+        self.fx = Fixture(Path(os.path.realpath(self.tmp.name)) / "real-runner", real_runner=True)
         (self.fx.state / "mise-sleep").write_text("30")
         status, output = self.fx.run_pty(
             b"n\ny\nn\nn\nn\n", GROUNDWORK_DISK_CLEAN_DEADLINE_SECONDS="1", timeout=60)
