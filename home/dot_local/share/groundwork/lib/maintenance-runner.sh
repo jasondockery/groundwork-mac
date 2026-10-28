@@ -4,6 +4,19 @@
 # Callers validate and set these globals before sourcing:
 #   deadline observe_deadline heartbeat cancel_grace poll_seconds orphan_grace
 # shellcheck disable=SC2154 # The caller-owned globals are this library's API.
+#
+# Every bound here is measured with `date +%s`, the only epoch clock that Apple
+# Bash 3.2, BSD date, and GNU date all provide. Its stamps are whole seconds: an
+# instant stamped S happened somewhere in [S, S+1). A bound of N seconds has
+# therefore provably elapsed only once the clock reads MORE than S + N. Never
+# compare with -ge: that can end an N-second bound one poll after it started.
+# The effective bound is longer than N and at most N + 1 second plus one poll.
+# The heartbeat is a progress notice, not a bound, so it keeps its plain test.
+
+bounded_seconds_elapsed() {
+  local since="$1" bound="$2" now="$3"
+  [[ "$now" -gt $((since + bound)) ]]
+}
 
 bounded_kill() {
   local child="$1" pgid="$2" signal="${3:-TERM}"
@@ -92,7 +105,9 @@ bounded_shutdown() {
   stopped_at="$(date +%s)"
   while bounded_live_tree "$child" "$pgid"; do
     now="$(date +%s)"
-    [[ "$now" -lt $((stopped_at + cancel_grace)) ]] || break
+    if bounded_seconds_elapsed "$stopped_at" "$cancel_grace" "$now"; then
+      break
+    fi
     sleep "$poll_seconds"
   done
   if bounded_live_tree "$child" "$pgid"; then
@@ -101,7 +116,9 @@ bounded_shutdown() {
   stopped_at="$(date +%s)"
   while bounded_live_tree "$child" "$pgid"; do
     now="$(date +%s)"
-    [[ "$now" -lt $((stopped_at + cancel_grace)) ]] || break
+    if bounded_seconds_elapsed "$stopped_at" "$cancel_grace" "$now"; then
+      break
+    fi
     sleep "$poll_seconds"
   done
   if bounded_live_tree "$child" "$pgid"; then
@@ -167,7 +184,7 @@ run_bounded_internal() {
       return "$interrupted"
     fi
     now="$(date +%s)"
-    if [[ "$now" -ge $((started + seconds)) ]]; then
+    if bounded_seconds_elapsed "$started" "$seconds" "$now"; then
       echo "  Groundwork: $label exceeded its ${seconds}s hard deadline; cancelling its process tree." >&2
       if [[ "$leader_exited" -eq 1 ]]; then
         bounded_describe_tree "$pgid"
@@ -189,7 +206,8 @@ run_bounded_internal() {
       fi
       return 124
     fi
-    if [[ "$leader_exited" -eq 1 && "$now" -ge $((leader_exited_at + orphan_grace)) ]]; then
+    if [[ "$leader_exited" -eq 1 ]] \
+      && bounded_seconds_elapsed "$leader_exited_at" "$orphan_grace" "$now"; then
       echo "  Groundwork: $label left a background process in its maintenance group after the ${orphan_grace}s drain grace; cancelling it." >&2
       bounded_describe_tree "$pgid"
       trap '' HUP INT TERM

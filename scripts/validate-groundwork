@@ -9283,6 +9283,11 @@ EOF
     [[ "$-" != *m* ]]
   ' || fail "the shared bounded runner did not restore the caller's exact TERM trap and monitor state"
 
+  # Whole-second clock edges: a scripted clock crosses a second boundary as each
+  # bound starts, so a deadline or grace measured with -ge ends early every run.
+  /bin/bash scripts/test-maintenance-runner \
+    || fail "the shared bounded runner ended a declared deadline or grace early"
+
   check "groundwork-cleanup: post-mutation and terminal-status policy matrices"
   install_fixture_policy_runner \
     "$cleanup_home/.local/share/groundwork/lib/maintenance-runner.sh"
