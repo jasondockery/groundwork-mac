@@ -4,7 +4,8 @@
 # Runs on EVERY apply rather than on-change, deliberately. A run_onchange script
 # keyed to the mise config text would not rerun when `node = "lts"` silently
 # advances to a new Node major — and a new Node install is exactly when Corepack
-# needs enabling again (and, from Node 25, installing at all).
+# needs enabling again (and, from Node 25, installing at all). It also repairs
+# other installed Node 25+ versions, such as one a repository pinned and installed.
 #
 # Apply-time network dependency: when Corepack is absent this installs the pinned
 # version, so an offline apply leaves pnpm untouched and says so rather than
@@ -45,15 +46,76 @@ COREPACK_VERSION="$(read_pin GROUNDWORK_COREPACK_VERSION '^[0-9]+\.[0-9]+\.[0-9]
 UNBUNDLED_MAJOR="$(read_pin GROUNDWORK_COREPACK_UNBUNDLED_FROM_NODE_MAJOR '^[0-9]+$')"
 UNBUNDLED_MAJOR="${UNBUNDLED_MAJOR:-25}"
 
+# ── Every OTHER installed unbundled Node gets the pinned Corepack too ─────────
+# `mise which node` below answers for $HOME, so it names only the global Node. A
+# repository that pins another Node (.node-version or mise.toml) and ran
+# `mise install` itself is never the active one here, and from Node 25 that
+# install has no Corepack and therefore no pnpm. Converge those installs now,
+# beside the active one, and keep failures non-fatal: they are not the Node this
+# apply is about to prove pnpm through.
+converge_other_unbundled_nodes() {
+  local active_real="" versions version major install_dir bin_dir
+  # Physical paths on both sides: mise exposes installs/node/lts as a symlink to
+  # the concrete version, so the active Node would otherwise look like a stranger.
+  [ -z "$1" ] || active_real="$(cd "$1" && pwd -P)"
+  versions="$(mise ls --installed node 2>/dev/null | awk '{print $2}' | sort -u || true)"
+  for version in $versions; do
+    major="${version#v}"
+    major="${major%%.*}"
+    printf '%s' "$major" | grep -qE '^[0-9]+$' || continue
+    [ "$major" -ge "$UNBUNDLED_MAJOR" ] || continue
+    install_dir="$(mise where "node@$version" 2>/dev/null || true)"
+    [ -n "$install_dir" ] && [ -d "$install_dir/bin" ] || continue
+    bin_dir="$(cd "$install_dir/bin" && pwd -P)"
+    [ "$bin_dir" != "$active_real" ] || continue
+    [ -x "$bin_dir/node" ] || continue
+    if [ -x "$bin_dir/corepack" ] && [ -x "$bin_dir/pnpm" ]; then continue; fi
+    if [ -z "$COREPACK_VERSION" ]; then
+      warn "Groundwork's Corepack version pin is missing or malformed ($pins); not touching Node $version."
+      continue
+    fi
+    if [ -e "$bin_dir/pnpm" ]; then
+      # Same rule as the active Node: a pnpm somebody else put there is theirs.
+      case "$(readlink -f "$bin_dir/pnpm" 2>/dev/null || printf '%s' "$bin_dir/pnpm")" in
+        *corepack*) ;;
+        *)
+          warn "Node $version already has a non-Corepack pnpm; leaving it alone."
+          continue
+          ;;
+      esac
+    fi
+    if [ ! -x "$bin_dir/corepack" ]; then
+      if [ ! -x "$bin_dir/npm" ]; then
+        warn "no npm beside Node $version — cannot install Corepack there."
+        continue
+      fi
+      note "Node $version does not bundle Corepack; installing pinned corepack@$COREPACK_VERSION."
+      # PATH leads with this Node so npm's node (and its global prefix) is this one.
+      if ! PATH="$bin_dir:$PATH" "$bin_dir/npm" install -g "corepack@$COREPACK_VERSION" >/dev/null 2>&1; then
+        warn "could not install corepack@$COREPACK_VERSION for Node $version (offline?). Rerun 'chezmoi apply' when online."
+        continue
+      fi
+    fi
+    if [ -x "$bin_dir/corepack" ] \
+      && PATH="$bin_dir:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$bin_dir/corepack" enable pnpm --install-directory "$bin_dir" >/dev/null 2>&1; then
+      mise reshim >/dev/null 2>&1 || true
+    else
+      warn "could not enable the pnpm shim for Node $version."
+    fi
+  done
+}
+
 # ── The ACTIVE managed Node is the only shim destination we accept ────────────
 # `command -v corepack` could resolve Homebrew's or another Node's Corepack, and
 # a bare `corepack enable` writes shims beside THAT installation.
 node_bin="$(mise which node 2>/dev/null || true)"
 if [ -z "$node_bin" ] || [ ! -x "$node_bin" ]; then
+  converge_other_unbundled_nodes ""
   note "mise has no active Node yet — skipping pnpm/Corepack setup (rerun after 'mise install')."
   exit 0
 fi
 node_dir="$(cd "$(dirname "$node_bin")" && pwd)"
+converge_other_unbundled_nodes "$node_dir"
 node_version="$("$node_bin" --version 2>/dev/null || echo unknown)"
 node_major="${node_version#v}"
 node_major="${node_major%%.*}"
