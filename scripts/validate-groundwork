@@ -18875,6 +18875,8 @@ SH
       }
     grep -qF "$unbundled_fixture/installs/node/26.13.0/bin" "$out_dir/unbundled-doctor-out" \
       || fail "the doctor's Corepack fix must name the affected Node's bin directory"
+    grep -qF 'mise-installed Node 25+' "$out_dir/unbundled-doctor-out" \
+      || fail "the doctor must name the configured unbundled-Node threshold, not a hardcoded one"
   fi
 
   check "line endings stay LF"

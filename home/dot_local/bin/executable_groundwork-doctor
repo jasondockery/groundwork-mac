@@ -747,14 +747,21 @@ node_toolchain_section() {
     local major
     major="${node_version#v}"
     major="${major%%.*}"
-    if [ -n "$major" ] && [ "$major" -ge 25 ] 2>/dev/null; then
+    local toolchain_env unbundled_major
+    toolchain_env="$HOME/.local/share/groundwork/node-toolchain.env"
+    unbundled_major="$(sed -n 's/^GROUNDWORK_COREPACK_UNBUNDLED_FROM_NODE_MAJOR=\([^#]*\).*/\1/p' "$toolchain_env" 2>/dev/null | tail -n1 | tr -d '"'\''[:space:]')"
+    case "$unbundled_major" in
+      '' | *[!0-9]*) unbundled_major=25 ;;
+    esac
+    if [ -n "$major" ] && [ "$major" -ge "$unbundled_major" ] 2>/dev/null; then
       # Name the exact repair: this Node may be a repository-pinned install that
       # the apply script reaches only through `mise ls`, and the gap is easy to
       # misread as a pnpm problem.
       local pinned_corepack node_bin_dir
       pinned_corepack="$(sed -n 's/^GROUNDWORK_COREPACK_VERSION=//p' "$HOME/.local/share/groundwork/node-toolchain.env" 2>/dev/null | tail -n1 | tr -d '"'\''[:space:]')"
-      node_bin_dir="$(dirname "${managed_node:-$node_path}")"
-      warn "Node $major does not bundle Corepack and none is installed — pnpm has no owner. Run 'chezmoi apply' (it installs the pinned one beside every mise-installed Node $major+), or by hand:"
+      # The Node that is missing Corepack is the one on PATH, whoever owns it.
+      node_bin_dir="$(dirname "$node_path")"
+      warn "Node $major does not bundle Corepack and none is installed — pnpm has no owner. Run 'chezmoi apply' (it installs the pinned one beside every mise-installed Node $unbundled_major+), or by hand:"
       warn "  PATH=\"$node_bin_dir:\$PATH\" npm install -g corepack@${pinned_corepack:-<pinned version>} && PATH=\"$node_bin_dir:\$PATH\" corepack enable pnpm"
     else
       warn "corepack not found — pnpm has no owner. Run: corepack enable pnpm"
