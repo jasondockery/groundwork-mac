@@ -1,0 +1,527 @@
+#!/usr/bin/env python3
+"""Hostile fixtures for groundwork-disk-clean.
+
+Every external tool (brew, mise, docker, colima, the platform helper) is a
+logging shim on a closed PATH, so no real package manager, Docker daemon, or
+VM is reachable. Each test asserts the exact command log, so "nothing was
+deleted" is proved by an empty or read-only log plus surviving fixture files,
+not by reading the code.
+"""
+from __future__ import annotations
+
+import errno
+import json
+import os
+from pathlib import Path
+import pty
+import re
+import select
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+COMMAND = ROOT / "home/dot_local/bin/executable_groundwork-disk-clean"
+LIBS = ROOT / "home/dot_local/share/groundwork/lib"
+LOCK_LIB = ROOT / "home/dot_local/lib/groundwork/update-lock.sh"
+BASH = "/bin/bash"
+
+SYSTEM_TOOLS = (
+    "awk basename bash cat chmod comm cp cut date dirname du env grep head id jq "
+    "ls mkdir mktemp mv paste ps readlink rm rmdir sed sleep sort stat tail touch "
+    "tr uname wc xargs"
+).split()
+
+OLD_IMAGE = "sha256:" + "1" * 64
+NEW_IMAGE = "sha256:" + "2" * 64
+USED_IMAGE = "sha256:" + "3" * 64
+SCRATCH_IMAGE = "sha256:" + "4" * 64
+UNDATED_IMAGE = "sha256:" + "5" * 64
+
+MUTATING = re.compile(
+    r"^(brew cleanup --prune=all$|mise uninstall|docker image rm|docker buildx prune|"
+    r"colima .*ssh)",
+    re.MULTILINE,
+)
+
+BREW_SHIM = r"""#!/bin/bash
+set -eu
+printf 'brew %s\n' "$*" >>"$FIXTURE_LOG"
+state="$FIXTURE_STATE"
+case "$*" in
+  "cleanup --prune=all --dry-run")
+    count=$(( $(cat "$state/brew-dry-count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$count" >"$state/brew-dry-count"
+    while IFS= read -r p; do
+      [ -e "$p" ] && printf 'Would remove: %s (1.0MB)\n' "$p"
+    done <"$state/brew-paths"
+    if [ -f "$state/brew-drift" ] && [ "$count" -ge 2 ]; then
+      printf 'Would remove: %s (2 files, 9KB)\n' "$(cat "$state/brew-drift")"
+    fi
+    echo "==> This operation would free approximately 2MB of disk space."
+    ;;
+  "cleanup --prune=all")
+    first=1
+    while IFS= read -r p; do
+      if [ -f "$state/brew-fail" ] && [ "$first" -eq 0 ]; then
+        echo "Error: permission denied" >&2
+        exit 1
+      fi
+      rm -rf "$p"
+      first=0
+    done <"$state/brew-paths"
+    ;;
+  *) echo "unexpected brew call: $*" >&2; exit 97 ;;
+esac
+"""
+
+MISE_SHIM = r"""#!/bin/bash
+set -eu
+printf 'mise %s\n' "$*" >>"$FIXTURE_LOG"
+state="$FIXTURE_STATE"
+case "$1" in
+  ls) cat "$state/mise.json" ;;
+  uninstall)
+    shift
+    if [ -f "$state/mise-sleep" ]; then sleep "$(cat "$state/mise-sleep")"; fi
+    for version in "$@"; do
+      path="$(awk -F '\t' -v v="$version" '$1 == v { print $2 }' "$state/mise-paths")"
+      [ -n "$path" ] && rm -rf "$path"
+    done
+    ;;
+  *) echo "unexpected mise call: $*" >&2; exit 97 ;;
+esac
+"""
+
+DOCKER_SHIM = r"""#!/bin/bash
+set -eu
+printf 'docker %s\n' "$*" >>"$FIXTURE_LOG"
+state="$FIXTURE_STATE"
+case "$*" in
+  "context inspect --format {{.Endpoints.docker.Host}}") echo "unix:///fixture/docker.sock" ;;
+  info) [ ! -f "$state/docker-down" ] ;;
+  "image ls --quiet --no-trunc --filter dangling=true") cat "$state/dangling" ;;
+  "image ls --quiet --no-trunc --filter dangling=true --filter label=dev.roost.ephemeral")
+    grep -xF -f "$state/scratch" "$state/dangling" || true ;;
+  "ps -aq --no-trunc") echo "c0ffee" ;;
+  "container inspect --format "*) printf '%s\t/builder\texited\n' "$(cat "$state/used")" ;;
+  "image inspect "*)
+    shift 2
+    printf '['
+    sep=""
+    for id in "$@"; do printf '%s' "$sep"; cat "$state/images/${id#sha256:}.json"; sep=","; done
+    printf ']\n'
+    ;;
+  "image rm --no-prune "*)
+    shift 3
+    for id in "$@"; do grep -vxF "$id" "$state/dangling" >"$state/dangling.new" || true; mv "$state/dangling.new" "$state/dangling"; done
+    ;;
+  "buildx version") echo "github.com/docker/buildx v0.0.0-fixture" ;;
+  "buildx du --filter until=24h")
+    printf 'ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nShared:\t0B\nPrivate:\t%s\nReclaimable:\t%s\nTotal:\t%s\n' \
+      "$(cat "$state/buildx")" "$(cat "$state/buildx")" "$(cat "$state/buildx")" ;;
+  "buildx prune --force --filter until=24h") echo "0B" >"$state/buildx"; echo "Total: 1.5GB" ;;
+  *) echo "unexpected docker call: $*" >&2; exit 97 ;;
+esac
+"""
+
+COLIMA_SHIM = r"""#!/bin/bash
+set -eu
+printf 'colima %s\n' "$*" >>"$FIXTURE_LOG"
+state="$FIXTURE_STATE"
+case "$*" in
+  "--profile=default status") [ -f "$state/colima-running" ] ;;
+  "--profile=default ssh -- sudo fstrim -a")
+    disk="$HOME/.colima/_lima/_disks/colima/datadisk"
+    head -c 1048576 "$disk" >"$disk.new"
+    mv "$disk.new" "$disk"
+    ;;
+  *) echo "unexpected colima call: $*" >&2; exit 97 ;;
+esac
+"""
+
+
+def image_json(identifier: str, created: str, size: int, labels=None) -> str:
+    return json.dumps(
+        {
+            "Id": identifier,
+            "RepoTags": [],
+            "Created": created,
+            "Size": size,
+            "Config": {"Labels": labels},
+        }
+    )
+
+
+class Fixture:
+    def __init__(self, root: Path):
+        self.root = root
+        self.home = root / "home"
+        self.state = root / "state"
+        self.shims = root / "shims"
+        self.sysbin = root / "sysbin"
+        self.log = root / "commands.log"
+        self.cache = root / "cache"
+        for directory in (self.home, self.state, self.shims, self.sysbin, self.cache,
+                          self.state / "images"):
+            directory.mkdir(parents=True, exist_ok=True)
+        for tool in SYSTEM_TOOLS:
+            found = shutil.which(tool)
+            if found is None:
+                raise RuntimeError(f"fixture needs {tool} on PATH")
+            (self.sysbin / tool).symlink_to(found)
+        self.log.write_text("")
+        self.install_home()
+        self.install_shims()
+        self.seed()
+
+    def install_home(self):
+        local_bin = self.home / ".local/bin"
+        lib = self.home / ".local/share/groundwork/lib"
+        lock = self.home / ".local/lib/groundwork"
+        for directory in (local_bin, lib, lock):
+            directory.mkdir(parents=True, exist_ok=True)
+        platform = local_bin / "groundwork-platform"
+        platform.write_text('#!/bin/bash\nprintf "%s\\n" "${FIXTURE_PLATFORM:-linux}"\n')
+        platform.chmod(0o755)
+        shutil.copy(LIBS / "maintenance-runner.sh", lib / "maintenance-runner.sh")
+        shutil.copy(LIBS / "colima-home.sh", lib / "colima-home.sh")
+        shutil.copy(LOCK_LIB, lock / "update-lock.sh")
+        # Production accepts Docker only from platform-owned roots. The fixture
+        # library's final definition resolves the closed shim PATH instead.
+        scan = (LIBS / "docker-scan.sh").read_text()
+        scan += '\ngw_docker_resolve_trusted_executable() {\n  type -P "$1" 2>/dev/null\n}\n'
+        (lib / "docker-scan.sh").write_text(scan)
+
+    def install_shims(self):
+        for name, body in (("brew", BREW_SHIM), ("mise", MISE_SHIM),
+                           ("docker", DOCKER_SHIM), ("colima", COLIMA_SHIM)):
+            path = self.shims / name
+            path.write_text(body)
+            path.chmod(0o755)
+
+    def write_bytes(self, path: Path, size: int):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(os.urandom(size))
+
+    def seed(self):
+        self.brew_paths = [self.cache / "brew/downloads/old-tool.tar.gz",
+                           self.cache / "brew/Cellar-old/tool/1.0"]
+        self.write_bytes(self.brew_paths[0], 300_000)
+        self.write_bytes(self.brew_paths[1] / "bin/tool", 200_000)
+        (self.state / "brew-paths").write_text("".join(f"{p}\n" for p in self.brew_paths))
+
+        self.mise_path = self.home / ".local/share/mise/installs/node/20.1.0"
+        self.mise_kept = self.home / ".local/share/mise/installs/node/22.0.0"
+        self.write_bytes(self.mise_path / "bin/node", 400_000)
+        self.write_bytes(self.mise_kept / "bin/node", 400_000)
+        (self.state / "mise.json").write_text(json.dumps({
+            "node": [{"version": "20.1.0", "install_path": str(self.mise_path),
+                      "installed": True, "active": False}],
+        }))
+        (self.state / "mise-paths").write_text(f"node@20.1.0\t{self.mise_path}\n")
+
+        (self.state / "dangling").write_text(
+            "\n".join([OLD_IMAGE, NEW_IMAGE, USED_IMAGE, SCRATCH_IMAGE, UNDATED_IMAGE]) + "\n")
+        (self.state / "scratch").write_text(SCRATCH_IMAGE + "\n")
+        (self.state / "used").write_text(USED_IMAGE)
+        now = time.time()
+        old = time.strftime("%Y-%m-%dT%H:%M:%S.123456789Z", time.gmtime(now - 3 * 86400))
+        new = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 600))
+        images = {
+            OLD_IMAGE: image_json(OLD_IMAGE, old, 123_456_789),
+            NEW_IMAGE: image_json(NEW_IMAGE, new, 1000),
+            USED_IMAGE: image_json(USED_IMAGE, old, 2000),
+            SCRATCH_IMAGE: image_json(SCRATCH_IMAGE, old, 3000, {"dev.roost.ephemeral": "true"}),
+            UNDATED_IMAGE: image_json(UNDATED_IMAGE, "not-a-date", 4000),
+        }
+        for identifier, payload in images.items():
+            (self.state / "images" / f"{identifier[7:]}.json").write_text(payload)
+        (self.state / "buildx").write_text("1.5GB\n")
+
+        colima = self.home / ".colima"
+        (colima / "default").mkdir(parents=True)
+        (colima / "default/colima.yaml").write_text("disk: 100\n")
+        self.datadisk = colima / "_lima/_disks/colima/datadisk"
+        self.write_bytes(self.datadisk, 2 * 1048576)
+        (self.state / "colima-running").write_text("")
+
+    def env(self, **extra) -> dict:
+        env = {
+            "HOME": str(self.home),
+            "PATH": f"{self.shims}:{self.sysbin}",
+            "FIXTURE_LOG": str(self.log),
+            "FIXTURE_STATE": str(self.state),
+            "TMPDIR": str(self.root),
+            "LC_ALL": "C",
+            "TERM": "dumb",
+        }
+        env.update(extra)
+        return env
+
+    def run_piped(self, *args, **extra):
+        return subprocess.run(
+            [BASH, str(COMMAND), *args], env=self.env(**extra), stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=120,
+        )
+
+    def run_pty(self, payload: bytes = b"", *args, interrupt_at: bytes | None = None,
+                timeout: float = 120, **extra):
+        pid, master = pty.fork()
+        if pid == 0:
+            os.execve(BASH, [BASH, str(COMMAND), *args], self.env(**extra))
+        chunks = []
+        if payload:
+            os.write(master, payload)
+        sent_interrupt = False
+        deadline = time.monotonic() + timeout
+        status = None
+        while True:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError as exc:
+                    if exc.errno != errno.EIO:
+                        raise
+                    chunk = b""
+                if chunk:
+                    chunks.append(chunk)
+                    if interrupt_at and not sent_interrupt and interrupt_at in b"".join(chunks):
+                        os.write(master, b"\x03")
+                        sent_interrupt = True
+            waited, candidate = os.waitpid(pid, os.WNOHANG)
+            if waited == pid:
+                status = candidate
+                break
+            if time.monotonic() >= deadline:
+                os.killpg(pid, signal.SIGKILL)
+                _, status = os.waitpid(pid, 0)
+                chunks.append(b"\nfixture deadline expired\n")
+                break
+        drain_deadline = time.monotonic() + 1
+        while time.monotonic() < drain_deadline:
+            ready, _, _ = select.select([master], [], [], 0.05)
+            if not ready:
+                break
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        os.close(master)
+        output = b"".join(chunks).decode("utf-8", "replace").replace("\r\n", "\n")
+        return os.waitstatus_to_exitcode(status), output
+
+    def commands(self) -> str:
+        return self.log.read_text()
+
+    def all_fixture_data_present(self) -> bool:
+        return (all(p.exists() for p in self.brew_paths) and self.mise_path.exists()
+                and OLD_IMAGE in (self.state / "dangling").read_text()
+                and (self.state / "buildx").read_text().strip() == "1.5GB"
+                and self.datadisk.stat().st_size == 2 * 1048576)
+
+
+class DiskCleanTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="gw-disk-clean-")
+        self.fx = Fixture(Path(os.path.realpath(self.tmp.name)))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def assert_untouched(self):
+        self.assertIsNone(MUTATING.search(self.fx.commands()), self.fx.commands())
+        self.assertTrue(self.fx.all_fixture_data_present())
+
+    def test_help_and_invalid_arguments_invoke_nothing(self):
+        result = self.fx.run_piped("--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Usage:", result.stdout)
+        self.assertIn("No flag deletes without asking.", result.stdout)
+        for args, extra in ((["--yes"], {}), (["now"], {}), (["--dry-run", "extra"], {}),
+                            ([], {"GROUNDWORK_DISK_CLEAN_DEADLINE_SECONDS": "0"}),
+                            ([], {"GROUNDWORK_DISK_CLEAN_OBSERVE_DEADLINE_SECONDS": "x"})):
+            result = self.fx.run_piped(*args, **extra)
+            self.assertEqual(result.returncode, 64, (args, result.stderr))
+        self.assertEqual(self.fx.commands(), "")
+        self.assertTrue(self.fx.all_fixture_data_present())
+
+    def test_refuses_inside_update_all_before_any_tool(self):
+        for variable in ("GROUNDWORK_UPDATE_LOCK_HELD", "GROUNDWORK_UPDATE_LOCK_TOKEN"):
+            status, output = self.fx.run_pty(b"y\ny\ny\ny\ny\n", **{variable: "1"})
+            self.assertEqual(status, 75, output)
+            self.assertIn("refusing to run inside update-all", output)
+        self.assertEqual(self.fx.commands(), "")
+        self.assertTrue(self.fx.all_fixture_data_present())
+
+    def test_unsupported_platforms_fail_closed_before_any_tool(self):
+        for platform in ("wsl1", "wsl-unknown", "unsupported"):
+            status, output = self.fx.run_pty(b"y\ny\ny\ny\ny\n", FIXTURE_PLATFORM=platform)
+            self.assertEqual(status, 1, (platform, output))
+            self.assertIn("No change was made", output)
+        self.assertEqual(self.fx.commands(), "")
+        self.assertTrue(self.fx.all_fixture_data_present())
+
+    def test_no_terminal_previews_exact_plan_and_deletes_nothing(self):
+        result = self.fx.run_piped()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = result.stdout
+        self.assertIn("Preview only: nothing was deleted", out)
+        self.assertNotIn("[y/N]", out + result.stderr)
+        for path in self.fx.brew_paths:
+            self.assertIn(str(path), out)
+        self.assertIn(f"node@20.1.0  {self.fx.mise_path}", out)
+        self.assertNotIn("22.0.0", out)
+        self.assertIn(OLD_IMAGE[7:19], out)
+        self.assertIn("(123456789 bytes)", out)
+        for kept in (NEW_IMAGE, USED_IMAGE, SCRATCH_IMAGE, UNDATED_IMAGE):
+            self.assertNotIn(kept[7:19], out)
+        self.assertIn("1 Groundwork scratch, 1 used by a container, 1 newer than 24 hours, "
+                      "1 with an unreadable date", out)
+        self.assertIn("(1500000000 bytes)", out)
+        self.assertIn(str(self.fx.datadisk), out)
+        self.assertIn("Runs:  colima --profile=default ssh -- sudo fstrim -a", out)
+        self.assert_untouched()
+
+    def test_dry_run_on_a_terminal_never_prompts(self):
+        status, output = self.fx.run_pty(b"y\ny\ny\ny\ny\n", "--dry-run")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("[y/N]", output)
+        self.assertIn("Preview only: nothing was deleted (--dry-run was given)", output)
+        self.assert_untouched()
+
+    def test_declining_every_category_deletes_nothing(self):
+        status, output = self.fx.run_pty(b"n\n\nno\nN\nn\n")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(output.count("[y/N]"), 5, output)
+        self.assertEqual(output.count("declined; nothing was removed"), 5, output)
+        self.assert_untouched()
+        self.assertFalse((self.fx.home / ".local/state/groundwork/update-all.lock").exists())
+
+    def test_input_ending_mid_questions_deletes_nothing(self):
+        status, output = self.fx.run_pty(b"y\n\x04")
+        self.assertEqual(status, 1, output)
+        self.assertIn("Input ended before every question was answered. Nothing was deleted.", output)
+        self.assert_untouched()
+
+    def test_interrupt_at_a_question_deletes_nothing(self):
+        status, output = self.fx.run_pty(b"", interrupt_at=b"[y/N]")
+        self.assertEqual(status, 130, output)
+        self.assertIn("stopped (exit 130) before anything was removed", output)
+        self.assert_untouched()
+
+    def test_invalid_answer_is_explained_and_asked_again(self):
+        status, output = self.fx.run_pty(b"maybe\nn\nn\nn\nn\nn\n")
+        self.assertEqual(status, 0, output)
+        self.assertIn("Please answer y or n.", output)
+        self.assertEqual(output.count("declined; nothing was removed"), 5, output)
+        self.assert_untouched()
+
+    def test_confirmed_categories_remove_exactly_the_previewed_plan(self):
+        status, output = self.fx.run_pty(b"y\ny\ny\ny\ny\n")
+        self.assertEqual(status, 0, output)
+        log = self.fx.commands()
+        self.assertIn("brew cleanup --prune=all\n", log)
+        self.assertIn("mise uninstall node@20.1.0\n", log)
+        self.assertIn(f"docker image rm --no-prune {OLD_IMAGE}\n", log)
+        self.assertIn("docker buildx prune --force --filter until=24h\n", log)
+        self.assertIn("colima --profile=default ssh -- sudo fstrim -a\n", log)
+        removal = [line for line in log.splitlines() if line.startswith("docker image rm")]
+        self.assertEqual(removal, [f"docker image rm --no-prune {OLD_IMAGE}"])
+        self.assertNotIn("--force", removal[0])
+        self.assertNotRegex(log, r"docker (system|volume|container|image) prune|prune (-a|--all)\b|docker volume")
+        self.assertFalse(any(p.exists() for p in self.fx.brew_paths))
+        self.assertFalse(self.fx.mise_path.exists())
+        self.assertTrue(self.fx.mise_kept.exists())
+        dangling = (self.fx.state / "dangling").read_text()
+        for kept in (NEW_IMAGE, USED_IMAGE, SCRATCH_IMAGE, UNDATED_IMAGE):
+            self.assertIn(kept, dangling)
+        self.assertIn("Receipt", output)
+        self.assertIn("removed 2 path(s), freed", output)
+        self.assertIn("uninstalled 1 version(s), freed", output)
+        self.assertIn("removed 1 image(s), freed 117.7 MiB (123456789 bytes)", output)
+        self.assertIn("1.4 GiB unused for 24 hours before and 0 B after", output)
+        self.assertIn("trimmed; returned", output)
+        self.assertFalse((self.fx.home / ".local/state/groundwork/update-all.lock").exists())
+
+    def test_changed_plan_refuses_that_category_only(self):
+        drift = self.fx.cache / "brew/downloads/appeared-later.tar.gz"
+        self.fx.write_bytes(drift, 9000)
+        (self.fx.state / "brew-drift").write_text(str(drift))
+        status, output = self.fx.run_pty(b"y\nn\nn\nn\nn\n")
+        self.assertEqual(status, 0, output)
+        self.assertIn("not run: the plan changed after the preview; nothing was removed", output)
+        self.assertNotIn("brew cleanup --prune=all\n", self.fx.commands())
+        self.assertTrue(all(p.exists() for p in self.fx.brew_paths))
+
+    def test_failed_step_keeps_a_receipt_and_later_steps_run(self):
+        (self.fx.state / "brew-fail").write_text("")
+        status, output = self.fx.run_pty(b"y\ny\nn\nn\nn\n")
+        self.assertEqual(status, 1, output)
+        self.assertIn("incomplete (exit 1): removed 1 path(s)", output)
+        self.assertIn("1 path(s) left", output)
+        self.assertIn("uninstalled 1 version(s)", output)
+        self.assertFalse(self.fx.mise_path.exists())
+
+    def test_deadline_stops_a_step_and_reports_it(self):
+        (self.fx.state / "mise-sleep").write_text("30")
+        status, output = self.fx.run_pty(
+            b"n\ny\nn\nn\nn\n", GROUNDWORK_DISK_CLEAN_DEADLINE_SECONDS="1", timeout=60)
+        self.assertEqual(status, 1, output)
+        self.assertIn("exceeded its 1s hard deadline", output)
+        self.assertIn("incomplete (exit 124)", output)
+
+    def test_docker_not_running_or_ambient_host_is_not_touched(self):
+        (self.fx.state / "docker-down").write_text("")
+        result = self.fx.run_piped()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Docker images: not checked (Docker is not running; Groundwork does "
+                      "not start it here)", result.stdout)
+        self.assertNotIn("docker image", self.fx.commands())
+        self.fx.log.write_text("")
+        (self.fx.state / "docker-down").unlink()
+        result = self.fx.run_piped(DOCKER_HOST="tcp://shared.example:2376")
+        self.assertIn("DOCKER_HOST is set", result.stdout)
+        self.assertNotIn("docker ", self.fx.commands())
+
+    def test_stopped_colima_is_never_started(self):
+        (self.fx.state / "colima-running").unlink()
+        status, output = self.fx.run_pty(b"n\nn\nn\nn\n")
+        self.assertEqual(status, 0, output)
+        self.assertIn("Colima profile default is not running", output)
+        colima_calls = [l for l in self.fx.commands().splitlines() if l.startswith("colima")]
+        self.assertEqual(colima_calls, ["colima --profile=default status"])
+
+    def test_update_all_and_its_hooks_never_reference_the_command(self):
+        allowed = {
+            # The command itself and its catalog row.
+            "home/dot_local/bin/executable_groundwork-disk-clean",
+            "home/dot_local/share/groundwork/commands.tsv",
+            # largest prints advice that names the command; it never runs it.
+            "home/dot_local/bin/executable_largest",
+        }
+        offenders = []
+        for path in sorted((ROOT / "home").rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            if relative in allowed:
+                continue
+            if "groundwork-disk-clean" in path.read_text(errors="replace"):
+                offenders.append(relative)
+        self.assertEqual(offenders, [])
+        largest = (ROOT / "home/dot_local/bin/executable_largest").read_text()
+        for line in largest.splitlines():
+            if "groundwork-disk-clean" in line:
+                self.assertNotRegex(line.strip(), r"^(exec |\"?\$|groundwork-disk-clean\b)")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

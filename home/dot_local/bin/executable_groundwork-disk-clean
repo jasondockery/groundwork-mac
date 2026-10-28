@@ -1,0 +1,1010 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Target: bash 3.2+ (stock macOS /bin/bash) and GNU or BSD userland.
+
+# Owner-run disk cleanup over caches that Groundwork's own tools own. One plan
+# per category feeds the preview, the confirmation, and the action; each
+# category is re-planned immediately before it acts and refuses to act when
+# the plan changed. update-all never invokes this command, and this command
+# refuses to run inside an update-all transaction.
+
+usage() {
+  cat <<'EOF'
+Preview the disk space Groundwork's tools can free, then free it only after
+you confirm each category.
+
+Usage:
+  groundwork-disk-clean            preview, then ask before each category
+  groundwork-disk-clean --dry-run  preview only; never asks, never deletes
+  groundwork-disk-clean -h|--help  show this help
+
+Categories (each appears only when its tool is installed and has something
+to free):
+  Homebrew            brew cleanup --prune=all: old downloads and superseded
+                      versions. Formulae and casks you installed stay.
+  mise                mise uninstall of the exact versions that
+                      `mise ls --prunable` reports: versions that no tracked
+                      config and no running process uses.
+  Docker images       docker image rm --no-prune of dangling (untagged) images
+                      older than 24 hours that no container uses.
+  Docker build cache  docker buildx prune --force --filter until=24h: build
+                      cache that has not been used for 24 hours.
+  Colima disk         colima ssh -- sudo fstrim -a: returns unused blocks in
+                      the running Colima VM to the host disk.
+
+Never touched: your files and projects (node_modules, .venv, and other build
+output), application data, Docker volumes, containers, tagged images,
+Groundwork scratch images (groundwork-docker-tidy owns those), pnpm and npm
+caches (groundwork-cleanup owns those), and remote Docker hosts.
+
+Without a terminal on stdin and stderr, or with --dry-run, this command only
+previews. No flag deletes without asking. It refuses to run inside update-all,
+and update-all never runs it. Docker and Colima are never started for you.
+
+Every step has a deadline, reports progress, and stops on Ctrl-C. The receipt
+at the end says what was removed, what failed, and what was left.
+
+Advanced: GROUNDWORK_DISK_CLEAN_DEADLINE_SECONDS (each cleanup step, default
+1800) and GROUNDWORK_DISK_CLEAN_OBSERVE_DEADLINE_SECONDS (each preview query,
+default 120) accept whole seconds from 1 through 3600.
+
+More help:
+  groundwork-help disk
+  https://jasondockery.github.io/groundwork/shell.html#disk-clean
+EOF
+}
+
+die_usage() {
+  echo "groundwork-disk-clean: $1" >&2
+  echo "Run 'groundwork-disk-clean --help' for usage." >&2
+  exit 64
+}
+
+dry_run=0
+while (($#)); do
+  case "$1" in
+    --dry-run) dry_run=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*) die_usage "unknown option: $1" ;;
+    *) die_usage "unexpected argument: $1 (this command takes no positional arguments)" ;;
+  esac
+  shift
+done
+
+op_deadline="${GROUNDWORK_DISK_CLEAN_DEADLINE_SECONDS:-1800}"
+observe_deadline="${GROUNDWORK_DISK_CLEAN_OBSERVE_DEADLINE_SECONDS:-120}"
+for disk_clean_deadline in "$op_deadline" "$observe_deadline"; do
+  if [[ ! "$disk_clean_deadline" =~ ^[0-9]{1,4}$ ]] \
+    || ((10#$disk_clean_deadline < 1 || 10#$disk_clean_deadline > 3600)); then
+    die_usage "deadlines must be whole seconds from 1 through 3600."
+  fi
+done
+unset disk_clean_deadline
+op_deadline=$((10#$op_deadline))
+observe_deadline=$((10#$observe_deadline))
+
+if [[ -n "${GROUNDWORK_UPDATE_LOCK_HELD:-}" || -n "${GROUNDWORK_UPDATE_LOCK_TOKEN:-}" ]]; then
+  echo "groundwork-disk-clean: refusing to run inside update-all or another Groundwork maintenance run." >&2
+  echo "Run it on its own after that run finishes. No change was made." >&2
+  exit 75
+fi
+
+platform="$("$HOME/.local/bin/groundwork-platform" 2>/dev/null || echo unknown)"
+case "$platform" in
+  darwin | linux | wsl2) ;;
+  wsl1)
+    echo "groundwork-disk-clean: WSL1 is unsupported; Groundwork requires WSL2. No change was made." >&2
+    exit 1
+    ;;
+  wsl-unknown)
+    echo "groundwork-disk-clean: could not verify WSL2. From PowerShell, run \`wsl --list --verbose\`. No change was made." >&2
+    exit 1
+    ;;
+  unknown)
+    echo "groundwork-disk-clean: the platform helper is missing or failed: $HOME/.local/bin/groundwork-platform" >&2
+    echo "Restore it with: chezmoi apply --exclude=scripts ~/.local/bin/groundwork-platform" >&2
+    exit 1
+    ;;
+  *)
+    echo "groundwork-disk-clean: unsupported platform: $platform. No change was made." >&2
+    exit 1
+    ;;
+esac
+
+lib_dir="$HOME/.local/share/groundwork/lib"
+runner_lib="$lib_dir/maintenance-runner.sh"
+docker_lib="$lib_dir/docker-scan.sh"
+colima_lib="$lib_dir/colima-home.sh"
+lock_lib="$HOME/.local/lib/groundwork/update-lock.sh"
+if [[ ! -r "$runner_lib" ]]; then
+  echo "groundwork-disk-clean: the bounded maintenance runner is missing: $runner_lib" >&2
+  echo "Restore it with: chezmoi apply --exclude=scripts ~/.local/share/groundwork" >&2
+  exit 1
+fi
+# Globals read by the sourced bounded runner.
+deadline="$op_deadline"
+heartbeat=30
+cancel_grace=2
+poll_seconds=0.2
+orphan_grace=5
+# shellcheck disable=SC2034 # Read dynamically by the sourced bounded runner.
+: "$deadline" "$heartbeat" "$cancel_grace" "$poll_seconds" "$orphan_grace" "$observe_deadline"
+# shellcheck source=/dev/null
+source "$runner_lib"
+
+interactive=0
+preview_reason=""
+if [[ "$dry_run" -eq 1 ]]; then
+  preview_reason="--dry-run was given"
+elif [[ -t 0 && -t 2 ]]; then
+  interactive=1
+else
+  preview_reason="stdin and stderr are not both a terminal, so nothing can be confirmed"
+fi
+
+categories="homebrew mise docker-images docker-build-cache colima"
+work=""
+acting=0
+lock_held=0
+final_status=0
+
+category_title() {
+  case "$1" in
+    homebrew) printf 'Homebrew' ;;
+    mise) printf 'mise' ;;
+    docker-images) printf 'Docker images' ;;
+    docker-build-cache) printf 'Docker build cache' ;;
+    colima) printf 'Colima disk' ;;
+  esac
+}
+
+record() { # category outcome
+  printf '%s\t%s\n' "$(category_title "$1")" "$2" >>"$work/receipt"
+}
+
+# shellcheck disable=SC2329 # Called from the EXIT trap handler.
+print_receipt() {
+  local title outcome
+  echo
+  echo "Receipt"
+  if [[ ! -s "$work/receipt" ]]; then
+    echo "  Nothing was removed."
+    return 0
+  fi
+  while IFS=$'\t' read -r title outcome; do
+    printf '  %-19s %s\n' "$title" "$outcome"
+  done <"$work/receipt"
+}
+
+# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+on_exit() {
+  local status=$?
+  trap - EXIT
+  if [[ "$acting" -eq 1 && -n "$work" ]]; then
+    print_receipt || true
+  elif [[ -n "$work" ]]; then
+    case "$status" in
+      124 | 125 | 129 | 130 | 143)
+        echo >&2
+        echo "groundwork-disk-clean: stopped (exit $status) before anything was removed." >&2
+        ;;
+    esac
+  fi
+  if [[ "$lock_held" -eq 1 ]] && type groundwork_lock_release >/dev/null 2>&1; then
+    groundwork_lock_release || true
+  fi
+  [[ -z "$work" ]] || rm -rf -- "$work" || true
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-disk-clean.XXXXXX")"
+: >"$work/receipt"
+
+if [[ "$interactive" -eq 1 ]]; then
+  if [[ ! -r "$lock_lib" ]]; then
+    echo "groundwork-disk-clean: the update lock helper is missing: $lock_lib" >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$lock_lib"
+  lock_status=0
+  groundwork_lock_acquire "groundwork-disk-clean" || lock_status=$?
+  if [[ "$lock_status" -ne 0 ]]; then
+    echo "groundwork-disk-clean: no change was made." >&2
+    exit "$lock_status"
+  fi
+  lock_held=1
+fi
+
+format_bytes() {
+  awk -v bytes="$1" 'BEGIN {
+    split("B KiB MiB GiB TiB", unit, " ")
+    index_ = 1
+    while (bytes >= 1024 && index_ < 5) { bytes /= 1024; index_++ }
+    if (index_ == 1) printf "%d %s", bytes, unit[index_]
+    else printf "%.1f %s", bytes, unit[index_]
+  }'
+}
+
+describe_bytes() {
+  printf '%s (%s bytes)' "$(format_bytes "$1")" "$1"
+}
+
+has_control() {
+  [[ "$(LC_ALL=C printf '%s' "$1" | tr -d '[:cntrl:]')" != "$1" ]]
+}
+
+# state file: status<TAB>reason. Status is ready, empty, unavailable, or skipped.
+set_state() { # dir status reason
+  printf '%s\t%s\n' "$2" "${3:-}" >"$1/state"
+}
+
+state_of() {
+  cut -f 1 "$1/state"
+}
+
+reason_of() {
+  cut -f 2- "$1/state"
+}
+
+total_of() { # items file
+  awk -F '\t' '{ sum += $2 } END { printf "%.0f", sum + 0 }' "$1"
+}
+
+count_of() {
+  awk 'END { print NR + 0 }' "$1"
+}
+
+finish_state() { # dir; ready when items exist, otherwise empty
+  if [[ -s "$1/items" ]]; then
+    set_state "$1" ready
+  else
+    set_state "$1" empty "nothing to free"
+  fi
+}
+
+ids_of() {
+  cut -f 1 "$1" | LC_ALL=C sort
+}
+
+# shellcheck disable=SC2329 # Run through run_bounded_capture.
+du_paths() {
+  local list="$1" path
+  while IFS= read -r path; do
+    printf '%s\0' "$path"
+  done <"$list" | xargs -0 du -sk --
+}
+
+# Measure each listed path in one bounded pass and write path<TAB>bytes for
+# every path du could measure. A path that vanished is simply not listed.
+measure_paths() { # list output
+  local list="$1" output="$2" raw="$work/du.$RANDOM" status=0
+  : >"$output"
+  [[ -s "$list" ]] || return 0
+  run_bounded_capture "measure $(count_of "$list") path(s)" "$raw" du_paths "$list" 2>/dev/null || status=$?
+  exit_if_terminal_status "$status"
+  case "$status" in
+    0 | 1 | 123) ;;
+    *)
+      rm -f -- "$raw"
+      return "$status"
+      ;;
+  esac
+  awk -F '\t' 'NR == FNR { wanted[$0] = 1; next }
+    {
+      blocks = $1
+      path = substr($0, length($1) + 2)
+      if ((path in wanted) && blocks ~ /^[0-9]+$/) printf "%s\t%.0f\n", path, blocks * 1024
+    }' "$list" "$raw" >"$output"
+  rm -f -- "$raw"
+}
+
+# ---- Homebrew ----------------------------------------------------------------
+
+# shellcheck disable=SC2329 # Run through run_bounded_capture.
+brew_dry_run() {
+  cd "$HOME"
+  exec brew cleanup --prune=all --dry-run
+}
+
+# shellcheck disable=SC2329 # Run through run_bounded.
+brew_cleanup() {
+  cd "$HOME"
+  exec brew cleanup --prune=all
+}
+
+plan_homebrew() {
+  local dir="$1" status=0 line path
+  if ! command -v brew >/dev/null 2>&1; then
+    set_state "$dir" unavailable "Homebrew is not installed"
+    return 0
+  fi
+  run_bounded_capture "brew cleanup --prune=all --dry-run" "$dir/raw" brew_dry_run || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "brew cleanup --dry-run failed (exit $status)"
+    return 0
+  fi
+  : >"$dir/paths"
+  while IFS= read -r line; do
+    case "$line" in
+      "Would remove: "*) ;;
+      *) continue ;;
+    esac
+    path="${line#Would remove: }"
+    case "$path" in
+      *" ("*")") path="${path% (*}" ;;
+    esac
+    if [[ "$path" != /* ]] || has_control "$path"; then
+      set_state "$dir" unavailable "Homebrew listed a path Groundwork cannot display safely"
+      return 0
+    fi
+    printf '%s\n' "$path" >>"$dir/paths"
+  done <"$dir/raw"
+  LC_ALL=C sort -u -o "$dir/paths" "$dir/paths"
+  status=0
+  measure_paths "$dir/paths" "$dir/sizes" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "measuring Homebrew's paths failed (exit $status)"
+    return 0
+  fi
+  awk -F '\t' '{ printf "%s\t%s\t%s\n", $1, $2, $1 }' "$dir/sizes" >"$dir/items"
+  finish_state "$dir"
+}
+
+# ---- mise --------------------------------------------------------------------
+
+# shellcheck disable=SC2329 # Run through run_bounded_capture.
+mise_prunable() {
+  cd "$HOME"
+  exec mise ls --prunable --json
+}
+
+# shellcheck disable=SC2329 # Run through run_bounded.
+mise_uninstall() {
+  cd "$HOME"
+  exec mise uninstall "$@"
+}
+
+plan_mise() {
+  local dir="$1" status=0
+  if ! command -v mise >/dev/null 2>&1; then
+    set_state "$dir" unavailable "mise is not installed"
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    set_state "$dir" unavailable "jq is required to read mise's version list"
+    return 0
+  fi
+  run_bounded_capture "mise ls --prunable --json" "$dir/raw" mise_prunable || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "mise ls --prunable failed (exit $status)"
+    return 0
+  fi
+  if ! jq -r 'if type == "object" then . else error("not an object") end
+      | to_entries[] | .key as $tool | .value[]
+      | select(.installed == true)
+      | if (.version | type) == "string" and (.install_path | type) == "string"
+        then [($tool + "@" + .version), .install_path] | @tsv
+        else error("incomplete record") end' \
+    "$dir/raw" >"$dir/pairs" 2>/dev/null; then
+    set_state "$dir" unavailable "mise returned a version list Groundwork could not verify"
+    return 0
+  fi
+  if awk -F '\t' '$2 !~ /^\// || NF != 2 { bad = 1 } END { exit !bad }' "$dir/pairs" \
+    || has_control "$(tr -d '\t\n' <"$dir/pairs")"; then
+    set_state "$dir" unavailable "mise listed an install path Groundwork cannot display safely"
+    return 0
+  fi
+  cut -f 2 "$dir/pairs" >"$dir/paths"
+  status=0
+  measure_paths "$dir/paths" "$dir/sizes" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "measuring mise install folders failed (exit $status)"
+    return 0
+  fi
+  awk -F '\t' 'NR == FNR { size[$1] = $2; next }
+    ($2 in size) { printf "%s\t%s\t%s  %s\n", $1, size[$2], $1, $2 }' \
+    "$dir/sizes" "$dir/pairs" >"$dir/items"
+  finish_state "$dir"
+}
+
+# ---- Docker ------------------------------------------------------------------
+
+docker_state=""
+docker_reason=""
+docker_executable=""
+docker_output=""
+docker_grace_seconds=86400
+
+docker() {
+  local seconds="$observe_deadline" status=0
+  case "${1:-} ${2:-}" in
+    "image rm" | "buildx prune") seconds="$op_deadline" ;;
+  esac
+  : >"$docker_output"
+  run_bounded_internal "docker ${1:-} ${2:-}" "$seconds" "$docker_output" \
+    "$docker_executable" "$@" || status=$?
+  cat "$docker_output"
+  return "$status"
+}
+
+docker_prepare() {
+  local name host status=0
+  [[ -z "$docker_state" ]] || return 0
+  docker_state=unavailable
+  if [[ ! -r "$docker_lib" ]]; then
+    docker_reason="the Docker scan library is missing: $docker_lib"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  source "$docker_lib"
+  docker_executable="$(gw_docker_resolve_trusted_executable docker 2>/dev/null || true)"
+  if [[ -z "$docker_executable" ]]; then
+    docker_reason="Docker is not installed in a trusted location"
+    return 0
+  fi
+  for name in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG; do
+    if [[ -n "${!name:-}" ]]; then
+      docker_reason="$name is set; Groundwork cleans only the default local Docker context"
+      return 0
+    fi
+  done
+  if ! command -v jq >/dev/null 2>&1; then
+    docker_reason="jq is required to verify Docker's image facts"
+    return 0
+  fi
+  docker_output="$work/docker-output"
+  host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)" || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 || -z "$host" ]] || has_control "$host"; then
+    docker_reason="the Docker context could not be read"
+    return 0
+  fi
+  if [[ "$host" != unix://?* ]]; then
+    docker_reason="the Docker endpoint is not a local socket ($host)"
+    return 0
+  fi
+  status=0
+  docker info >/dev/null 2>&1 || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    docker_state=skipped
+    docker_reason="Docker is not running; Groundwork does not start it here"
+    return 0
+  fi
+  docker_state=ready
+}
+
+docker_inspect_ids() { # ids-file output
+  local ids=() id status=0
+  while IFS= read -r id; do
+    ids+=("$id")
+  done <"$1"
+  docker image inspect "${ids[@]}" >"$2" 2>/dev/null || status=$?
+  return "$status"
+}
+
+classify_docker_images() { # dir
+  local dir="$1" id size created tags eph epoch now refs kept_scratch kept_refs=0 kept_new=0 kept_unknown=0
+  IFS=$'\t' read -r kept_scratch _ _ _ <"$dir/kept"
+  now="$(date -u +%s)"
+  : >"$dir/items"
+  [[ -s "$dir/ids" ]] || {
+    printf '%s\t0\t0\t0\n' "$kept_scratch" >"$dir/kept"
+    return 0
+  }
+  jq -r '.[] | [
+      .Id,
+      (.Size | tostring),
+      .Created,
+      ((.RepoTags // []) | length | tostring),
+      (((.Config.Labels // {})["dev.roost.ephemeral"]) // "-" | if . == "" then "-" else . end),
+      ((.Created | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch -1) | tostring)
+    ] | @tsv' "$dir/inspect" >"$dir/facts" || return 1
+  refs="$(printf '%s' "$GW_DOCKER_REFS" | cut -f 1)"
+  while IFS=$'\t' read -r id size created tags eph epoch; do
+    [[ "$id" =~ ^sha256:[0-9a-f]{64}$ && "$size" =~ ^[0-9]+$ ]] || return 1
+    if [[ "$tags" != 0 ]]; then
+      continue
+    elif [[ "$eph" != "-" ]]; then
+      kept_scratch=$((kept_scratch + 1))
+    elif printf '%s\n' "$refs" | grep -qxF -- "$id"; then
+      kept_refs=$((kept_refs + 1))
+    elif [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
+      kept_unknown=$((kept_unknown + 1))
+    elif ((now - epoch < docker_grace_seconds)); then
+      kept_new=$((kept_new + 1))
+    else
+      printf '%s\t%s\t%s  created %s\n' "$id" "$size" "${id:7:12}" "${created%%.*}" >>"$dir/items"
+    fi
+  done <"$dir/facts"
+  printf '%s\t%s\t%s\t%s\n' "$kept_scratch" "$kept_refs" "$kept_new" "$kept_unknown" >"$dir/kept"
+}
+
+plan_docker_images() {
+  local dir="$1" status=0 kept_scratch
+  docker_prepare
+  if [[ "$docker_state" != ready ]]; then
+    set_state "$dir" "$docker_state" "$docker_reason"
+    return 0
+  fi
+  docker image ls --quiet --no-trunc --filter dangling=true >"$dir/dangling" 2>/dev/null || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "listing dangling images failed (exit $status)"
+    return 0
+  fi
+  docker image ls --quiet --no-trunc --filter dangling=true \
+    --filter "label=dev.roost.ephemeral" >"$dir/scratch" 2>/dev/null || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "listing Groundwork scratch images failed (exit $status)"
+    return 0
+  fi
+  gw_docker_refresh_refs || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "listing container references failed (exit $status)"
+    return 0
+  fi
+  sed '/^$/d' "$dir/dangling" | LC_ALL=C sort -u >"$dir/candidates"
+  sed '/^$/d' "$dir/scratch" | LC_ALL=C sort -u >"$dir/scratch.sorted"
+  kept_scratch="$(LC_ALL=C comm -12 "$dir/candidates" "$dir/scratch.sorted" | awk 'END { print NR + 0 }')"
+  LC_ALL=C comm -23 "$dir/candidates" "$dir/scratch.sorted" >"$dir/ids"
+  printf '%s\t0\t0\t0\n' "$kept_scratch" >"$dir/kept"
+  if grep -Eqv '^sha256:[0-9a-f]{64}$' "$dir/ids"; then
+    set_state "$dir" unavailable "Docker listed an image ID Groundwork could not verify"
+    return 0
+  fi
+  if [[ -s "$dir/ids" ]]; then
+    docker_inspect_ids "$dir/ids" "$dir/inspect" || status=$?
+    exit_if_terminal_status "$status"
+    if [[ "$status" -ne 0 ]]; then
+      set_state "$dir" unavailable "inspecting dangling images failed (exit $status)"
+      return 0
+    fi
+  fi
+  if ! classify_docker_images "$dir"; then
+    set_state "$dir" unavailable "Docker returned image facts Groundwork could not verify"
+    return 0
+  fi
+  finish_state "$dir"
+}
+
+human_to_bytes() { # Docker's human sizes: decimal kB/MB/GB/TB, or binary KiB/MiB/GiB/TiB
+  awk -v raw="$1" 'BEGIN {
+    if (!match(raw, /^[0-9]+(\.[0-9]+)?/)) exit 1
+    number = substr(raw, 1, RLENGTH) + 0
+    unit = substr(raw, RLENGTH + 1)
+    factor["B"] = 1; factor["kB"] = 1000; factor["KB"] = 1000; factor["MB"] = 1000000
+    factor["GB"] = 1000000000; factor["TB"] = 1000000000000
+    factor["KiB"] = 1024; factor["MiB"] = 1048576; factor["GiB"] = 1073741824
+    factor["TiB"] = 1099511627776
+    if (!(unit in factor)) exit 1
+    printf "%.0f\n", number * factor[unit]
+  }'
+}
+
+build_cache_reclaimable() { # raw-file -> bytes
+  local value
+  value="$(awk '$1 == "Reclaimable:" { print $2; exit }' "$1")"
+  [[ -n "$value" ]] || return 1
+  human_to_bytes "$value"
+}
+
+plan_docker_build_cache() {
+  local dir="$1" status=0 bytes
+  docker_prepare
+  if [[ "$docker_state" != ready ]]; then
+    set_state "$dir" "$docker_state" "$docker_reason"
+    return 0
+  fi
+  docker buildx version >/dev/null 2>&1 || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "docker buildx is not installed"
+    return 0
+  fi
+  docker buildx du --filter until=24h >"$dir/raw" 2>/dev/null || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "docker buildx du failed (exit $status)"
+    return 0
+  fi
+  if ! bytes="$(build_cache_reclaimable "$dir/raw")"; then
+    set_state "$dir" unavailable "Docker's build cache summary could not be read"
+    return 0
+  fi
+  : >"$dir/items"
+  if [[ "$bytes" -gt 0 ]]; then
+    printf 'build-cache-until-24h\t%s\tbuild cache unused for 24 hours (Docker-reported, rounded by Docker)\n' \
+      "$bytes" >"$dir/items"
+  fi
+  finish_state "$dir"
+}
+
+# ---- Colima ------------------------------------------------------------------
+
+# shellcheck disable=SC2329 # Run through run_bounded_capture.
+colima_status() {
+  exec colima --profile="$GW_COLIMA_PROFILE" status
+}
+
+# shellcheck disable=SC2329 # Run through run_bounded.
+colima_trim() {
+  exec colima --profile="$GW_COLIMA_PROFILE" ssh -- sudo fstrim -a
+}
+
+plan_colima() {
+  local dir="$1" status=0 candidate
+  if ! command -v colima >/dev/null 2>&1; then
+    set_state "$dir" unavailable "Colima is not installed"
+    return 0
+  fi
+  if [[ ! -r "$colima_lib" ]]; then
+    set_state "$dir" unavailable "the Colima home library is missing: $colima_lib"
+    return 0
+  fi
+  # shellcheck source=/dev/null
+  source "$colima_lib"
+  if ! gw_colima_resolve; then
+    set_state "$dir" unavailable "the Colima home or profile could not be resolved safely"
+    return 0
+  fi
+  run_bounded_capture "colima status" "$dir/raw" colima_status >/dev/null 2>&1 || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" skipped "Colima profile $GW_COLIMA_PROFILE is not running; Groundwork does not start it here (Colima also returns unused space when it starts)"
+    return 0
+  fi
+  : >"$dir/paths"
+  for candidate in "$GW_COLIMA_DATADISK" "$GW_COLIMA_LIMA_HOME/$GW_COLIMA_PROFILE_ID/diffdisk"; do
+    if [[ -f "$candidate" && ! -L "$candidate" ]] && ! has_control "$candidate"; then
+      printf '%s\n' "$candidate" >>"$dir/paths"
+    fi
+  done
+  if [[ ! -s "$dir/paths" ]]; then
+    set_state "$dir" unavailable "the running profile's disk files were not found under $GW_COLIMA_LIMA_HOME"
+    return 0
+  fi
+  status=0
+  measure_paths "$dir/paths" "$dir/sizes" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    set_state "$dir" unavailable "measuring the Colima disk failed (exit $status)"
+    return 0
+  fi
+  awk -F '\t' '{ printf "%s\t%s\t%s (on disk now)\n", $1, $2, $1 }' "$dir/sizes" >"$dir/items"
+  finish_state "$dir"
+}
+
+# ---- Preview -----------------------------------------------------------------
+
+plan_category() { # category dir
+  mkdir -p "$2"
+  : >"$2/items"
+  case "$1" in
+    homebrew) plan_homebrew "$2" ;;
+    mise) plan_mise "$2" ;;
+    docker-images) plan_docker_images "$2" ;;
+    docker-build-cache) plan_docker_build_cache "$2" ;;
+    colima) plan_colima "$2" ;;
+  esac
+}
+
+category_action() {
+  case "$1" in
+    homebrew) printf 'brew cleanup --prune=all' ;;
+    mise) printf 'mise uninstall <each version listed>' ;;
+    docker-images) printf 'docker image rm --no-prune <each image listed>' ;;
+    docker-build-cache) printf 'docker buildx prune --force --filter until=24h' ;;
+    colima) printf 'colima --profile=%s ssh -- sudo fstrim -a' "${GW_COLIMA_PROFILE:-default}" ;;
+  esac
+}
+
+category_note() {
+  case "$1" in
+    homebrew) printf 'Formulae and casks you installed stay. brew autoremove is not run here.' ;;
+    mise) printf 'Versions a tracked config or running process uses stay. A removed version reinstalls on demand.' ;;
+    docker-images) printf 'Tagged images, images any container uses, images newer than 24 hours, and Groundwork scratch images stay.' ;;
+    docker-build-cache) printf 'Cache used in the last 24 hours stays. Docker reports this size rounded; the receipt shows its before and after figures.' ;;
+    colima) printf 'No data in the VM is deleted. The space returned depends on free space inside the VM and is measured after the trim.' ;;
+  esac
+}
+
+print_preview() {
+  local category dir state count total grand=0 ready=0 bytes display kept
+  echo "groundwork-disk-clean: what Groundwork's tools can free"
+  for category in $categories; do
+    dir="$work/plan/$category"
+    state="$(state_of "$dir")"
+    echo
+    case "$state" in
+      ready)
+        count="$(count_of "$dir/items")"
+        total="$(total_of "$dir/items")"
+        printf '%s: %s item(s), %s\n' "$(category_title "$category")" "$count" "$(describe_bytes "$total")"
+        while IFS=$'\t' read -r _ bytes display; do
+          printf '  %10s  %s\n' "$(format_bytes "$bytes")" "$display"
+        done <"$dir/items"
+        printf '  Runs:  %s\n' "$(category_action "$category")"
+        printf '  Keeps: %s\n' "$(category_note "$category")"
+        grand=$((grand + total))
+        ready=$((ready + 1))
+        ;;
+      empty) printf '%s: nothing to free\n' "$(category_title "$category")" ;;
+      *) printf '%s: not checked (%s)\n' "$(category_title "$category")" "$(reason_of "$dir")" ;;
+    esac
+    if [[ "$category" == docker-images && -f "$dir/kept" && "$state" != unavailable ]]; then
+      kept="$(awk -F '\t' '{ printf "%s Groundwork scratch, %s used by a container, %s newer than 24 hours, %s with an unreadable date", $1, $2, $3, $4 }' "$dir/kept")"
+      printf '  Kept dangling images: %s\n' "$kept"
+    fi
+  done
+  echo
+  echo "Never touched: your files and projects, application data, Docker volumes,"
+  echo "containers, tagged images, pnpm and npm caches, and remote Docker hosts."
+  echo
+  printf 'Total offered: %s across %s categor%s.\n' "$(describe_bytes "$grand")" "$ready" \
+    "$(if [[ "$ready" -eq 1 ]]; then printf 'y'; else printf 'ies'; fi)"
+  ready_count="$ready"
+}
+
+# ---- Confirmation ------------------------------------------------------------
+
+ask() { # question; 0 yes, 1 no, 2 input ended
+  local answer normalized
+  while true; do
+    printf '%s [y/N] ' "$1" >&2
+    if ! IFS= read -r answer; then
+      echo >&2
+      return 2
+    fi
+    normalized="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+    case "$normalized" in
+      y | yes | t | true | 1) return 0 ;;
+      "" | n | no | f | false | 0) return 1 ;;
+      *) echo "Please answer y or n." >&2 ;;
+    esac
+  done
+}
+
+question_for() { # category dir
+  local count total
+  count="$(count_of "$2/items")"
+  total="$(total_of "$2/items")"
+  case "$1" in
+    homebrew) printf 'Remove the %s Homebrew path(s) listed above, %s?' "$count" "$(describe_bytes "$total")" ;;
+    mise) printf 'Uninstall the %s mise version(s) listed above, %s?' "$count" "$(describe_bytes "$total")" ;;
+    docker-images) printf 'Remove the %s dangling Docker image(s) listed above, %s?' "$count" "$(describe_bytes "$total")" ;;
+    docker-build-cache) printf 'Prune Docker build cache unused for 24 hours, about %s?' "$(describe_bytes "$total")" ;;
+    colima) printf 'Trim the running Colima disk (%s on disk now at %s)?' "$(describe_bytes "$total")" "$(cut -f 1 "$2/items" | paste -sd, -)" ;;
+  esac
+}
+
+# ---- Execution ---------------------------------------------------------------
+
+terminal_outcome() { # category status
+  case "$2" in
+    125) record "$1" "stopped, but its process tree could not be confirmed stopped; some items may already be removed" ;;
+    129 | 130 | 143) record "$1" "interrupted (exit $2); some items may already be removed" ;;
+    *) return 1 ;;
+  esac
+  exit "$2"
+}
+
+# Re-plan immediately before acting. Refuse when the item set changed.
+replan_matches() { # category confirmed-dir fresh-dir
+  plan_category "$1" "$3"
+  if [[ "$(state_of "$3")" != ready ]]; then
+    record "$1" "not run: no longer ready ($(reason_of "$3")); nothing was removed"
+    return 1
+  fi
+  if [[ "$(ids_of "$2/items")" != "$(ids_of "$3/items")" ]]; then
+    record "$1" "not run: the plan changed after the preview; nothing was removed. Run groundwork-disk-clean again."
+    return 1
+  fi
+  return 0
+}
+
+paths_receipt() { # category items-file status
+  local id bytes removed=0 removed_bytes=0 left=0
+  while IFS=$'\t' read -r id bytes _; do
+    if [[ -e "$id" || -L "$id" ]]; then
+      left=$((left + 1))
+    else
+      removed=$((removed + 1))
+      removed_bytes=$((removed_bytes + bytes))
+    fi
+  done <"$2"
+  if [[ "$3" -eq 0 && "$left" -eq 0 ]]; then
+    record "$1" "removed $removed path(s), freed $(describe_bytes "$removed_bytes")"
+  else
+    record "$1" "incomplete (exit $3): removed $removed path(s), freed $(describe_bytes "$removed_bytes"); $left path(s) left"
+    final_status=1
+  fi
+}
+
+execute_homebrew() {
+  local dir="$1" fresh="$2" status=0
+  replan_matches homebrew "$dir" "$fresh" || return 0
+  run_bounded "brew cleanup --prune=all" brew_cleanup || status=$?
+  terminal_outcome homebrew "$status" || true
+  paths_receipt homebrew "$fresh/items" "$status"
+}
+
+execute_mise() {
+  local dir="$1" fresh="$2" status=0 versions=() id path bytes removed=0 removed_bytes=0 left=0
+  replan_matches mise "$dir" "$fresh" || return 0
+  while IFS=$'\t' read -r id _ _; do
+    versions+=("$id")
+  done <"$fresh/items"
+  run_bounded "mise uninstall (${#versions[@]} version(s))" mise_uninstall "${versions[@]}" || status=$?
+  terminal_outcome mise "$status" || true
+  while IFS=$'\t' read -r id path; do
+    bytes="$(awk -F '\t' -v id="$id" '$1 == id { print $2; exit }' "$fresh/items")"
+    [[ -n "$bytes" ]] || continue
+    if [[ -e "$path" ]]; then
+      left=$((left + 1))
+    else
+      removed=$((removed + 1))
+      removed_bytes=$((removed_bytes + bytes))
+    fi
+  done <"$fresh/pairs"
+  if [[ "$status" -eq 0 && "$left" -eq 0 ]]; then
+    record mise "uninstalled $removed version(s), freed $(describe_bytes "$removed_bytes")"
+  else
+    record mise "incomplete (exit $status): uninstalled $removed version(s), freed $(describe_bytes "$removed_bytes"); $left left"
+    final_status=1
+  fi
+}
+
+execute_docker_images() {
+  local dir="$1" fresh="$2" status=0 ids=() id bytes removed=0 removed_bytes=0 left=0 after_status=0
+  replan_matches docker-images "$dir" "$fresh" || return 0
+  while IFS=$'\t' read -r id _ _; do
+    ids+=("$id")
+  done <"$fresh/items"
+  echo "  Running: docker image rm --no-prune (${#ids[@]} image(s); deadline ${op_deadline}s; Ctrl-C cancels)"
+  docker image rm --no-prune "${ids[@]}" || status=$?
+  terminal_outcome docker-images "$status" || true
+  docker image ls --quiet --no-trunc --filter dangling=true >"$fresh/after" 2>/dev/null || after_status=$?
+  exit_if_terminal_status "$after_status"
+  if [[ "$after_status" -ne 0 ]]; then
+    record docker-images "receipt incomplete: docker image rm exited $status and the follow-up listing failed (exit $after_status)"
+    final_status=1
+    return 0
+  fi
+  while IFS=$'\t' read -r id bytes _; do
+    if grep -qxF -- "$id" "$fresh/after"; then
+      left=$((left + 1))
+    else
+      removed=$((removed + 1))
+      removed_bytes=$((removed_bytes + bytes))
+    fi
+  done <"$fresh/items"
+  if [[ "$status" -eq 0 && "$left" -eq 0 ]]; then
+    record docker-images "removed $removed image(s), freed $(describe_bytes "$removed_bytes") (Docker-reported sizes)"
+  else
+    record docker-images "incomplete (exit $status): removed $removed image(s), freed $(describe_bytes "$removed_bytes"); $left left"
+    final_status=1
+  fi
+}
+
+execute_docker_build_cache() {
+  local dir="$1" fresh="$2" status=0 before after after_status=0
+  plan_category docker-build-cache "$fresh"
+  if [[ "$(state_of "$fresh")" != ready ]]; then
+    record docker-build-cache "not run: no longer ready ($(reason_of "$fresh")); nothing was removed"
+    return 0
+  fi
+  before="$(total_of "$fresh/items")"
+  echo "  Running: docker buildx prune --force --filter until=24h (deadline ${op_deadline}s; Ctrl-C cancels)"
+  docker buildx prune --force --filter until=24h || status=$?
+  terminal_outcome docker-build-cache "$status" || true
+  docker buildx du --filter until=24h >"$fresh/after" 2>/dev/null || after_status=$?
+  exit_if_terminal_status "$after_status"
+  if [[ "$after_status" -ne 0 ]] || ! after="$(build_cache_reclaimable "$fresh/after")"; then
+    record docker-build-cache "receipt incomplete: prune exited $status and the follow-up summary could not be read"
+    final_status=1
+    return 0
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    record docker-build-cache "pruned; Docker reported $(format_bytes "$before") unused for 24 hours before and $(format_bytes "$after") after"
+  else
+    record docker-build-cache "incomplete (exit $status); Docker reported $(format_bytes "$before") before and $(format_bytes "$after") after"
+    final_status=1
+  fi
+}
+
+execute_colima() {
+  local dir="$1" fresh="$2" status=0 before after measure_status=0
+  replan_matches colima "$dir" "$fresh" || return 0
+  before="$(total_of "$fresh/items")"
+  run_bounded "colima ssh -- sudo fstrim -a" colima_trim || status=$?
+  terminal_outcome colima "$status" || true
+  measure_paths "$fresh/paths" "$fresh/after" || measure_status=$?
+  if [[ "$measure_status" -ne 0 || ! -s "$fresh/after" ]]; then
+    record colima "receipt incomplete: trim exited $status and the disk could not be measured afterwards"
+    final_status=1
+    return 0
+  fi
+  after="$(total_of "$fresh/after")"
+  if [[ "$status" -ne 0 ]]; then
+    record colima "failed (exit $status); on disk $(format_bytes "$before") before, $(format_bytes "$after") after"
+    final_status=1
+  elif [[ "$after" -lt "$before" ]]; then
+    record colima "trimmed; returned $(describe_bytes "$((before - after))") to the host disk"
+  else
+    record colima "trimmed; no change in on-disk size was measured ($(format_bytes "$after"))"
+  fi
+}
+
+# ---- Main --------------------------------------------------------------------
+
+mkdir -p "$work/plan" "$work/fresh"
+echo "Checking what Groundwork's tools can free (read-only)..."
+for category in $categories; do
+  plan_category "$category" "$work/plan/$category"
+done
+ready_count=0
+print_preview
+
+if [[ "$interactive" -eq 0 ]]; then
+  echo
+  echo "Preview only: nothing was deleted ($preview_reason)."
+  echo "Run groundwork-disk-clean in a terminal to choose what to free."
+  exit 0
+fi
+
+if [[ "$ready_count" -eq 0 ]]; then
+  echo
+  echo "Nothing to free. Nothing was deleted."
+  exit 0
+fi
+
+echo
+echo "Answer each question; the default is no. Nothing is removed until every"
+echo "question is answered."
+: >"$work/confirmed"
+for category in $categories; do
+  dir="$work/plan/$category"
+  [[ "$(state_of "$dir")" == ready ]] || continue
+  answer_status=0
+  ask "$(question_for "$category" "$dir")" || answer_status=$?
+  case "$answer_status" in
+    0) printf '%s\n' "$category" >>"$work/confirmed" ;;
+    1) record "$category" "declined; nothing was removed" ;;
+    *)
+      echo "Input ended before every question was answered. Nothing was deleted." >&2
+      exit 1
+      ;;
+  esac
+done
+
+acting=1
+if [[ ! -s "$work/confirmed" ]]; then
+  exit 0
+fi
+
+while IFS= read -r category <&3; do
+  echo
+  category_title "$category"
+  echo
+  case "$category" in
+    homebrew) execute_homebrew "$work/plan/$category" "$work/fresh/$category" ;;
+    mise) execute_mise "$work/plan/$category" "$work/fresh/$category" ;;
+    docker-images) execute_docker_images "$work/plan/$category" "$work/fresh/$category" ;;
+    docker-build-cache) execute_docker_build_cache "$work/plan/$category" "$work/fresh/$category" ;;
+    colima) execute_colima "$work/plan/$category" "$work/fresh/$category" ;;
+  esac
+done 3<"$work/confirmed"
+
+exit "$final_status"
