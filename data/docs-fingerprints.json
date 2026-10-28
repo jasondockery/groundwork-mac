@@ -18,7 +18,7 @@
       "lastmod": "2026-08-13"
     },
     "apps.html": {
-      "sha256": "3a08a35f582e865cfdef35091647c42576fe7cd58f1909d9a4a15d13557e30d4",
+      "sha256": "fcae0ca9c64cb95a5e80f9147c785bfc9f9901344b0f1294d7ce74d03f42d91d",
       "lastmod": "2026-10-28"
     },
     "cheatsheet.html": {
@@ -38,7 +38,7 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "5fa925c5ed1a7ea02ff5f602484c76af6d2bab1e04a5d909a21dcb5e24a0ff4a",
+      "sha256": "bf7f26e099dce17851f68168c89bd2bf82f3e0ac7ce22616e5c113db320cac7e",
       "lastmod": "2026-10-28"
     },
     "customizing.html": {
@@ -166,7 +166,7 @@
       "lastmod": "2026-10-26"
     },
     "shell.html": {
-      "sha256": "7350dfe7a3a50822ef840604a85a625e9d19ecf1570a7f0d74d2f50afcd0a3c6",
+      "sha256": "bdcb199651bbbf1286711279f34105c2b57203f47bd0bd0da55b652b4f582136",
       "lastmod": "2026-10-28"
     },
     "skills-playbooks.html": {

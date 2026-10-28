@@ -1,0 +1,10 @@
+Name:          colima
+Driver:        docker
+Last Activity: 2026-10-27 09:14:03 +0000 UTC
+
+Nodes:
+Name:             colima
+Endpoint:         colima
+Status:           running
+BuildKit version: v0.25.1
+Platforms:        linux/arm64

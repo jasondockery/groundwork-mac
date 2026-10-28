@@ -1,0 +1,13 @@
+Would remove: @PREFIX@/Cellar/node/24.1.0 (2,345 files, 92.4MB)
+Would remove: @PREFIX@/Caskroom/ghostty/1.1.2 (24 files, 51.3MB)
+==> Would autoremove 2 unneeded formulae:
+libyaml
+python@3.12
+Would remove: @CACHE@/downloads/0f1e2d3c--jq--1.7.1.arm64_sequoia.bottle.tar.gz (512KB)
+Would remove: @CACHE@/node--24.1.0 (21.2MB)
+Would prune 3 files from: @CACHE@/api-source
+Would remove: @LOGS@/node (4 files, 18KB)
+Would remove (broken link): @PREFIX@/bin/old-tool
+Would remove (empty directory): @PREFIX@/share/old-tool
+Would remove Library/Homebrew/vendor/bundle/ruby/3.3.0/
+==> This operation would free approximately 165.4MB of disk space.
