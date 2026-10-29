@@ -9287,6 +9287,8 @@ EOF
   # bound starts, so a deadline or grace measured with -ge ends early every run.
   /bin/bash scripts/test-maintenance-runner \
     || fail "the shared bounded runner ended a declared deadline or grace early"
+  /bin/bash scripts/test-mas-auth-deadline \
+    || fail "Mac App Store authorization ended a 1s deadline on the clock boundary"
 
   check "groundwork-cleanup: post-mutation and terminal-status policy matrices"
   install_fixture_policy_runner \

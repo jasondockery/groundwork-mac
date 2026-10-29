@@ -52,4 +52,7 @@ started, which turned a 1-second drain grace into a false process-leak failure.
 The strict comparison overshoots by at most one second plus one poll, which is
 the accepted cost of never cutting a declared bound short. The shared runner's
 `bounded_seconds_elapsed` owns this rule, and `scripts/test-maintenance-runner`
-proves it with a scripted clock.
+proves it with a scripted clock. The foreground Mac App Store authorization
+watchdog uses the same comparison. A `sudo -v` that has already exited 0 is
+not a timeout when the cancel scan loses that race.
+`scripts/test-mas-auth-deadline` proves both.
