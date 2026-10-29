@@ -17667,8 +17667,11 @@ PY
   grep -qE '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' Dockerfile
   # The apply layer's cache key is the chezmoi source, not the whole context.
   # Copying `.` made every docs or script edit rerun a multi-minute apply.
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
   grep -qF 'COPY --chown=$USER:$USER .chezmoiroot /opt/groundwork/.chezmoiroot' Dockerfile
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
   grep -qF 'COPY --chown=$USER:$USER .chezmoiversion /opt/groundwork/.chezmoiversion' Dockerfile
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
   grep -qF 'COPY --chown=$USER:$USER home /opt/groundwork/home' Dockerfile
   if grep -Eq '^COPY[[:space:]].*[[:space:]]\.[[:space:]]+/opt/groundwork/?$' Dockerfile; then
     echo "Dockerfile must not COPY the whole context into the chezmoi source" >&2
