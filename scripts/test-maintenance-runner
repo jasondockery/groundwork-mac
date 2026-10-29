@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+# Scripted-clock regression tests for the shared bounded maintenance runner.
+#
+# The runner measures every bound with whole-second `date +%s` stamps. Each
+# scenario replaces `date` with a scripted clock that crosses a whole-second
+# boundary at the exact instant a bound starts, which is the moment a real
+# clock can reach by chance (a leader that exits at x.99 seconds). Edge
+# scenarios prove a declared deadline, drain grace, or cancel grace is never
+# ended early; control scenarios prove real expiry still cancels the tree.
+# Real processes, process groups, and signals are used; only time is scripted.
+#
+# Run it with the Bash under test, for example /bin/bash (Apple Bash 3.2 on
+# macOS):  /bin/bash scripts/test-maintenance-runner
+set -euo pipefail
+
+self_dir="$(cd "$(dirname "$0")" && pwd)"
+self="$self_dir/$(basename "$0")"
+runner_lib="$self_dir/../home/dot_local/share/groundwork/lib/maintenance-runner.sh"
+scenarios="deadline-edge deadline-expired orphan-drain-edge orphan-leaked cancel-term-edge cancel-kill-edge cancel-escalates"
+
+wait_for() {
+  local path="$1" tries=0
+  while [[ ! -e "$path" ]]; do
+    tries=$((tries + 1))
+    [[ "$tries" -le 600 ]] || return 1
+    sleep 0.05
+  done
+}
+
+process_gone() {
+  local state
+  state="$(ps -o stat= -p "$1" 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -z "$state" || "$state" == Z* ]]
+}
+
+# --- maintenance leaders (separate processes; each leads its process group) --
+
+leader_main() {
+  local mode="$1"
+  work="$2"
+  printf '%s\n' "$$" >"$work/leader.pid"
+  case "$mode" in
+    drain-child)
+      # A child that is still finishing when its leader exits, then drains.
+      (wait_for "$work/drain" && sleep 0.2) &
+      ;;
+    leaked-child)
+      sleep 30 &
+      printf '%s\n' "$!" >"$work/descendant.pid"
+      ;;
+    graceful-term)
+      # Honours TERM, but needs half a second to finish cleanly.
+      trap 'sleep 0.5; : >"$work/graceful"; exit 0' TERM
+      : >"$work/ready"
+      wait_for "$work/never" || true
+      exit 3
+      ;;
+    term-ignoring)
+      trap '' TERM
+      : >"$work/ready"
+      wait_for "$work/drain" || true
+      exit 0
+      ;;
+  esac
+  : >"$work/ready"
+  wait_for "$work/release" || true
+  exit 0
+}
+
+# --- scripted clock -----------------------------------------------------------
+
+advance_to() {
+  printf '%s\n' "$1" >"$work/phase"
+  printf '0\n' >"$work/held"
+}
+
+# Prints a frozen value for `limit` reads, then advances one second per read so
+# a defective runner cannot hang on a frozen clock.
+hold() {
+  local value="$1" limit="$2" held
+  read -r held <"$work/held"
+  held=$((held + 1))
+  printf '%s\n' "$held" >"$work/held"
+  if [[ "$held" -gt "$limit" ]]; then
+    value=$((value + held - limit))
+  fi
+  printf '%s\n' "$value"
+}
+
+# Lets the leader exit and returns only once it has, so the next clock read is
+# deterministically the runner's leader-exit stamp.
+release_leader() {
+  local pid tries=0
+  : >"$work/release"
+  read -r pid <"$work/leader.pid"
+  until process_gone "$pid"; do
+    tries=$((tries + 1))
+    if [[ "$tries" -gt 1000 ]]; then
+      echo "scripted clock: leader $pid did not exit after release" >&2
+      return 1
+    fi
+    sleep 0.01
+  done
+}
+
+date() {
+  if [[ "$*" != "+%s" ]]; then
+    echo "scripted clock: unsupported date arguments: $*" >&2
+    return 64
+  fi
+  local phase frozen=200
+  read -r phase <"$work/phase"
+  case "$scenario" in
+    deadline-edge | deadline-expired)
+      if [[ "$phase" -eq 0 ]]; then
+        advance_to 1
+        printf '1000\n'
+      elif [[ "$scenario" == deadline-edge ]]; then
+        hold 1001 "$frozen"
+      else
+        hold 1002 1
+      fi
+      ;;
+    orphan-drain-edge | orphan-leaked)
+      case "$phase" in
+        0)
+          if [[ -e "$work/ready" ]]; then
+            release_leader
+            advance_to 1
+          fi
+          printf '1000\n'
+          ;;
+        1)
+          advance_to 2
+          printf '1000\n'
+          ;;
+        *)
+          if [[ "$scenario" == orphan-drain-edge ]]; then
+            : >"$work/drain"
+            hold 1001 "$frozen"
+          else
+            hold 1001 1
+          fi
+          ;;
+      esac
+      ;;
+    cancel-term-edge | cancel-kill-edge | cancel-escalates)
+      case "$phase" in
+        0)
+          # The first read after the leader is ready trips the 1s deadline.
+          if [[ -e "$work/ready" ]]; then
+            advance_to 1
+            printf '1002\n'
+          else
+            printf '1000\n'
+          fi
+          ;;
+        1)
+          advance_to 2
+          printf '1002\n'
+          ;;
+        *)
+          if [[ "$scenario" == cancel-term-edge ]]; then
+            hold 1003 "$frozen"
+          elif [[ "$phase" -eq 2 ]]; then
+            advance_to 3
+            printf '1004\n'
+          elif [[ "$phase" -eq 3 ]]; then
+            advance_to 4
+            printf '1004\n'
+          elif [[ "$scenario" == cancel-kill-edge ]]; then
+            : >"$work/drain"
+            hold 1005 "$frozen"
+          else
+            hold 1005 1
+          fi
+          ;;
+      esac
+      ;;
+  esac
+}
+
+# --- one scenario per process -------------------------------------------------
+
+expect() {
+  if ! "$@"; then
+    echo "expectation failed: $*" >&2
+    return 1
+  fi
+}
+
+log_has() { grep -qE "$1" "$work/log"; }
+log_lacks() { ! grep -qE "$1" "$work/log"; }
+
+scenario_main() {
+  scenario="$1"
+  work="$2"
+  local seconds=30 status=0 pid tries
+  advance_to 0
+  # shellcheck disable=SC2034 # Policy globals are the sourced runner's API.
+  deadline=30 observe_deadline=30 heartbeat=3600 cancel_grace=1 poll_seconds=0.05 orphan_grace=1
+  # shellcheck source=home/dot_local/share/groundwork/lib/maintenance-runner.sh
+  source "$runner_lib"
+  case "$scenario" in
+    deadline-edge) seconds=1 && set -- sleep 0.3 ;;
+    deadline-expired) seconds=1 && set -- sleep 30 ;;
+    orphan-drain-edge) set -- "$BASH" "$self" --leader drain-child "$work" ;;
+    orphan-leaked) set -- "$BASH" "$self" --leader leaked-child "$work" ;;
+    cancel-term-edge) seconds=1 && set -- "$BASH" "$self" --leader graceful-term "$work" ;;
+    cancel-kill-edge | cancel-escalates)
+      seconds=1 && set -- "$BASH" "$self" --leader term-ignoring "$work"
+      ;;
+    *)
+      echo "unknown scenario: $scenario" >&2
+      return 64
+      ;;
+  esac
+  if [[ "$scenario" == cancel-kill-edge ]]; then
+    # A KILL that is not yet confirmed: the tree must get its full grace to drain.
+    kill() {
+      [[ "${1:-}" != "-KILL" ]] || return 0
+      builtin kill "$@"
+    }
+  fi
+
+  run_bounded_internal "$scenario" "$seconds" "" "$@" 2>"$work/log" || status=$?
+  printf 'runner status: %s\n' "$status" >>"$work/log"
+
+  if [[ -s "$work/leader.pid" ]]; then
+    read -r pid <"$work/leader.pid"
+    tries=0
+    until process_gone "$pid" || [[ "$tries" -gt 100 ]]; do
+      tries=$((tries + 1))
+      sleep 0.02
+    done
+    builtin kill -KILL -- "-$pid" 2>/dev/null || true
+  fi
+
+  case "$scenario" in
+    deadline-edge)
+      expect [ "$status" -eq 0 ]
+      expect log_lacks 'hard deadline'
+      ;;
+    deadline-expired)
+      expect [ "$status" -eq 124 ]
+      expect log_has 'exceeded its 1s hard deadline'
+      ;;
+    orphan-drain-edge)
+      expect [ "$status" -eq 0 ]
+      expect log_lacks 'left a background process|returning 70'
+      ;;
+    orphan-leaked)
+      expect [ "$status" -eq 70 ]
+      expect log_has 'after the 1s drain grace'
+      expect log_has 'succeeded but leaked a process; returning 70'
+      read -r pid <"$work/descendant.pid"
+      expect process_gone "$pid"
+      ;;
+    cancel-term-edge)
+      expect [ "$status" -eq 124 ]
+      expect test -e "$work/graceful"
+      ;;
+    cancel-kill-edge)
+      expect [ "$status" -eq 124 ]
+      expect log_lacks 'could not be fully stopped'
+      ;;
+    cancel-escalates)
+      expect [ "$status" -eq 124 ]
+      read -r pid <"$work/leader.pid"
+      expect process_gone "$pid"
+      ;;
+  esac
+}
+
+case "${1:-}" in
+  --leader)
+    leader_main "$2" "$3"
+    ;;
+  --scenario)
+    scenario_main "$2" "$3"
+    exit
+    ;;
+  "") ;;
+  *)
+    echo "usage: $0" >&2
+    exit 64
+    ;;
+esac
+
+work_root="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-runner-clock.XXXXXX")"
+trap 'rm -rf -- "$work_root"' EXIT
+failures=0
+for scenario in $scenarios; do
+  mkdir "$work_root/$scenario"
+  if "$BASH" "$self" --scenario "$scenario" "$work_root/$scenario" \
+    2>"$work_root/$scenario/assertions"; then
+    echo "ok: $scenario"
+  else
+    echo "FAIL: $scenario" >&2
+    sed 's/^/    /' "$work_root/$scenario/assertions" "$work_root/$scenario/log" >&2 || true
+    failures=$((failures + 1))
+  fi
+done
+if [[ "$failures" -ne 0 ]]; then
+  echo "test-maintenance-runner: $failures scenario(s) failed" >&2
+  exit 1
+fi
+echo "test-maintenance-runner: all scenarios passed"

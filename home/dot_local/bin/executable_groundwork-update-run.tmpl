@@ -1344,10 +1344,16 @@ if command -v mas >/dev/null 2>&1; then
     done_file="${pid_file}.done"
     (
       local started now auth_pid descendants pid
+      # Same whole-second rule as bounded_seconds_elapsed. A stamp S is any
+      # instant in [S, S+1), so an N-second bound has elapsed only when the
+      # clock reads more than S + N. -ge cancels it on the boundary.
       started="$(date +%s)"
       while [[ ! -s "$pid_file" && ! -e "$done_file" ]]; do
         now="$(date +%s)"
-        if [[ "$now" -ge $((started + seconds)) ]]; then
+        if [[ "$now" -gt $((started + seconds)) ]]; then
+          # The process can appear during this poll. Fall through and watch
+          # that pid instead of recording a timeout for a start that happened.
+          [[ -s "$pid_file" ]] && break
           : >"$deadline_file"
           exit 0
         fi
@@ -1361,7 +1367,13 @@ if command -v mas >/dev/null 2>&1; then
       }
       while kill -0 "$auth_pid" 2>/dev/null && [[ ! -e "$done_file" ]]; do
         now="$(date +%s)"
-        if [[ "$now" -ge $((started + seconds)) ]]; then
+        if [[ "$now" -gt $((started + seconds)) ]]; then
+          # The descendant scan below is slower than sudo -v on a busy Mac.
+          # Killing a command that already exited 0 suppresses the next exact
+          # app, which is what hosted full-macos reported for this change.
+          if [[ -e "$done_file" ]] || ! kill -0 "$auth_pid" 2>/dev/null; then
+            exit 0
+          fi
           echo "  Groundwork: $label exceeded its ${seconds}s hard deadline; cancelling its owned process tree." >&2
           descendants="$(LC_ALL=C ps -eo pid=,ppid= 2>/dev/null | awk -v root="$auth_pid" '
             { pid[NR]=$1; parent[NR]=$2 }
@@ -1372,6 +1384,9 @@ if command -v mas >/dev/null 2>&1; then
                   if (owned[parent[i]]) owned[pid[i]]=1
               for (i=1; i<=NR; i++) if (owned[pid[i]] && pid[i] != root) print pid[i]
             }')"
+          if [[ -e "$done_file" ]] || ! kill -0 "$auth_pid" 2>/dev/null; then
+            exit 0
+          fi
           for pid in $descendants; do kill -TERM "$pid" 2>/dev/null || true; done
           kill -TERM "$auth_pid" 2>/dev/null || true
           sleep "$mas_auth_kill_grace"
@@ -1398,7 +1413,13 @@ if command -v mas >/dev/null 2>&1; then
     if [[ -n "$saved_hup" ]]; then eval "$saved_hup"; else trap - HUP; fi
     if [[ -n "$saved_int" ]]; then eval "$saved_int"; else trap - INT; fi
     if [[ -n "$saved_term" ]]; then eval "$saved_term"; else trap - TERM; fi
-    [[ -e "$deadline_file" ]] && timed_out=1
+    # Cancellation records the deadline file before it reaps sudo. A zero
+    # exit means authorization finished; the deadline file is the race where
+    # the cancel scan outlasted the command. Only a non-zero sudo status is
+    # a timeout.
+    if [[ -e "$deadline_file" && "$status" -ne 0 ]]; then
+      timed_out=1
+    fi
     rm -f -- "$pid_file" "$deadline_file" "$done_file"
     if [[ "$interrupted" -ne 0 ]]; then
       return "$interrupted"
