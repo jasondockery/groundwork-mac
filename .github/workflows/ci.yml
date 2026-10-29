@@ -168,6 +168,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           filter: blob:none
+          # Static renders the desktop Brave hook, which reads the pinned
+          # core/browser/brave.json. Checkout leaves that submodule empty
+          # unless this is set.
+          submodules: true
 
       - name: Install repository Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

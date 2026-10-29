@@ -36,6 +36,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # Full includes the static suite, which reads the pinned Brave spec
+          # at core/browser/brave.json. Checkout leaves that submodule empty
+          # unless this is set.
+          submodules: true
 
       - name: Install repository Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -99,6 +103,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # Full includes the static suite, which reads the pinned Brave spec
+          # at core/browser/brave.json. Checkout leaves that submodule empty
+          # unless this is set.
+          submodules: true
 
       - name: Install repository Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
