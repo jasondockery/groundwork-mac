@@ -51,5 +51,10 @@ COPY --chown=$USER:$USER .chezmoiversion /opt/groundwork/.chezmoiversion
 COPY --chown=$USER:$USER home /opt/groundwork/home
 COPY --chown=$USER:$USER docker/chezmoi.headless.toml /home/$USER/.config/chezmoi/chezmoi.toml
 RUN chezmoi --source /opt/groundwork apply
+# The smoke entrypoint is not chezmoi source. Copy it after apply so a script
+# edit does not rebuild the apply layer.
+COPY --chown=$USER:$USER scripts/smoke-docker-image /opt/groundwork/scripts/smoke-docker-image
+COPY --chown=$USER:$USER scripts/test-developer-tool-visibility /opt/groundwork/scripts/test-developer-tool-visibility
+COPY --chown=$USER:$USER scripts/.developer-tool-surface-test.zsh /opt/groundwork/scripts/.developer-tool-surface-test.zsh
 
 CMD ["zsh"]
