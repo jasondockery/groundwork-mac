@@ -17780,6 +17780,62 @@ PY
 
   check "supply-chain guardrails"
   grep -qE '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' Dockerfile
+  # The apply layer's cache key is the chezmoi source, not the whole context.
+  # Copying `.` made every docs or script edit rerun a multi-minute apply.
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  grep -qF 'COPY --chown=$USER:$USER .chezmoiroot /opt/groundwork/.chezmoiroot' Dockerfile
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  grep -qF 'COPY --chown=$USER:$USER .chezmoiversion /opt/groundwork/.chezmoiversion' Dockerfile
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  grep -qF 'COPY --chown=$USER:$USER home /opt/groundwork/home' Dockerfile
+  # A source token of "." or "./" copies the whole build context. Whitespace
+  # after the token keeps ".chezmoiroot" a file name.
+  whole_context_copy='^COPY[[:space:]](.*[[:space:]])?\./?[[:space:]]+/opt/groundwork/?$'
+  if grep -Eq "$whole_context_copy" Dockerfile; then
+    echo "Dockerfile must not COPY the whole context into the chezmoi source" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  dockerfile_user_token='$USER'
+  dockerfile_chown="--chown=${dockerfile_user_token}:${dockerfile_user_token}"
+  for whole_context_example in \
+    'COPY ./ /opt/groundwork' \
+    'COPY ./ /opt/groundwork/' \
+    'COPY . /opt/groundwork' \
+    'COPY . /opt/groundwork/' \
+    "COPY ${dockerfile_chown} ./ /opt/groundwork"; do
+    grep -Eq "$whole_context_copy" <<<"$whole_context_example" || {
+      echo "whole-context COPY rejection missed: $whole_context_example" >&2
+      exit 1
+    }
+  done
+  for allowed_copy_example in \
+    "COPY ${dockerfile_chown} .chezmoiroot /opt/groundwork/.chezmoiroot" \
+    "COPY ${dockerfile_chown} home /opt/groundwork/home"; do
+    if grep -Eq "$whole_context_copy" <<<"$allowed_copy_example"; then
+      echo "whole-context COPY rejection matched a file copy: $allowed_copy_example" >&2
+      exit 1
+    fi
+  done
+  dockerfile_before_apply="$(awk '/^RUN chezmoi --source \/opt\/groundwork apply$/ { exit } { print }' Dockerfile)"
+  dockerfile_after_apply="$(awk 'found { print } /^RUN chezmoi --source \/opt\/groundwork apply$/ { found = 1 }' Dockerfile)"
+  if [[ -z "$dockerfile_after_apply" ]]; then
+    echo "Dockerfile must apply chezmoi before copying the smoke scripts" >&2
+    exit 1
+  fi
+  for smoke_copy in \
+    "COPY ${dockerfile_chown} scripts/smoke-docker-image /opt/groundwork/scripts/smoke-docker-image" \
+    "COPY ${dockerfile_chown} scripts/test-developer-tool-visibility /opt/groundwork/scripts/test-developer-tool-visibility" \
+    "COPY ${dockerfile_chown} scripts/.developer-tool-surface-test.zsh /opt/groundwork/scripts/.developer-tool-surface-test.zsh"; do
+    if grep -Fq "$smoke_copy" <<<"$dockerfile_before_apply"; then
+      echo "Dockerfile must not copy a smoke script before chezmoi apply: $smoke_copy" >&2
+      exit 1
+    fi
+    grep -Fq "$smoke_copy" <<<"$dockerfile_after_apply" || {
+      echo "Dockerfile must COPY a smoke script after chezmoi apply: $smoke_copy" >&2
+      exit 1
+    }
+  done
   # Renovate owns dependency updates (renovate.json) through the shared preset; a
   # dependabot.yml would create duplicate PRs, so its absence is the guarded state.
   grep -q '"github>jasondockery/renovate-config#1.1.1"' renovate.json
