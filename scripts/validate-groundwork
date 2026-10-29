@@ -2741,12 +2741,26 @@ brew "git"
 cask "ghostty"
 mas "Anybox", id: 1593408455
 EOF
-  update_all_saved_xdg_config="${XDG_CONFIG_HOME-}"
-  update_all_saved_xdg_cache="${XDG_CACHE_HOME-}"
-  update_all_had_xdg_config="${XDG_CONFIG_HOME+x}"
-  update_all_had_xdg_cache="${XDG_CACHE_HOME+x}"
+  # Redirect every inherited XDG_* name into the fixture home. HOME alone does
+  # not: groundwork-cleanup trusts $XDG_DATA_HOME/pnpm/store, so a host value
+  # adds that machine's real store generations to the owner-review report.
+  update_all_xdg_saved_names=()
+  while IFS= read -r update_all_xdg_name; do
+    case "$update_all_xdg_name" in
+      XDG_*) ;;
+      *) continue ;;
+    esac
+    update_all_xdg_saved_names+=("$update_all_xdg_name")
+    printf -v "update_all_xdg_saved_${update_all_xdg_name}" '%s' "${!update_all_xdg_name}"
+  done < <(compgen -v)
+  for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
+    unset "$update_all_xdg_name"
+  done
   export XDG_CONFIG_HOME="$update_all_home/.config"
   export XDG_CACHE_HOME="$update_all_home/.cache"
+  export XDG_DATA_HOME="$update_all_home/.local/share"
+  export XDG_STATE_HOME="$update_all_home/.local/state"
+  export XDG_RUNTIME_DIR="$update_all_home/xdg-runtime"
   cp home/dot_local/bin/executable_groundwork-repos \
     "$update_all_bin/groundwork-repos"
   cat >"$update_all_home/.config/groundwork/repos.conf" <<EOF
@@ -7797,16 +7811,13 @@ SH
   test ! -e "$helper_pending" \
     || fail "a successful maintenance helper did not clear generic pending state"
 
-  if [[ -n "$update_all_had_xdg_config" ]]; then
-    export XDG_CONFIG_HOME="$update_all_saved_xdg_config"
-  else
-    unset XDG_CONFIG_HOME
-  fi
-  if [[ -n "$update_all_had_xdg_cache" ]]; then
-    export XDG_CACHE_HOME="$update_all_saved_xdg_cache"
-  else
-    unset XDG_CACHE_HOME
-  fi
+  unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
+  for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
+    update_all_xdg_saved_ref="update_all_xdg_saved_${update_all_xdg_name}"
+    printf -v "$update_all_xdg_name" '%s' "${!update_all_xdg_saved_ref}"
+    export "${update_all_xdg_name?}"
+  done
+  unset update_all_xdg_name update_all_xdg_saved_ref
 
   check "groundwork-cleanup fixture setup"
   cleanup_fixture="$out_dir/package-maintenance-fixture"
@@ -8323,10 +8334,21 @@ SH
   chmod +x "$cleanup_bin/brew" "$cleanup_bin/mise" "$cleanup_bin/pnpm" \
     "$cleanup_bin/du" "$cleanup_bin/groundwork-repos"
 
+  cleanup_xdg_clear=()
+  while IFS= read -r cleanup_xdg_name; do
+    case "$cleanup_xdg_name" in
+      XDG_*) cleanup_xdg_clear+=(-u "$cleanup_xdg_name") ;;
+    esac
+  done < <(compgen -v)
   cleanup_env=(
+    ${cleanup_xdg_clear[@]+"${cleanup_xdg_clear[@]}"}
+    -u PNPM_HOME
     HOME="$cleanup_home"
     XDG_CACHE_HOME="$cleanup_home/.cache"
     XDG_CONFIG_HOME="$cleanup_home/.config"
+    XDG_DATA_HOME="$cleanup_home/.local/share"
+    XDG_STATE_HOME="$cleanup_home/.local/state"
+    XDG_RUNTIME_DIR="$cleanup_home/xdg-runtime"
     PATH="/usr/bin:/bin"
     GROUNDWORK_TEST_LOG="$cleanup_log"
     CLEANUP_BREW_CACHE="$cleanup_fixture/brew-cache"
@@ -8416,9 +8438,27 @@ SH
   # candidates. Same-major selectors choose the highest pin deterministically;
   # offline, unknown-version, custom-root, false-marker, and whole-generation
   # cases stay review-only.
+  # A host XDG_DATA_HOME with a real pnpm store must not change that report.
+  # The decoy is exported in this shell; cleanup_env has to override it.
+  host_xdg_data="$cleanup_fixture/host-xdg-data"
+  mkdir -p "$host_xdg_data/pnpm/store/v99/payload"
+  : >"$host_xdg_data/pnpm/store/v99/payload/pkg"
+  cleanup_saved_xdg_data="${XDG_DATA_HOME-}"
+  cleanup_had_xdg_data="${XDG_DATA_HOME+x}"
+  export XDG_DATA_HOME="$host_xdg_data"
   : >"$cleanup_log"
   (cd "$cleanup_fixture/unrelated" && env "${cleanup_env[@]}" "$cleanup_command") \
     >"$cleanup_fixture/report"
+  if [[ -n "$cleanup_had_xdg_data" ]]; then
+    export XDG_DATA_HOME="$cleanup_saved_xdg_data"
+  else
+    unset XDG_DATA_HOME
+  fi
+  if grep -Fq -- "$host_xdg_data" "$cleanup_fixture/report"; then
+    fail "a host XDG_DATA_HOME pnpm store changed the cleanup fixture report"
+  fi
+  assert_not_contains 'pnpm v99 store' "$cleanup_fixture/report" \
+    "a host XDG_DATA_HOME generation was reviewed as if it belonged to the fixture"
   grep -qF 'Automatic candidates: 2' "$cleanup_fixture/report" \
     || {
       cat "$cleanup_fixture/report" >&2
@@ -9880,12 +9920,33 @@ SH
   chmod +x "$storage_bin/brew" "$storage_bin/pnpm" "$storage_bin/npm" \
     "$storage_bin/mise" "$storage_bin/du"
   storage_log="$storage_fixture/commands.log"
+  # One list for every doctor invocation in this fixture. Unset host PNPM_HOME
+  # and every current XDG_* name, then pin the five fixture directories.
+  # GNU env applies -u only while it is still an option, so every -u precedes
+  # the assignments. The nopnpm run replaces PATH after this list.
+  storage_xdg_clear=()
+  while IFS= read -r storage_xdg_name; do
+    case "$storage_xdg_name" in
+      XDG_*) storage_xdg_clear+=(-u "$storage_xdg_name") ;;
+    esac
+  done < <(compgen -v)
+  storage_env=(
+    ${storage_xdg_clear[@]+"${storage_xdg_clear[@]}"}
+    -u PNPM_HOME
+    HOME="$storage_home"
+    XDG_CONFIG_HOME="$storage_home/.config"
+    XDG_CACHE_HOME="$storage_home/.cache"
+    XDG_DATA_HOME="$storage_home/.local/share"
+    XDG_STATE_HOME="$storage_home/.local/state"
+    XDG_RUNTIME_DIR="$storage_home/xdg-runtime"
+    PATH="$storage_bin:/usr/bin:/bin"
+    GROUNDWORK_TEST_LOG="$storage_log"
+  )
   run_storage_doctor() {
     local output="$1"
     shift
     : >"$storage_log"
-    env HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
-      GROUNDWORK_TEST_LOG="$storage_log" "$@" \
+    env "${storage_env[@]}" "$@" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
       >"$output" 2>&1
   }
@@ -9989,17 +10050,30 @@ SH
     || fail "known store roots must be sized even when pnpm cannot answer"
 
   # pnpm removed entirely, stores left behind: still found and sized.
+  # A host PNPM_HOME store must stay out of that report. The decoy is exported
+  # in this shell; storage_env has to unset it. This run has its own PATH so
+  # the fixture pnpm is absent while the other tools stay.
   storage_nopnpm_bin="$storage_fixture/nopnpm-bin"
   mkdir -p "$storage_nopnpm_bin"
   for storage_tool in brew npm mise du; do
     ln -s "$storage_bin/$storage_tool" "$storage_nopnpm_bin/$storage_tool"
   done
+  host_pnpm_home="$storage_fixture/host-pnpm-home"
+  mkdir -p "$host_pnpm_home/store/v98"
+  dd if=/dev/urandom of="$host_pnpm_home/store/v98/pkg.blob" bs=1024 count=64 >/dev/null 2>&1
+  storage_saved_pnpm_home="${PNPM_HOME-}"
+  storage_had_pnpm_home="${PNPM_HOME+x}"
+  export PNPM_HOME="$host_pnpm_home"
   : >"$storage_log"
-  env HOME="$storage_home" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
-    GROUNDWORK_TEST_LOG="$storage_log" \
+  env "${storage_env[@]}" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
     /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
     >"$storage_fixture/nopnpm-output" 2>&1 \
     || fail "doctor --storage must succeed with pnpm removed"
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/nopnpm-output"; then
+    fail "a host PNPM_HOME store changed the nopnpm storage report"
+  fi
+  assert_not_contains 'pnpm store v98' "$storage_fixture/nopnpm-output" \
+    "a host PNPM_HOME generation was sized as if it belonged to the fixture"
   grep -qF 'pnpm not installed; known store roots are still sized' "$storage_fixture/nopnpm-output" \
     || fail "a removed pnpm must not hide the stores it left behind"
   grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/nopnpm-output" \
@@ -10008,11 +10082,18 @@ SH
   # Storage never runs in the default doctor: du over VM bundles and simulator
   # trees can take minutes, and the routine health check must stay quick.
   : >"$storage_log"
-  env HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
-    GROUNDWORK_TEST_LOG="$storage_log" \
+  env "${storage_env[@]}" \
     /bin/bash home/dot_local/bin/executable_groundwork-doctor \
     >"$storage_fixture/default-output" 2>&1 \
     || fail "the default doctor run must succeed"
+  if [[ -n "$storage_had_pnpm_home" ]]; then
+    export PNPM_HOME="$storage_saved_pnpm_home"
+  else
+    unset PNPM_HOME
+  fi
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/default-output"; then
+    fail "a host PNPM_HOME changed the default doctor report"
+  fi
   assert_not_contains '== Storage ==' "$storage_fixture/default-output" \
     "the default doctor ran the storage section"
   grep -qF -- '--storage for the (slower)' "$storage_fixture/default-output" \
