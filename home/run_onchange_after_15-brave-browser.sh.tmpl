@@ -6,9 +6,7 @@
 # not offer Brave. update-all sets GROUNDWORK_UPDATE_SCOPE, and --apply then
 # writes the profile without prompting; the update runner prints the one notice.
 set -euo pipefail
-# Password manager: {{ .password_manager }}
-# Environment role: {{ .environment_role }}
-{{- if and (eq .chezmoi.os "darwin") (not .headless) }}
+{{ if and (eq .chezmoi.os "darwin") (not .headless) }}
 {{- $specPath := joinPath .chezmoi.workingTree "core/browser/brave.json" }}
 # Brave spec hash: {{ output "cat" $specPath | sha256sum }}
 if [[ ! -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then

@@ -588,13 +588,26 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertNotIn('exec "$HOME/.local/bin/groundwork-brave-browser" --apply', linux)
         self.assertNotIn("Brave spec hash:", linux)
         self.assertIn("exit 0", linux)
+        for script in (desktop, headless, linux):
+            syntax = subprocess.run(
+                ["bash", "-n"],
+                input=script,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr + script)
+            self.assertTrue(script.startswith("#!/usr/bin/env bash\n"))
 
         missing = self.root / "spec-missing"
         (missing / "home").mkdir(parents=True)
         (missing / ".chezmoiroot").write_text("home\n")
         missing_template = HOOK.read_text(encoding="utf-8")
 
-        def render_missing(os_name: str, headless_value: bool) -> subprocess.CompletedProcess[str]:
+        def render_missing(
+            os_name: str, headless_value: bool, *, include_role: bool = True
+        ) -> subprocess.CompletedProcess[str]:
             data = {
                 "name": "CI User",
                 "email_personal": "ci@example.com",
@@ -606,7 +619,6 @@ class BraveBrowserTests(unittest.TestCase):
                 "obsidian_vault_name": "ci",
                 "game_dev": False,
                 "profile_preset": "personal-current",
-                "environment_role": "personal",
                 "release_posture": "current",
                 "headless": headless_value,
                 "work": False,
@@ -614,6 +626,8 @@ class BraveBrowserTests(unittest.TestCase):
                 "beta": False,
                 "chezmoi": {"os": os_name, "arch": "arm64"},
             }
+            if include_role:
+                data["environment_role"] = "personal"
             return subprocess.run(
                 [
                     chezmoi,
@@ -643,6 +657,24 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(darwin_headless_missing.returncode, 0, darwin_headless_missing.stderr)
         self.assertIn("exit 0", darwin_headless_missing.stdout)
         self.assertNotIn("brave.json", darwin_headless_missing.stderr)
+        # The container config has password_manager and headless, and no
+        # environment_role. Headless apply must still succeed.
+        linux_container = render_missing("linux", True, include_role=False)
+        self.assertEqual(linux_container.returncode, 0, linux_container.stderr)
+        self.assertIn("exit 0", linux_container.stdout)
+        darwin_container = render_missing("darwin", True, include_role=False)
+        self.assertEqual(darwin_container.returncode, 0, darwin_container.stderr)
+        self.assertIn("exit 0", darwin_container.stdout)
+        for rendered in (linux_container, darwin_container):
+            syntax = subprocess.run(
+                ["bash", "-n"],
+                input=rendered.stdout,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr + rendered.stdout)
 
     def test_apply_reads_spec_from_working_tree_without_calling_chezmoi(self):
         installed = self.root / "installed"
