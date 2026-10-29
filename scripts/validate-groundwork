@@ -16227,16 +16227,48 @@ if post_upgrade != {
 mise_config = tomllib.loads((root / "home/dot_config/mise/config.toml").read_text(encoding="utf-8"))
 if mise_config.get("tools", {}).get("node") != "lts":
     raise SystemExit("the managed mise config must keep node on the lts alias")
-python_versions = mise_config.get("tools", {}).get("python")
 aider_python = re.compile(r"^3\.12(?:\..*)?$")
-if (
-    not isinstance(python_versions, list)
-    or len(python_versions) != 2
-    or not all(isinstance(version, str) for version in python_versions)
-    or aider_python.fullmatch(python_versions[1]) is None
-    or aider_python.fullmatch(python_versions[0]) is not None
-):
-    raise SystemExit("python must be two strings, with 3.12 or 3.12.* only in the second entry")
+
+def python_array_error(versions):
+    # The first entry is whatever managed line the owner has approved. Pinning
+    # it here would make every Renovate line bump fail static until someone
+    # edited this file. 3.12 stays second so Aider's pin is not the one mise
+    # updates.
+    if (
+        not isinstance(versions, list)
+        or len(versions) != 2
+        or not all(isinstance(version, str) for version in versions)
+        or aider_python.fullmatch(versions[1]) is None
+        or aider_python.fullmatch(versions[0]) is not None
+    ):
+        return "python must be two strings, with 3.12 or 3.12.* only in the second entry"
+    return None
+
+python_array_negative_cases = (
+    (["3.12", "3.13"], "3.12 first"),
+    (["3.12.1", "3.12"], "3.12.1 first"),
+    (["3.13"], "missing 3.12"),
+    (["3.13", "3.12", "3.11"], "extra entry"),
+    (["3.15", "3.13"], "second entry is not 3.12"),
+    ("3.13", "not a list"),
+)
+for python_array_case, python_array_label in python_array_negative_cases:
+    if python_array_error(python_array_case) is None:
+        raise SystemExit(f"python array negative control did not fail: {python_array_label}")
+python_array_acceptance_cases = (
+    ["3.15", "3.12"],
+    ["3.13.1", "3.12.9"],
+)
+for python_array_case in python_array_acceptance_cases:
+    python_array_failure = python_array_error(python_array_case)
+    if python_array_failure:
+        raise SystemExit(
+            f"python array acceptance control failed for {python_array_case}: {python_array_failure}"
+        )
+python_versions = mise_config.get("tools", {}).get("python")
+python_array_failure = python_array_error(python_versions)
+if python_array_failure:
+    raise SystemExit(python_array_failure)
 node_alias_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
@@ -17302,7 +17334,9 @@ EOF
     exit 1
   fi
   assert_no_matches "personal snippet filename found" rg -n 'jason-snippets' home docs README.md
-  grep -Eq "^python[[:space:]]*=[[:space:]]*\\[[\"']3\\.13[\"'][[:space:]]*,[[:space:]]*[\"']3\\.12[\"']\\][[:space:]]*$" home/dot_config/mise/config.toml
+  # The managed Python array's shape is checked structurally above, including
+  # negative controls. An exact ["3.13", "3.12"] grep here failed every
+  # Renovate line bump (issue #59).
   grep -Eq '^[[:space:]]*aider_python="3\.12"[[:space:]]*$' home/run_after_20-tools.sh.tmpl
   grep -qF "uv tool install --python \"\$aider_python\" --reinstall aider-chat" home/run_after_20-tools.sh.tmpl
   grep -qF "tmux_plugin_dir=\"\$HOME/.config/tmux/plugins\"" home/run_after_20-tools.sh.tmpl
