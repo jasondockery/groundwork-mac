@@ -383,7 +383,7 @@ def main() -> int:
             started_epoch=arguments.started_epoch,
             finished_epoch=int(time.time()),
             platform_os="linux",
-            platform_image=os.environ.get("ImageOS", "ubuntu-24.04"),
+            platform_image=os.environ.get("ImageOS", "ubuntu-26.04"),
             platform_arch=os.environ.get("RUNNER_ARCH", host_platform.machine()),
             source_before=source,
             source_after=source,
