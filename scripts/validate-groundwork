@@ -7815,7 +7815,7 @@ SH
   for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
     update_all_xdg_saved_ref="update_all_xdg_saved_${update_all_xdg_name}"
     printf -v "$update_all_xdg_name" '%s' "${!update_all_xdg_saved_ref}"
-    export "$update_all_xdg_name"
+    export "${update_all_xdg_name?}"
   done
   unset update_all_xdg_name update_all_xdg_saved_ref
 
