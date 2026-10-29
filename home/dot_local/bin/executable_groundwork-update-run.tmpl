@@ -499,6 +499,12 @@ if [[ "$config_only" -eq 1 ]]; then
 else
   export GROUNDWORK_UPDATE_SCOPE=maintenance
 fi
+# Check out the pinned core submodule before apply renders the desktop Brave
+# hook. The launcher that exec'd this runner may be the previous update-all,
+# which renders chezmoi status before any new pre-status step exists. The
+# targeted apply that installed this runner does not run that hook.
+{{ $coreCheckout := joinPath .chezmoi.workingTree "home/dot_local/share/groundwork/lib/checkout-core.sh" }}
+bash {{ $coreCheckout | quote }} {{ .chezmoi.workingTree | quote }}
 chezmoi apply
 
 if [[ "$config_only" -eq 1 ]]; then

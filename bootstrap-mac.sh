@@ -251,6 +251,15 @@ brew install git gh chezmoi
 ensure_repo_access
 clone_or_update_groundwork
 
+# git clone and git pull do not check out a moved submodule commit. The
+# desktop apply reads core/browser/brave.json, so check out the pinned core
+# submodule after clone and after pull, before init --apply. An older tree
+# without the helper has nothing to check out.
+core_checkout="$groundwork_dir/home/dot_local/share/groundwork/lib/checkout-core.sh"
+if [[ -f "$core_checkout" ]]; then
+  bash "$core_checkout" "$groundwork_dir"
+fi
+
 info "Applying Groundwork from ${groundwork_dir}"
 chezmoi --source "$groundwork_dir" init --apply
 

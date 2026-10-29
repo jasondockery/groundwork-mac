@@ -34,6 +34,11 @@ records the offer once that command returns and does not bypass the dialog.
 Cancelling the macOS dialog does not repeat the Groundwork prompt; delete
 ~/.local/state/groundwork/brave/default-browser to ask again.
 
+Opening the policy profile returns before System Settings installs it.
+Groundwork records that acceptance only after profiles shows
+com.groundwork.brave.browser. If the identifier is still missing, the next
+interactive apply asks again. A saved decline is kept.
+
 Work-managed Macs still install Brave. Organization device management owns
 browser policy, so this command does not write a profile there.
 EOF
@@ -117,30 +122,33 @@ load_profile() {
   if [[ -n "$role" && -n "$password_manager" && -n "$headless" ]]; then
     return 0
   fi
-  local data=""
+  local data="" data_ok=0
   if command -v chezmoi >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     data="$(chezmoi data --format=json 2>/dev/null || true)"
+    if [[ -n "$data" ]] && printf '%s' "$data" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      data_ok=1
+    fi
+  fi
+  # A direct run with no profile must not invent a weaker one. Missing data
+  # is a failure. A present object still must not turn an absent password
+  # manager into "none" or an absent headless flag into false.
+  if [[ "$data_ok" -ne 1 ]]; then
+    die "Groundwork profile data is missing, so Brave was not changed."
   fi
   if [[ -z "$password_manager" ]]; then
-    if [[ -n "$data" ]]; then
-      password_manager="$(printf '%s' "$data" | jq -r '.password_manager // "none"')"
-    else
-      password_manager="none"
-    fi
+    password_manager="$(printf '%s' "$data" | jq -r '.password_manager // empty')"
   fi
   if [[ -z "$role" ]]; then
-    if [[ -n "$data" ]]; then
-      role="$(printf '%s' "$data" | jq -r '.environment_role // (if .work then "managed" else "personal" end)')"
-    else
-      role="personal"
-    fi
+    role="$(printf '%s' "$data" | jq -r '.environment_role // empty')"
+  fi
+  if [[ -z "$role" ]]; then
+    role="$(printf '%s' "$data" | jq -r 'if .work == true then "managed" else empty end')"
   fi
   if [[ -z "$headless" ]]; then
-    if [[ -n "$data" ]]; then
-      headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" else "false" end')"
-    else
-      headless="false"
-    fi
+    headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" elif .headless == false then "false" else empty end')"
+  fi
+  if [[ -z "$role" || -z "$password_manager" || -z "$headless" ]]; then
+    die "Groundwork profile data is incomplete, so Brave was not changed."
   fi
 }
 
@@ -465,18 +473,34 @@ offer_policy() {
     # A missing stamp with an already-installed identifier is the first local
     # copy of a profile the user already approved. A stamp that names other
     # bytes is a later run after update-all rewrote the file, so ask again.
+    # Do not record acceptance here: an identifier installed outside this
+    # prompt is not a saved yes.
     if [[ -z "$stamp" || "$stamp" == "$digest" ]]; then
       return 0
     fi
     choice_clear policy-open
+  fi
+  if [[ "$installed" -eq 1 ]]; then
+    local decision=""
+    decision="$(choice_get policy-open || true)"
+    # open returns before the System Settings sheet finishes. A saved yes or
+    # a pending offer is not acceptance while profiles still lacks the
+    # identifier. A decline stays a decline.
+    if [[ "$decision" == "accepted" || "$decision" == "pending" ]]; then
+      choice_clear policy-open
+    fi
   fi
   local rc=0
   prompt_choice policy-open "Open the Brave policy profile for you to approve in System Settings? [y/N]" || rc=$?
   case "$rc" in
     0)
       if open_profile; then
-        choice_set policy-open accepted
-        render_stamp_set "$digest"
+        local after=0
+        profile_state || after=$?
+        if [[ "$after" -eq 0 ]]; then
+          choice_set policy-open accepted
+          render_stamp_set "$digest"
+        fi
       fi
       ;;
     1) render_stamp_set "$digest" ;;
@@ -623,16 +647,19 @@ cmd_notice() {
   if [[ "$role" == "managed" ]]; then
     policy_notice
   else
-    local digest="" stamp="" installed=0
+    local digest="" stamp="" installed=0 decision=""
     if [[ -f "$mobileconfig_path" ]]; then
       digest="$(policy_digest)"
     fi
     if stamp="$(render_stamp_get)" && [[ -n "$digest" && "$stamp" != "$digest" ]]; then
       say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
-    elif ! choice_get policy-open >/dev/null; then
-      profile_state || installed=$?
-      if [[ "$installed" -ne 0 ]]; then
-        policy_notice
+    else
+      decision="$(choice_get policy-open || true)"
+      if [[ "$decision" != "declined" ]]; then
+        profile_state || installed=$?
+        if [[ "$installed" -ne 0 ]]; then
+          policy_notice
+        fi
       fi
     fi
   fi
@@ -708,7 +735,7 @@ cmd_doctor() {
         printf '  ok    %s\n' "Brave policy profile is installed"
       fi
     elif [[ "$installed" -eq 1 ]]; then
-      printf '  note  %s\n' "Brave policy profile is not installed. An interactive apply can open it for approval in System Settings."
+      printf '  note  %s\n' "Brave policy profile is not installed. The next interactive apply will offer it again."
     else
       printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available)"
     fi

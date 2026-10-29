@@ -238,13 +238,15 @@ browser_section() {
     return 0
   fi
 
-  local data headless posture role xcode beta
+  local data headless posture role xcode beta password_manager brave_headless
   if ! data="$(chezmoi data --format=json 2>/dev/null)" \
     || ! printf '%s' "$data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     warn "Groundwork could not read the chezmoi profile; browser status is unknown."
     return 0
   fi
   headless="$(printf '%s' "$data" | jq -r '.headless // false')"
+  password_manager="$(printf '%s' "$data" | jq -r '.password_manager // empty')"
+  brave_headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" elif .headless == false then "false" else empty end')"
   posture="$(printf '%s' "$data" | jq -r '.release_posture // "current"')"
   role="$(printf '%s' "$data" | jq -r '.environment_role // (if .work then "managed" else "personal" end)')"
   xcode="$(printf '%s' "$data" | jq -r '.xcode // false')"
@@ -283,6 +285,10 @@ browser_section() {
   if [[ "$role" == "managed" ]]; then
     note "organization and device policy outrank this selection; Groundwork never bypasses them."
   fi
+  if [[ -z "$role" || -z "$password_manager" || -z "$brave_headless" ]]; then
+    warn "Groundwork could not read the Brave profile selection; browser status is unknown."
+    return 0
+  fi
   local brave_script
   brave_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/executable_groundwork-brave-browser"
   if [[ ! -f "$brave_script" ]]; then
@@ -292,7 +298,10 @@ browser_section() {
     warn "groundwork-brave-browser is not installed, so Brave status is unknown."
     return 0
   fi
-  GROUNDWORK_BRAVE_ROLE="$role" GROUNDWORK_BRAVE_PLATFORM=Darwin \
+  GROUNDWORK_BRAVE_ROLE="$role" \
+    GROUNDWORK_BRAVE_PASSWORD_MANAGER="$password_manager" \
+    GROUNDWORK_BRAVE_HEADLESS="$brave_headless" \
+    GROUNDWORK_BRAVE_PLATFORM=Darwin \
     /bin/bash "$brave_script" --doctor
 }
 

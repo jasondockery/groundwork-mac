@@ -417,7 +417,7 @@ class BraveBrowserTests(unittest.TestCase):
         second = self.run_brave("--apply", answers="y\n", env=environment)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(self.log("open"), "")
-        self.assertEqual(self.choice("policy-open"), "accepted")
+        self.assertIsNone(self.choice("policy-open"))
 
     def test_noninteractive_profile_change_does_not_save_a_decline(self):
         self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
@@ -575,6 +575,8 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIn("export GROUNDWORK_BRAVE_PASSWORD_MANAGER=", desktop)
         self.assertIn("export GROUNDWORK_BRAVE_ROLE=", desktop)
         self.assertIn("export GROUNDWORK_BRAVE_HEADLESS=false", desktop)
+        self.assertIn("checkout-core.sh", desktop)
+        self.assertIn("submodule update --init -- core", (REPO / "home/dot_local/share/groundwork/lib/checkout-core.sh").read_text(encoding="utf-8"))
         for line in desktop.splitlines():
             stripped = line.strip()
             self.assertFalse(stripped.startswith("chezmoi"))
@@ -583,10 +585,12 @@ class BraveBrowserTests(unittest.TestCase):
         headless = render("darwin", True)
         self.assertNotIn('exec "$HOME/.local/bin/groundwork-brave-browser" --apply', headless)
         self.assertNotIn("Brave spec hash:", headless)
+        self.assertNotIn("checkout-core.sh", headless)
         self.assertIn("exit 0", headless)
         linux = render("linux", False)
         self.assertNotIn('exec "$HOME/.local/bin/groundwork-brave-browser" --apply', linux)
         self.assertNotIn("Brave spec hash:", linux)
+        self.assertNotIn("checkout-core.sh", linux)
         self.assertIn("exit 0", linux)
         for script in (desktop, headless, linux):
             syntax = subprocess.run(
@@ -650,13 +654,20 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(linux_missing.returncode, 0, linux_missing.stderr)
         self.assertIn("exit 0", linux_missing.stdout)
         self.assertNotIn("brave.json", linux_missing.stderr)
+        self.assertNotIn("checkout-core.sh", linux_missing.stdout)
         darwin_missing = render_missing("darwin", False)
-        self.assertNotEqual(darwin_missing.returncode, 0)
-        self.assertIn("brave.json", darwin_missing.stderr)
+        self.assertEqual(darwin_missing.returncode, 0, darwin_missing.stderr)
+        self.assertNotIn("brave.json", darwin_missing.stderr)
+        self.assertNotIn("cat:", darwin_missing.stderr)
+        self.assertNotIn("Brave spec hash:", darwin_missing.stdout)
+        self.assertIn("checkout-core.sh", darwin_missing.stdout)
+        self.assertIn("so Brave was not offered.", darwin_missing.stdout)
+        self.assertIn("export GROUNDWORK_BRAVE_SPEC=", darwin_missing.stdout)
         darwin_headless_missing = render_missing("darwin", True)
         self.assertEqual(darwin_headless_missing.returncode, 0, darwin_headless_missing.stderr)
         self.assertIn("exit 0", darwin_headless_missing.stdout)
         self.assertNotIn("brave.json", darwin_headless_missing.stderr)
+        self.assertNotIn("checkout-core.sh", darwin_headless_missing.stdout)
         # The container config has password_manager and headless, and no
         # environment_role. Headless apply must still succeed.
         linux_container = render_missing("linux", True, include_role=False)
@@ -666,6 +677,7 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(darwin_container.returncode, 0, darwin_container.stderr)
         self.assertIn("exit 0", darwin_container.stdout)
         for rendered in (linux_container, darwin_container):
+            self.assertNotIn("checkout-core.sh", rendered.stdout)
             syntax = subprocess.run(
                 ["bash", "-n"],
                 input=rendered.stdout,
@@ -675,6 +687,13 @@ class BraveBrowserTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(syntax.returncode, 0, syntax.stderr + rendered.stdout)
+        spec_dest = missing / "core" / "browser"
+        spec_dest.mkdir(parents=True)
+        shutil.copy(SPEC, spec_dest / "brave.json")
+        followed = render_missing("darwin", False)
+        self.assertEqual(followed.returncode, 0, followed.stderr)
+        self.assertIn("Brave spec hash:", followed.stdout)
+        self.assertIn(hashlib.sha256(SPEC.read_bytes()).hexdigest(), followed.stdout)
 
     def test_apply_reads_spec_from_working_tree_without_calling_chezmoi(self):
         installed = self.root / "installed"
@@ -715,6 +734,404 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertTrue(profile.is_file())
         self.assertIn("PasswordManagerEnabled", profile.read_text(encoding="utf-8"))
         self.assertEqual(self.log("chezmoi"), "")
+
+    def test_open_without_an_installed_profile_is_offered_again(self):
+        self.seed("policy-open", "accepted")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        first = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("Brave-Browser.mobileconfig", self.log("open"))
+        self.assertIsNone(self.choice("policy-open"))
+        (self.logs / "open").unlink()
+        notice = self.run_brave("--notice", env=environment)
+        self.assertEqual(notice.returncode, 0, notice.stderr)
+        self.assertIn("Approve the Brave policy profile", notice.stdout)
+        doctor = self.run_brave("--doctor", env=environment)
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertIn(
+            "Brave policy profile is not installed. The next interactive apply will offer it again.",
+            doctor.stdout,
+        )
+        second = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("Brave-Browser.mobileconfig", self.log("open"))
+        self.assertIsNone(self.choice("policy-open"))
+
+    def test_missing_profile_keeps_a_decline(self):
+        self.seed("policy-open", "declined")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log("open"), "")
+        self.assertEqual(self.choice("policy-open"), "declined")
+        notice = self.run_brave("--notice", env=environment)
+        self.assertEqual(notice.returncode, 0, notice.stderr)
+        self.assertNotIn("Approve the Brave policy profile", notice.stdout)
+        self.assertNotIn("An interactive apply writes", notice.stdout)
+
+    def _chezmoi_data(self, payload: str) -> None:
+        data_path = self.root / "chezmoi-data.json"
+        data_path.write_text(payload, encoding="utf-8")
+        script = self.bin / "chezmoi"
+        script.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = data ]; then\n'
+            f"  cat {data_path}\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 1\n"
+        )
+        script.chmod(0o755)
+
+    def _env_without_profile(self) -> dict[str, str]:
+        environment = self.env(INSTALLED_CASKS="brave-browser", GROUNDWORK_BRAVE_NONINTERACTIVE="1")
+        for key in (
+            "GROUNDWORK_BRAVE_ROLE",
+            "GROUNDWORK_BRAVE_PASSWORD_MANAGER",
+            "GROUNDWORK_BRAVE_HEADLESS",
+        ):
+            environment.pop(key, None)
+        environment["PATH"] = f"{self.bin}:{environment['PATH']}"
+        return environment
+
+    def test_direct_run_without_profile_data_writes_nothing(self):
+        script = self.bin / "chezmoi"
+        script.write_text("#!/bin/sh\nexit 1\n")
+        script.chmod(0o755)
+        result = self.run_brave("--apply", env=self._env_without_profile())
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("profile data is missing", result.stderr)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
+        self._chezmoi_data('{"environment_role":"personal","headless":false}')
+        incomplete = self.run_brave("--apply", env=self._env_without_profile())
+        self.assertEqual(incomplete.returncode, 1, incomplete.stderr)
+        self.assertIn("profile data is incomplete", incomplete.stderr)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
+        self._chezmoi_data("[]")
+        not_object = self.run_brave("--apply", env=self._env_without_profile())
+        self.assertEqual(not_object.returncode, 1, not_object.stderr)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
+    def test_direct_run_reads_a_complete_profile_without_defaults(self):
+        self._chezmoi_data(
+            '{"environment_role":"personal","password_manager":"bitwarden","headless":false}'
+        )
+        result = self.run_brave("--apply", env=self._env_without_profile())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        profile = (self.share / "Brave-Browser.mobileconfig").read_text(encoding="utf-8")
+        self.assertIn("PasswordManagerEnabled", profile)
+
+        self._chezmoi_data(
+            '{"environment_role":"personal","password_manager":"bitwarden","headless":true}'
+        )
+        profile_path = self.share / "Brave-Browser.mobileconfig"
+        profile_path.unlink()
+        headless = self.run_brave("--apply", env=self._env_without_profile())
+        self.assertEqual(headless.returncode, 0, headless.stderr)
+        self.assertFalse(profile_path.exists())
+
+    def test_checkout_core_rejects_bad_arguments_before_git(self):
+        helper = REPO / "home/dot_local/share/groundwork/lib/checkout-core.sh"
+        text = helper.read_text(encoding="utf-8")
+        self.assertIn("submodule update --init -- core", text)
+        self.assertNotRegex(text, r"submodule update[^\n]*--remote")
+        missing_args = subprocess.run(
+            ["bash", str(helper)],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(missing_args.returncode, 64, missing_args.stderr)
+        empty = self.root / "not-a-checkout"
+        empty.mkdir()
+        skipped = subprocess.run(
+            ["bash", str(helper), str(empty)],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(skipped.returncode, 0, skipped.stderr)
+        repo = self.root / "deadline-repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=15)
+        (repo / ".gitmodules").write_text(
+            '[submodule "core"]\n\tpath = core\n\turl = file:///nowhere\n',
+            encoding="utf-8",
+        )
+        bad_deadline = subprocess.run(
+            ["bash", str(helper), str(repo)],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+            env={**os.environ, "GROUNDWORK_CORE_CHECKOUT_DEADLINE_SECONDS": "0", "GIT_TERMINAL_PROMPT": "0"},
+        )
+        self.assertEqual(bad_deadline.returncode, 64, bad_deadline.stderr)
+        self.assertIn("deadline", bad_deadline.stderr)
+
+    def test_old_update_all_checks_out_core_before_the_spec_is_read(self):
+        main = "78b4e2509d684f41022d63ee7999e68c9bc7dcd9"
+        old_core = "bc21e6297136be3f04b190fd22c517ce7d5f15eb"
+        new_core = "0395895c86ed24d942c3803c521cf2131cfa52c7"
+        core_head = subprocess.run(
+            ["git", "-C", str(REPO / "core"), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+        bare = self.root / "core.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True, timeout=15)
+        for sha in (old_core, new_core):
+            listed = subprocess.run(
+                ["git", "-C", str(REPO / "core"), "rev-list", "--objects", sha],
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+            ids = b"\n".join(line.split()[0] for line in listed.stdout.splitlines() if line.strip()) + b"\n"
+            packed = subprocess.run(
+                ["git", "-C", str(REPO / "core"), "pack-objects", str(self.root / "pack")],
+                input=ids,
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+            pack_id = packed.stdout.decode().strip().splitlines()[-1]
+            pack_dir = bare / "objects" / "pack"
+            for suffix in (".pack", ".idx"):
+                shutil.copy(self.root / f"pack-{pack_id}{suffix}", pack_dir / f"pack-{pack_id}{suffix}")
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "update-ref", "refs/heads/old", old_core],
+            check=True,
+            timeout=15,
+        )
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "update-ref", "refs/heads/new", new_core],
+            check=True,
+            timeout=15,
+        )
+        # The source submodule is shallow, so these commits have no parents in
+        # the pack. Mark the bare repo shallow or upload-pack refuses the clone.
+        (bare / "shallow").write_text(f"{old_core}\n{new_core}\n", encoding="utf-8")
+        parent = self.root / "parent"
+        parent.mkdir()
+        git_env = os.environ.copy()
+        git_env.update(
+            {
+                "GIT_AUTHOR_NAME": "CI",
+                "GIT_AUTHOR_EMAIL": "ci@example.com",
+                "GIT_COMMITTER_NAME": "CI",
+                "GIT_COMMITTER_EMAIL": "ci@example.com",
+                "GIT_TERMINAL_PROMPT": "0",
+                # A file submodule URL is refused unless this process allows it.
+                # The setting stays on this run; it is not written into Git config.
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "protocol.file.allow",
+                "GIT_CONFIG_VALUE_0": "always",
+            }
+        )
+
+        def git(*args: str) -> None:
+            completed = subprocess.run(
+                ["git", "-C", str(parent), *args],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=git_env,
+            )
+            if completed.returncode != 0:
+                raise AssertionError(
+                    f"git {' '.join(args)} failed ({completed.returncode})\n"
+                    f"{completed.stdout}\n{completed.stderr}"
+                )
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.name", "CI")
+        git("config", "user.email", "ci@example.com")
+        git("config", "protocol.file.allow", "always")
+        git("config", "submodule.recurse", "false")
+        git("config", "pull.recurseSubmodules", "false")
+        (parent / ".gitmodules").write_text(
+            f'[submodule "core"]\n\tpath = core\n\turl = {bare.as_uri()}\n',
+            encoding="utf-8",
+        )
+        (parent / ".chezmoiroot").write_text("home\n", encoding="utf-8")
+        (parent / "home").mkdir()
+        git("add", ".gitmodules", ".chezmoiroot", "home")
+        git("update-index", "--add", "--cacheinfo", f"160000,{old_core},core")
+        git("commit", "-q", "-m", "old pin")
+        old_commit = subprocess.check_output(
+            ["git", "-C", str(parent), "rev-parse", "HEAD"], text=True, timeout=15
+        ).strip()
+        git("submodule", "update", "--init", "--", "core")
+        self.assertFalse((parent / "core" / "browser" / "brave.json").exists())
+        git("update-index", "--cacheinfo", f"160000,{new_core},core")
+        git("commit", "-q", "-m", "new pin")
+        new_commit = subprocess.check_output(
+            ["git", "-C", str(parent), "rev-parse", "HEAD"], text=True, timeout=15
+        ).strip()
+        git("reset", "--hard", "-q", old_commit)
+        self.assertFalse((parent / "core" / "browser" / "brave.json").exists())
+
+        home = self.root / "update-home"
+        bin_dir = home / ".local" / "bin"
+        lib_dir = home / ".local" / "lib" / "groundwork"
+        bin_dir.mkdir(parents=True)
+        lib_dir.mkdir(parents=True)
+        shutil.copy(REPO / "home/dot_local/lib/groundwork/update-lock.sh", lib_dir / "update-lock.sh")
+        platform = bin_dir / "groundwork-platform"
+        platform.write_text("#!/bin/sh\nprintf '%s\\n' darwin\n", encoding="utf-8")
+        platform.chmod(0o755)
+        launcher = self.root / "old-update-all"
+        launcher.write_bytes(
+            subprocess.check_output(
+                ["git", "show", f"{main}:home/dot_local/bin/executable_update-all"],
+                timeout=15,
+            )
+        )
+        launcher.chmod(0o755)
+        real_chezmoi = shutil.which("chezmoi") or str(Path.home() / ".local/bin/chezmoi")
+        self.assertTrue(Path(real_chezmoi).is_file())
+        helper = REPO / "home/dot_local/share/groundwork/lib/checkout-core.sh"
+        runner = self.root / "fresh-runner"
+        runner.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            f"bash {helper} {parent}\n"
+            "exec chezmoi apply\n",
+            encoding="utf-8",
+        )
+        runner.chmod(0o755)
+        status_log = self.root / "status-render"
+        apply_log = self.root / "apply-render"
+        data = json.dumps(
+            {
+                "password_manager": "bitwarden",
+                "environment_role": "personal",
+                "headless": False,
+                "chezmoi": {"os": "darwin", "arch": "arm64"},
+            }
+        )
+        chezmoi = bin_dir / "chezmoi"
+        chezmoi.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> {self.root / "chezmoi-invocations"}
+if [[ "${{1:-}}" == update ]]; then
+  git -C {parent} merge --ff-only {new_commit}
+  exit 0
+fi
+if [[ "${{1:-}}" == init ]]; then
+  exit 0
+fi
+if [[ "${{1:-}}" == status ]]; then
+  if [[ -f {parent}/core/browser/brave.json ]]; then
+    echo "spec was present during chezmoi status" >&2
+    exit 1
+  fi
+  {real_chezmoi} --config {self.root / "empty.toml"} --source {parent} \\
+    --override-data {json.dumps(data)} execute-template < {HOOK} > {status_log}
+  if grep -q 'Brave spec hash:' {status_log}; then
+    echo "status render hashed a missing spec" >&2
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "${{1:-}}" == verify ]]; then
+  exit 0
+fi
+if [[ "${{1:-}}" == apply && $# -eq 1 ]]; then
+  test -f {parent}/core/browser/brave.json
+  {real_chezmoi} --config {self.root / "empty.toml"} --source {parent} \\
+    --override-data {json.dumps(data)} execute-template < {HOOK} > {apply_log}
+  grep -q 'Brave spec hash:' {apply_log}
+  exit 0
+fi
+if [[ "${{1:-}}" == apply ]]; then
+  cp {runner} "$HOME/.local/bin/groundwork-update-run"
+  chmod +x "$HOME/.local/bin/groundwork-update-run"
+  exit 0
+fi
+echo "unexpected chezmoi invocation: $*" >&2
+exit 1
+""",
+            encoding="utf-8",
+        )
+        chezmoi.chmod(0o755)
+        (self.root / "empty.toml").write_text("", encoding="utf-8")
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "HOME": str(home),
+                "PATH": f"{bin_dir}:{environment.get('PATH', '')}",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "protocol.file.allow",
+                "GIT_CONFIG_VALUE_0": "always",
+                "GROUNDWORK_CORE_CHECKOUT_DEADLINE_SECONDS": "15",
+            }
+        )
+        for key in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+            environment.pop(key, None)
+        result = subprocess.run(
+            [str(launcher)],
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((parent / "core" / "browser" / "brave.json").is_file())
+        apply_text = apply_log.read_text(encoding="utf-8")
+        self.assertIn(
+            hashlib.sha256((parent / "core" / "browser" / "brave.json").read_bytes()).hexdigest(),
+            apply_text,
+        )
+        self.assertIn("submodule update --init -- core", helper.read_text(encoding="utf-8"))
+        headed = subprocess.run(
+            ["git", "-C", str(parent), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+        self.assertEqual(headed, new_commit)
+        core_after = subprocess.run(
+            ["git", "-C", str(REPO / "core"), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+        self.assertEqual(core_after, core_head)
+
+        launcher_text = (REPO / "home/dot_local/bin/executable_update-all").read_text(encoding="utf-8")
+        runner_text = (REPO / "home/dot_local/bin/executable_groundwork-update-run.tmpl").read_text(encoding="utf-8")
+        bootstrap_text = (REPO / "bootstrap-mac.sh").read_text(encoding="utf-8")
+        self.assertLess(
+            launcher_text.find("checkout-core.sh"),
+            launcher_text.find('status_output="$(chezmoi status)"'),
+        )
+        scope_at = runner_text.find("export GROUNDWORK_UPDATE_SCOPE=maintenance")
+        self.assertLess(
+            runner_text.find("checkout-core.sh", scope_at),
+            runner_text.find("\nchezmoi apply\n", scope_at),
+        )
+        self.assertLess(
+            bootstrap_text.find("checkout-core.sh"),
+            bootstrap_text.find('chezmoi --source "$groundwork_dir" init --apply'),
+        )
 
 
 if __name__ == "__main__":

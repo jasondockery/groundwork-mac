@@ -18703,7 +18703,7 @@ SH
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --browser
   }
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
     'brave-browser')"
   grep -qF 'Current release posture: stable' <<<"$browser_doctor_out"
   grep -qF 'Xcode: disabled' <<<"$browser_doctor_out"
@@ -18713,7 +18713,7 @@ SH
   assert_not_contains 'no longer Groundwork-managed|google-chrome@beta' <(printf '%s\n' "$browser_doctor_out") \
     "current browser doctor reported an absent Chrome install"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"preview","environment_role":"personal","xcode":true,"beta":true}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"preview","environment_role":"personal","xcode":true,"beta":true}' \
     'brave-browser google-chrome google-chrome@beta')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'Xcode: enabled' <<<"$browser_doctor_out"
@@ -18724,20 +18724,20 @@ SH
   assert_not_contains 'primary preview browser|compatibility fallback' <(printf '%s\n' "$browser_doctor_out") \
     "preview doctor still treated Chrome Beta as the managed browser"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
     'google-chrome@beta')"
   grep -qF 'Brave Browser is selected but not installed' <<<"$browser_doctor_out"
   grep -qF 'brew uninstall --cask google-chrome@beta' <<<"$browser_doctor_out"
   assert_not_contains 'brew uninstall --cask google-chrome$' <(printf '%s\n' "$browser_doctor_out") \
     "doctor offered to remove Chrome stable while reporting an unmanaged Beta install"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
     'brave-browser google-chrome')"
   grep -qF 'device policy outrank this selection' <<<"$browser_doctor_out"
   grep -qF 'This Mac is work-managed, so Groundwork did not write a Brave policy profile.' <<<"$browser_doctor_out"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
     'brave-browser')"
   grep -qF "release_posture is 'broken'" <<<"$browser_doctor_out" \
     || fail "doctor must report an invalid release posture"
@@ -18746,7 +18746,7 @@ SH
   assert_not_contains 'Brave Browser is installed' <(printf '%s\n' "$browser_doctor_out") \
     "invalid posture must suppress browser-installation claims"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":true,"release_posture":"preview","environment_role":"disposable","xcode":false,"beta":false}' '')"
+    '{"headless":true,"password_manager":"bitwarden","release_posture":"preview","environment_role":"disposable","xcode":false,"beta":false}' '')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'headless profile selects no GUI browser' <<<"$browser_doctor_out"
   grep -qF -- '--browser' < <(/bin/bash home/dot_local/bin/executable_groundwork-doctor --help)
