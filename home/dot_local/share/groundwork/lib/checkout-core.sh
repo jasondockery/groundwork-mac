@@ -51,19 +51,20 @@ trap 'finish; exit 143' TERM
 
 # git's own stderr is the progress. The wait stays in this process: a background
 # sleeper would outlive the checkout and fail the validator's process-group check.
-# The deadline is a failure, not a slow success.
+# The poll is short so an already-checked-out core does not add a second to
+# every update. The deadline is a failure, not a slow success.
 GIT_TERMINAL_PROMPT=0 git -C "$root" submodule update --init -- core &
 child_pid=$!
-elapsed=0
+started="$(date +%s)"
 while kill -0 "$child_pid" 2>/dev/null; do
-  if [[ "$elapsed" -ge "$deadline" ]]; then
+  now="$(date +%s)"
+  if [[ $((now - started)) -ge "$deadline" ]]; then
     printf 'timed-out\n' >"$marker"
     kill "$child_pid" 2>/dev/null || true
     pkill -P "$child_pid" 2>/dev/null || true
     break
   fi
-  sleep 1
-  elapsed=$((elapsed + 1))
+  sleep 0.1
 done
 status=0
 wait "$child_pid" || status=$?
