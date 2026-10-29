@@ -324,29 +324,29 @@ require_spec() {
 }
 
 profile_state() {
-  # 0: installed policy values match the rendered profile.
-  # 1: profiles ran and the profile identifier is absent.
-  # 3: the identifier is present, but the payload is not this render.
-  # 2: profiles output is unavailable. Do not treat that as a decline or as acceptance.
-  # `profiles list` only repeats the identifier, which does not change when
-  # the payload does. `profiles show -output stdout-xml` includes the values.
+  # 0: the com.groundwork.brave.browser payload's policy set equals this render.
+  # 1: profiles output parsed and that profile is absent.
+  # 3: that profile is present and its policy set is not exactly this render.
+  # 2: profiles is not available, or its output is not a plist. Not acceptance.
+  # 4: the profiles command returned nothing. Not acceptance.
+  # `profiles show -output stdout-xml` is one plist. Other installed profiles
+  # are ignored. `profiles list` is not used: it only repeats the identifier.
   local output="" matched=0
   if [[ -n "${GROUNDWORK_BRAVE_PROFILES_OUTPUT:-}" ]]; then
     [[ -f "$GROUNDWORK_BRAVE_PROFILES_OUTPUT" ]] || return 2
     output="$(cat "$GROUNDWORK_BRAVE_PROFILES_OUTPUT")"
+    [[ -n "$output" ]] || return 4
   elif command -v profiles >/dev/null 2>&1; then
     output="$(profiles show -type configuration -output stdout-xml </dev/null 2>/dev/null || true)"
-    [[ -n "$output" ]] || return 2
+    [[ -n "$output" ]] || return 4
   else
     return 2
   fi
-  if [[ ! -f "$mobileconfig_path" ]]; then
-    if printf '%s\n' "$output" | grep -qF "$profile_identifier"; then
-      return 3
-    fi
-    return 1
+  if [[ -f "$mobileconfig_path" ]]; then
+    printf '%s\n' "$output" | python3 "$lib" payload-matches --mobileconfig "$mobileconfig_path" || matched=$?
+  else
+    printf '%s\n' "$output" | python3 "$lib" payload-matches || matched=$?
   fi
-  printf '%s\n' "$output" | python3 "$lib" payload-matches --mobileconfig "$mobileconfig_path" || matched=$?
   return "$matched"
 }
 
@@ -747,8 +747,10 @@ cmd_doctor() {
       printf '  note  %s\n' "Brave policy profile is installed, but it does not match the current Groundwork spec. An interactive apply can open the updated profile for approval in System Settings."
     elif [[ "$installed" -eq 1 ]]; then
       printf '  note  %s\n' "Brave policy profile is not installed. The next interactive apply will offer it again."
+    elif [[ "$installed" -eq 4 ]]; then
+      printf '  note  %s\n' "Brave policy profile: unknown (profiles returned nothing)."
     else
-      printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available)"
+      printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available)."
     fi
   fi
   if chrome_stable_present; then

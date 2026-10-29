@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import plistlib
 import sys
 from pathlib import Path
 
@@ -109,41 +109,101 @@ def applicable_policies(spec: dict, password_manager: str) -> list[dict]:
     return policies
 
 
-_BOOLEAN_POLICY = re.compile(
-    r"<key>([^<]+)</key>\s*<(true|false)\s*/>",
-    re.IGNORECASE,
-)
-
-
-def boolean_policy_values(text: str) -> dict[str, bool] | None:
-    """Non-metadata boolean keys. None when one key is both true and false."""
+def policy_booleans(mapping: dict) -> dict[str, bool]:
+    """Brave policy booleans. Payload metadata and non-booleans are not policies."""
     found: dict[str, bool] = {}
-    for name, raw in _BOOLEAN_POLICY.findall(text):
-        name = name.strip()
-        if not name or name.startswith("Payload"):
-            continue
-        value = raw.lower() == "true"
-        if name in found and found[name] is not value:
-            return None
-        found[name] = value
+    for key, value in mapping.items():
+        if isinstance(key, str) and not key.startswith("Payload") and isinstance(value, bool):
+            found[key] = value
     return found
 
 
-def payload_match_status(rendered: str, profiles_output: str) -> int:
-    """0 when the installed payload matches this render, 1 when the profile
-    identifier is absent, 3 when the identifier is present but the policy
-    values are not this render.
+def rendered_policy_booleans(rendered: str) -> dict[str, bool] | None:
+    try:
+        data = plistlib.loads(rendered.encode("utf-8"))
+    except (plistlib.InvalidFileException, ValueError, TypeError, OverflowError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    content = data.get("PayloadContent")
+    found: dict[str, bool] = {}
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict):
+                found.update(policy_booleans(item))
+    elif isinstance(content, dict):
+        found.update(policy_booleans(content))
+    return found
+
+
+def _walk_profiles(node: object, found: list[dict]) -> None:
+    if isinstance(node, dict):
+        if node.get("ProfileIdentifier") == PROFILE_IDENTIFIER:
+            found.append(node)
+        for value in node.values():
+            _walk_profiles(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            _walk_profiles(value, found)
+
+
+def profile_payload_booleans(profile: dict) -> dict[str, bool]:
+    """Booleans from this profile's payload only, not from any other profile."""
+    found: dict[str, bool] = {}
+    items = profile.get("ProfileItems")
+    if not isinstance(items, list):
+        return found
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("PayloadContent")
+        if isinstance(content, dict):
+            found.update(policy_booleans(content))
+        elif isinstance(content, list):
+            for nested in content:
+                if not isinstance(nested, dict):
+                    continue
+                nested_content = nested.get("PayloadContent")
+                if isinstance(nested_content, dict):
+                    found.update(policy_booleans(nested_content))
+                else:
+                    found.update(policy_booleans(nested))
+        else:
+            found.update(policy_booleans(item))
+    return found
+
+
+def payload_match_status(rendered: str | None, profiles_output: str) -> int:
+    """0 when that profile's policy set equals this render.
+
+    1: a profiles plist was read and com.groundwork.brave.browser is absent.
+    3: that profile is present and its policy set is not exactly this render.
+    2: the output is not a plist. That is unknown, not acceptance.
+    4: the output is empty.
     """
-    if PROFILE_IDENTIFIER not in profiles_output:
+    if not profiles_output.strip():
+        return 4
+    try:
+        document = plistlib.loads(profiles_output.encode("utf-8"))
+    except (plistlib.InvalidFileException, ValueError, TypeError, OverflowError):
+        return 2
+    if not isinstance(document, dict):
+        return 2
+    found: list[dict] = []
+    _walk_profiles(document, found)
+    if not found:
         return 1
-    expected = boolean_policy_values(rendered)
-    installed = boolean_policy_values(profiles_output)
-    if not expected or installed is None:
+    if len(found) != 1:
         return 3
-    for name, value in expected.items():
-        if installed.get(name) is not value:
-            return 3
-    return 0
+    installed = profile_payload_booleans(found[0])
+    if rendered is None:
+        return 3
+    expected = rendered_policy_booleans(rendered)
+    if expected is None:
+        return 2
+    if installed == expected:
+        return 0
+    return 3
 
 
 def extension_offers(spec: dict) -> list[dict]:
@@ -266,7 +326,7 @@ def _parser() -> argparse.ArgumentParser:
         "payload-matches",
         help="exit 0 when profiles output contains this render's policy values",
     )
-    payload.add_argument("--mobileconfig", required=True, type=Path)
+    payload.add_argument("--mobileconfig", type=Path)
     return parser
 
 
@@ -278,11 +338,13 @@ def main(argv: list[str] | None = None) -> int:
         return 64
     try:
         if args.command == "payload-matches":
-            try:
-                rendered = args.mobileconfig.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as error:
-                print(f"groundwork-brave-browser: {error}", file=sys.stderr)
-                return 1
+            rendered = None
+            if args.mobileconfig is not None:
+                try:
+                    rendered = args.mobileconfig.read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as error:
+                    print(f"groundwork-brave-browser: {error}", file=sys.stderr)
+                    return 1
             return payload_match_status(rendered, sys.stdin.read())
         spec = load_spec(args.spec)
         if args.command == "handler":

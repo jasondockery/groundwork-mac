@@ -511,6 +511,13 @@ if [[ "$config_only" -eq 1 ]]; then
   append_maintenance_receipt configuration applied
   append_maintenance_receipt upgrades not-requested
   append_maintenance_receipt maintenance not-requested
+{{ if eq .chezmoi.os "darwin" }}
+  # chezmoi apply already wrote the profile without prompting. Say so once,
+  # still without asking or saving a decline. GROUNDWORK_UPDATE_SCOPE is set.
+  if [[ -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then
+    "$HOME/.local/bin/groundwork-brave-browser" --notice
+  fi
+{{ end }}
   echo "Groundwork configuration applied using saved settings."
   echo "Routine upgrades and maintenance were not requested. Run update-all for those."
   exit 0
