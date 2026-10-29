@@ -151,13 +151,18 @@ AI CLIs are installed for every Mac. macOS defaults to Colima plus Docker CLI,
 including headless Macs. Device policy still takes precedence.
 
 `groundwork-configure` edits these preferences independently. Explicit stored
-values win. The retired `work` flag does not choose Git identity, personal
-apps, or infrastructure extensions. When a retired marker is present
+values win. The retired `work` flag does not choose personal apps or
+infrastructure extensions. When a retired marker is present
 (`work=true`, `environment_role=managed`, or `profile_preset=work-managed`)
 and the stored pair is still the old seed (personal apps off, infrastructure
 extensions on), that pair is rewritten to the common defaults: personal apps
-on, infrastructure extensions off. Any other stored pair is kept. A stored
-Git identity is kept. A fresh setup has no work/personal install question.
+on, infrastructure extensions off. Any other stored pair is kept. An explicit
+Git identity is kept. When `work=true` is stored and `git_identity` was never
+stored, regeneration writes `git_identity=work`. That is the identity the work
+flag used to select, so the Git email stays the work email when one is saved
+and the personal email when the work email is blank. A managed role or
+`work-managed` preset does not by itself choose a Git identity. A fresh setup
+has no work/personal install question.
 Docker Desktop removal and data migration are explicit owner operations:
 [the single migration guide](../docs/docker-desktop-to-colima.md).
 

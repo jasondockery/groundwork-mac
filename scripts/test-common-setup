@@ -935,8 +935,41 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         self.assertFalse(fresh_data["work"])
 
         git = self.text("home/dot_gitconfig.tmpl", work=True)
+        self.assertIn("email = work@example.com", git)
+
+    def test_retired_work_flag_keeps_the_work_git_email(self):
+        implied = self.render("home/.chezmoi.toml.tmpl", init=True, work=True)
+        self.assertEqual(implied.returncode, 0, implied.stderr)
+        implied_data = tomllib.loads(implied.stdout)["data"]
+        self.assertEqual(implied_data["git_identity"], "work")
+        self.assertTrue(implied_data["work"])
+        git = self.text("home/dot_gitconfig.tmpl", work=True)
+        self.assertIn("email = work@example.com", git)
+
+        explicit = self.render(
+            "home/.chezmoi.toml.tmpl", init=True, work=True, git_identity="personal",
+        )
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        self.assertEqual(tomllib.loads(explicit.stdout)["data"]["git_identity"], "personal")
+        git = self.text("home/dot_gitconfig.tmpl", work=True, git_identity="personal")
         self.assertIn("email = ci@example.com", git)
         self.assertNotIn("email = work@example.com", git)
+
+        blank = self.render("home/.chezmoi.toml.tmpl", init=True, work=True, email_work="")
+        self.assertEqual(blank.returncode, 0, blank.stderr)
+        self.assertEqual(tomllib.loads(blank.stdout)["data"]["git_identity"], "work")
+        git = self.text("home/dot_gitconfig.tmpl", work=True, email_work="")
+        self.assertIn("email = ci@example.com", git)
+        self.assertNotIn("email = work@example.com", git)
+
+        fresh = self.render("home/.chezmoi.toml.tmpl", init=True, work=False)
+        self.assertEqual(fresh.returncode, 0, fresh.stderr)
+        self.assertEqual(tomllib.loads(fresh.stdout)["data"]["git_identity"], "personal")
+        role_only = self.render(
+            "home/.chezmoi.toml.tmpl", init=True, work=False, environment_role="managed",
+        )
+        self.assertEqual(role_only.returncode, 0, role_only.stderr)
+        self.assertEqual(tomllib.loads(role_only.stdout)["data"]["git_identity"], "personal")
 
     def test_invalid_preferences_fail_before_rendering_a_manifest(self):
         for values in (dict(docker_backend="typo"), dict(personal_apps="false"), dict(git_identity="typo")):
