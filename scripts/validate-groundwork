@@ -9920,18 +9920,33 @@ SH
   chmod +x "$storage_bin/brew" "$storage_bin/pnpm" "$storage_bin/npm" \
     "$storage_bin/mise" "$storage_bin/du"
   storage_log="$storage_fixture/commands.log"
+  # One list for every doctor invocation in this fixture. Unset host PNPM_HOME
+  # and every current XDG_* name, then pin the five fixture directories.
+  # GNU env applies -u only while it is still an option, so every -u precedes
+  # the assignments. The nopnpm run replaces PATH after this list.
+  storage_xdg_clear=()
+  while IFS= read -r storage_xdg_name; do
+    case "$storage_xdg_name" in
+      XDG_*) storage_xdg_clear+=(-u "$storage_xdg_name") ;;
+    esac
+  done < <(compgen -v)
+  storage_env=(
+    ${storage_xdg_clear[@]+"${storage_xdg_clear[@]}"}
+    -u PNPM_HOME
+    HOME="$storage_home"
+    XDG_CONFIG_HOME="$storage_home/.config"
+    XDG_CACHE_HOME="$storage_home/.cache"
+    XDG_DATA_HOME="$storage_home/.local/share"
+    XDG_STATE_HOME="$storage_home/.local/state"
+    XDG_RUNTIME_DIR="$storage_home/xdg-runtime"
+    PATH="$storage_bin:/usr/bin:/bin"
+    GROUNDWORK_TEST_LOG="$storage_log"
+  )
   run_storage_doctor() {
     local output="$1"
     shift
     : >"$storage_log"
-    env -u PNPM_HOME \
-      HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
-      XDG_CONFIG_HOME="$storage_home/.config" \
-      XDG_CACHE_HOME="$storage_home/.cache" \
-      XDG_DATA_HOME="$storage_home/.local/share" \
-      XDG_STATE_HOME="$storage_home/.local/state" \
-      XDG_RUNTIME_DIR="$storage_home/xdg-runtime" \
-      GROUNDWORK_TEST_LOG="$storage_log" "$@" \
+    env "${storage_env[@]}" "$@" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
       >"$output" 2>&1
   }
@@ -10035,17 +10050,30 @@ SH
     || fail "known store roots must be sized even when pnpm cannot answer"
 
   # pnpm removed entirely, stores left behind: still found and sized.
+  # A host PNPM_HOME store must stay out of that report. The decoy is exported
+  # in this shell; storage_env has to unset it. This run has its own PATH so
+  # the fixture pnpm is absent while the other tools stay.
   storage_nopnpm_bin="$storage_fixture/nopnpm-bin"
   mkdir -p "$storage_nopnpm_bin"
   for storage_tool in brew npm mise du; do
     ln -s "$storage_bin/$storage_tool" "$storage_nopnpm_bin/$storage_tool"
   done
+  host_pnpm_home="$storage_fixture/host-pnpm-home"
+  mkdir -p "$host_pnpm_home/store/v98"
+  dd if=/dev/urandom of="$host_pnpm_home/store/v98/pkg.blob" bs=1024 count=64 >/dev/null 2>&1
+  storage_saved_pnpm_home="${PNPM_HOME-}"
+  storage_had_pnpm_home="${PNPM_HOME+x}"
+  export PNPM_HOME="$host_pnpm_home"
   : >"$storage_log"
-  env HOME="$storage_home" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
-    GROUNDWORK_TEST_LOG="$storage_log" \
+  env "${storage_env[@]}" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
     /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
     >"$storage_fixture/nopnpm-output" 2>&1 \
     || fail "doctor --storage must succeed with pnpm removed"
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/nopnpm-output"; then
+    fail "a host PNPM_HOME store changed the nopnpm storage report"
+  fi
+  assert_not_contains 'pnpm store v98' "$storage_fixture/nopnpm-output" \
+    "a host PNPM_HOME generation was sized as if it belonged to the fixture"
   grep -qF 'pnpm not installed; known store roots are still sized' "$storage_fixture/nopnpm-output" \
     || fail "a removed pnpm must not hide the stores it left behind"
   grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/nopnpm-output" \
@@ -10054,11 +10082,18 @@ SH
   # Storage never runs in the default doctor: du over VM bundles and simulator
   # trees can take minutes, and the routine health check must stay quick.
   : >"$storage_log"
-  env HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
-    GROUNDWORK_TEST_LOG="$storage_log" \
+  env "${storage_env[@]}" \
     /bin/bash home/dot_local/bin/executable_groundwork-doctor \
     >"$storage_fixture/default-output" 2>&1 \
     || fail "the default doctor run must succeed"
+  if [[ -n "$storage_had_pnpm_home" ]]; then
+    export PNPM_HOME="$storage_saved_pnpm_home"
+  else
+    unset PNPM_HOME
+  fi
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/default-output"; then
+    fail "a host PNPM_HOME changed the default doctor report"
+  fi
   assert_not_contains '== Storage ==' "$storage_fixture/default-output" \
     "the default doctor ran the storage section"
   grep -qF -- '--storage for the (slower)' "$storage_fixture/default-output" \
