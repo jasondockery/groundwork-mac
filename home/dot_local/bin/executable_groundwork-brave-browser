@@ -329,8 +329,10 @@ profile_state() {
   # 3: that profile is present and its policy set is not exactly this render.
   # 2: profiles is not available, or its output is not a plist. Not acceptance.
   # 4: the profiles command returned nothing. Not acceptance.
-  # `profiles show -output stdout-xml` is one plist. Other installed profiles
-  # are ignored. `profiles list` is not used: it only repeats the identifier.
+  # `profiles show -output stdout-xml` prints one plist, then a status sentence
+  # on stdout. The matcher keeps the document through the first </plist>.
+  # Other installed profiles are ignored. `profiles list` is not used: it only
+  # repeats the identifier.
   local output="" matched=0
   if [[ -n "${GROUNDWORK_BRAVE_PROFILES_OUTPUT:-}" ]]; then
     [[ -f "$GROUNDWORK_BRAVE_PROFILES_OUTPUT" ]] || return 2
@@ -750,7 +752,7 @@ cmd_doctor() {
     elif [[ "$installed" -eq 4 ]]; then
       printf '  note  %s\n' "Brave policy profile: unknown (profiles returned nothing)."
     else
-      printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available)."
+      printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available or its output could not be read)."
     fi
   fi
   if chrome_stable_present; then

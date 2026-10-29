@@ -12,6 +12,7 @@ import argparse
 import json
 import plistlib
 import sys
+import xml.parsers.expat
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -118,10 +119,52 @@ def policy_booleans(mapping: dict) -> dict[str, bool]:
     return found
 
 
+_PLIST_ERRORS = (
+    plistlib.InvalidFileException,
+    ValueError,
+    TypeError,
+    OverflowError,
+    xml.parsers.expat.ExpatError,
+)
+
+
+def extract_plist_xml(text: str) -> str | None:
+    """The first XML plist, ignoring text before it and after ``</plist>``.
+
+    ``profiles show -output stdout-xml`` prints the plist and then a status
+    sentence (``There are N configuration profiles installed``). A warning
+    may also precede the document. Neither is part of the plist.
+    """
+    xml_at = text.find("<?xml")
+    plist_at = text.find("<plist")
+    starts = [index for index in (xml_at, plist_at) if index != -1]
+    if not starts:
+        return None
+    start = min(starts)
+    end = text.find("</plist>", start)
+    if end == -1:
+        return None
+    return text[start : end + len("</plist>")]
+
+
+def profiles_document(profiles_output: str) -> dict | None:
+    """The profiles plist, or None when the output is not one."""
+    xml_text = extract_plist_xml(profiles_output)
+    if xml_text is None:
+        return None
+    try:
+        document = plistlib.loads(xml_text.encode("utf-8"))
+    except _PLIST_ERRORS:
+        return None
+    if not isinstance(document, dict):
+        return None
+    return document
+
+
 def rendered_policy_booleans(rendered: str) -> dict[str, bool] | None:
     try:
         data = plistlib.loads(rendered.encode("utf-8"))
-    except (plistlib.InvalidFileException, ValueError, TypeError, OverflowError):
+    except _PLIST_ERRORS:
         return None
     if not isinstance(data, dict):
         return None
@@ -148,7 +191,15 @@ def _walk_profiles(node: object, found: list[dict]) -> None:
 
 
 def profile_payload_booleans(profile: dict) -> dict[str, bool]:
-    """Booleans from this profile's payload only, not from any other profile."""
+    """Booleans from this profile's payload only, not from any other profile.
+
+    ``profiles show -output stdout-xml`` nests each profile under
+    ProfileIdentifier and its payloads under ProfileItems. Direct
+    com.brave.Browser settings are keys of that item's PayloadContent, beside
+    PayloadType. A dump that omits PayloadContent leaves those same bools
+    beside PayloadType. Managed-preferences values sit under
+    PayloadContentManagedPreferences and are not this policy set.
+    """
     found: dict[str, bool] = {}
     items = profile.get("ProfileItems")
     if not isinstance(items, list):
@@ -183,11 +234,8 @@ def payload_match_status(rendered: str | None, profiles_output: str) -> int:
     """
     if not profiles_output.strip():
         return 4
-    try:
-        document = plistlib.loads(profiles_output.encode("utf-8"))
-    except (plistlib.InvalidFileException, ValueError, TypeError, OverflowError):
-        return 2
-    if not isinstance(document, dict):
+    document = profiles_document(profiles_output)
+    if document is None:
         return 2
     found: list[dict] = []
     _walk_profiles(document, found)
@@ -345,7 +393,18 @@ def main(argv: list[str] | None = None) -> int:
                 except (OSError, UnicodeError) as error:
                     print(f"groundwork-brave-browser: {error}", file=sys.stderr)
                     return 1
-            return payload_match_status(rendered, sys.stdin.read())
+            profiles_output = sys.stdin.read()
+            status = payload_match_status(rendered, profiles_output)
+            if (
+                status == 2
+                and profiles_output.strip()
+                and profiles_document(profiles_output) is None
+            ):
+                print(
+                    "groundwork-brave-browser: profiles output could not be read.",
+                    file=sys.stderr,
+                )
+            return status
         spec = load_spec(args.spec)
         if args.command == "handler":
             print(handler_name(spec))

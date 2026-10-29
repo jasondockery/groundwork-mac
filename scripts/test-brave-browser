@@ -213,6 +213,14 @@ class BraveBrowserTests(unittest.TestCase):
         self.profiles.write_text(document, encoding="utf-8")
         return document
 
+    def write_profiles_stdout(self, document: str, status: str, leading: str = "") -> None:
+        parts = []
+        if leading:
+            parts.append(leading.rstrip("\n"))
+        parts.append(document.rstrip("\n"))
+        parts.append(status.rstrip("\n"))
+        self.profiles.write_text("\n".join(parts) + "\n", encoding="utf-8")
+
     def write_matching_profiles(self) -> str:
         rendered = self.render_python("bitwarden")
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
@@ -644,6 +652,109 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 0, missing.stderr)
         self.assertIn("profiles is not available", missing.stdout)
         self.assertNotIn("profiles returned nothing", missing.stdout)
+
+    def test_profiles_status_line_exact_match_is_accepted(self):
+        rendered = self.render_python("bitwarden")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n", encoding="utf-8")
+        document = self.write_installed_profile(self.policies_from_mobileconfig(rendered.stdout))
+        self.write_profiles_stdout(
+            document,
+            "There are 1 configuration profiles installed",
+            leading="profiles: stdout-xml follows",
+        )
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.choice("policy-open"), "accepted")
+        doctor = self.run_brave("--doctor", env=environment)
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertIn("ok    Brave policy profile is installed", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stderr)
+
+    def test_profiles_status_line_stale_superset_is_not_accepted(self):
+        bitwarden = self.render_python("bitwarden")
+        none_render = self.render_python("none")
+        self.assertEqual(bitwarden.returncode, 0, bitwarden.stderr)
+        self.assertEqual(none_render.returncode, 0, none_render.stderr)
+        installed = self.policies_from_mobileconfig(bitwarden.stdout)
+        current = self.policies_from_mobileconfig(none_render.stdout)
+        self.assertIn("PasswordManagerEnabled", installed)
+        self.assertNotIn("PasswordManagerEnabled", current)
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n", encoding="utf-8")
+        document = self.write_installed_profile(installed)
+        self.write_profiles_stdout(document, "There are 1 configuration profiles installed")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(
+            INSTALLED_CASKS="brave-browser",
+            GROUNDWORK_BRAVE_PASSWORD_MANAGER="none",
+        )
+        result = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIsNone(self.choice("policy-open"))
+        doctor = self.run_brave("--doctor", env=environment)
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertNotIn("ok    Brave policy profile is installed", doctor.stdout)
+        self.assertIn("does not match the current Groundwork spec", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stderr)
+        (self.logs / "open").unlink()
+        again = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn("Brave-Browser.mobileconfig", self.log("open"))
+        self.assertIsNone(self.choice("policy-open"))
+
+    def test_malformed_profiles_output_is_unknown(self):
+        self.profiles.write_text("this is not xml\n", encoding="utf-8")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        doctor = self.run_brave("--doctor", env=environment)
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertIn("could not be read", doctor.stdout)
+        self.assertIn("could not be read", doctor.stderr)
+        self.assertNotIn("Brave policy profile is not installed", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stderr)
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n", encoding="utf-8")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        result = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(self.choice("policy-open"))
+        self.assertNotIn("Traceback", result.stderr)
+        truncated = '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n'
+        matched = subprocess.run(
+            ["python3", str(LIB), "payload-matches"],
+            input=truncated,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(matched.returncode, 2, matched.stderr)
+        self.assertIn("could not be read", matched.stderr)
+        self.assertNotIn("Traceback", matched.stderr)
+
+    def test_empty_profile_plist_with_status_line_is_not_installed(self):
+        document = plistlib.dumps({}, fmt=plistlib.FMT_XML).decode("utf-8")
+        self.write_profiles_stdout(document, "There are no configuration profiles installed")
+        doctor = self.run_brave("--doctor", env=self.env(INSTALLED_CASKS="brave-browser"))
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertIn(
+            "Brave policy profile is not installed. The next interactive apply will offer it again.",
+            doctor.stdout,
+        )
+        self.assertNotIn("profiles is not available", doctor.stdout)
+        self.assertNotIn("profiles returned nothing", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stdout)
+        self.assertNotIn("Traceback", doctor.stderr)
 
     def test_config_only_update_prints_the_brave_notice(self):
         runner = (REPO / "home/dot_local/bin/executable_groundwork-update-run.tmpl").read_text(encoding="utf-8")
