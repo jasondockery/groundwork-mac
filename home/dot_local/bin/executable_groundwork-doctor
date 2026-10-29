@@ -37,8 +37,9 @@ Sections (all run by default):
                 project-local or mise-managed CLI lanes.
   AI tools      effective Claude Code executable, native/manual ownership, and
                 comparison with the selected Homebrew installation.
-  Browser       whether Google Chrome stable is installed on a desktop Mac.
-                An existing Chrome Beta cask is reported as unmanaged and is
+  Browser       whether Brave is installed on a desktop Mac, whether it is the
+                default browser, and whether its policy profile is installed.
+                An existing Chrome install is reported as unmanaged and is
                 not removed. Device policy remains authoritative.
   Karabiner     installed version, macOS support, and root Core Service PID,
                 owner, elapsed time, RSS, memory footprint, and compressed
@@ -279,23 +280,20 @@ browser_section() {
     ok "headless profile selects no GUI browser"
     return 0
   fi
-  if ! command -v brew >/dev/null 2>&1; then
-    warn "Homebrew is not available, so Google Chrome stable cannot be verified."
-    return 0
-  fi
-
-  if brew list --cask google-chrome >/dev/null 2>&1; then
-    ok "Google Chrome stable is installed"
-  else
-    warn "Google Chrome stable is selected but not installed; rerun update-all."
-  fi
-  if brew list --cask google-chrome@beta >/dev/null 2>&1; then
-    note "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
-  fi
   if [[ "$role" == "managed" ]]; then
     note "organization and device policy outrank this selection; Groundwork never bypasses them."
   fi
-  note "Groundwork installs Google Chrome stable but does not change the macOS default-browser association."
+  local brave_script
+  brave_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/executable_groundwork-brave-browser"
+  if [[ ! -f "$brave_script" ]]; then
+    brave_script="$HOME/.local/bin/groundwork-brave-browser"
+  fi
+  if [[ ! -f "$brave_script" ]]; then
+    warn "groundwork-brave-browser is not installed, so Brave status is unknown."
+    return 0
+  fi
+  GROUNDWORK_BRAVE_ROLE="$role" GROUNDWORK_BRAVE_PLATFORM=Darwin \
+    /bin/bash "$brave_script" --doctor
 }
 
 docker_section() {

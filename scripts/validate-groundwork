@@ -1149,6 +1149,7 @@ line_number() {
 validate_static_foundation() {
   check "common developer setup and Docker configuration merge"
   python3 -B scripts/test-common-setup
+  python3 -B scripts/test-brave-browser
   python3 -B scripts/test-remote-desktop
   python3 -B tests/test_imessage_gateway.py
   python3 -B tests/test_local_inference.py
@@ -2993,6 +2994,9 @@ case "${1:-}" in
         self-current)
           printf '%s' '{"token":"self-current","installed":"1.1.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":true,"pinned":false,"outdated":false,"deprecated":false,"disabled":false,"artifacts":[{"app":["Self Current.app"]}]}'
           ;;
+        brave-browser)
+          printf '%s' '{"token":"brave-browser","installed":"1.0.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":true,"pinned":false,"outdated":false,"deprecated":false,"disabled":false,"artifacts":[{"app":["Brave Browser.app"]}]}'
+          ;;
         google-chrome | google-chrome@beta)
           case "$token" in
             google-chrome) app_name='Google Chrome.app' ;;
@@ -4409,7 +4413,7 @@ EOF
   dynamic_exit=0
   HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    BREW_CASKS='ghostty chatgpt cursor claude obsidian self-current google-chrome google-chrome@beta unknown-vendor disabled-cask latest-cask codex-app' \
+    BREW_CASKS='ghostty chatgpt cursor claude obsidian self-current brave-browser google-chrome google-chrome@beta unknown-vendor disabled-cask latest-cask codex-app' \
     BREW_AUTO_OUTDATED='chatgpt cursor claude obsidian' \
     BREW_LATEST_OUTDATED='latest-cask' \
     BREW_LAUNCH_AFTER_SNAPSHOT=1 \
@@ -4430,17 +4434,20 @@ EOF
   assert_not_contains '^brew upgrade --greedy([[:space:]]|$)|^brew upgrade --cask --greedy([[:space:]]|$)' \
     "$update_all_log" \
     "update-all invoked an unscoped global greedy upgrade"
-  grep -qF 'Groundwork vendor-covered: google-chrome remains with its declared self-updater' \
+  grep -qF 'Groundwork vendor-covered: brave-browser remains with its declared self-updater' \
     "$update_all_fixture/darwin-dynamic-casks" \
-    || fail "a no-checksum vendor-updated cask disappeared from the coverage receipt"
-  assert_not_contains 'Groundwork vendor-covered: google-chrome@beta' \
+    || fail "Brave disappeared from the declared Sparkle coverage receipt"
+  assert_not_contains 'Groundwork vendor-covered: google-chrome' \
     "$update_all_fixture/darwin-dynamic-casks" \
-    "an installed Chrome Beta cask was still treated as declared vendor coverage"
+    "Chrome was still treated as declared vendor coverage"
+  grep -qF 'Groundwork review: google-chrome 1.0.0 -> 1.1.0 was not upgraded automatically (unverified-vendor-updater).' \
+    "$update_all_fixture/darwin-dynamic-casks" \
+    || fail "an installed Chrome cask was not left as an unmanaged review item"
   grep -qF 'Groundwork review: google-chrome@beta 1.0.0 -> 1.1.0 was not upgraded automatically (unverified-vendor-updater).' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "an installed Chrome Beta cask was not left as an unmanaged review item"
-  assert_not_contains 'brew (upgrade|uninstall).*google-chrome@beta' "$update_all_log" \
-    "update-all upgraded or uninstalled an unmanaged Chrome Beta cask"
+  assert_not_contains 'brew (upgrade|uninstall).*google-chrome' "$update_all_log" \
+    "update-all upgraded or uninstalled an unmanaged Chrome cask"
   grep -qF 'Inspect exact ownership before optional removal: groundwork-app-remove codex-app' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the deprecated codex-app was not distinguished from current ChatGPT"
@@ -4450,7 +4457,7 @@ EOF
   grep -qF 'Groundwork review: unknown-vendor 1.0.0 -> 1.1.0 was not upgraded automatically (unverified-vendor-updater).' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "an unknown no-checksum self-updater was incorrectly trusted"
-  grep -qF 'Unverified casks        2 checksum/updater-ownership item(s) named above' \
+  grep -qF 'Unverified casks        3 checksum/updater-ownership item(s) named above' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the unverified updater count was absent from the final receipt"
   grep -qF 'Groundwork owner action: disabled cask disabled-cask 1.0.0 -> 1.1.0 remains installed and unchanged.' \
@@ -4462,7 +4469,7 @@ EOF
   assert_not_contains 'brew upgrade .*disabled-cask|brew upgrade --cask --require-sha disabled-cask' \
     "$update_all_log" \
     "a disabled cask entered a mutating command"
-  grep -qF 'Discovered              13 installed formulae and casks' \
+  grep -qF 'Discovered              14 installed formulae and casks' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the Homebrew discovery count omitted a formula or cask"
   grep -qF 'Current                 1' \
@@ -4474,7 +4481,7 @@ EOF
   grep -qF 'Verified updated        7' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the Homebrew verified-update count did not match reconciliation"
-  grep -qF 'SUCCESS · 4 OWNER-REVIEW ITEM(S)' \
+  grep -qF 'SUCCESS · 5 OWNER-REVIEW ITEM(S)' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the deprecated cask was not kept distinct from an updater failure"
   test -f "$update_all_stamp" \
@@ -5788,9 +5795,10 @@ PY
   render darwin false arm64 home/run_onchange_after_10-brew-bundle.sh.tmpl \
     "$update_all_fixture/darwin-bundle-hook"
   chmod +x "$update_all_fixture/darwin-bundle-hook"
-  # The browser lane runs after a successful bundle and needs its own manifest.
+  # Brewfile.browser records the selection. The bundle hook no longer installs
+  # from it; Brave is a checksummed cask in the main Brewfile.
   cat >"$update_all_home/.config/homebrew/Brewfile.browser" <<'EOF'
-cask "google-chrome"
+cask "brave-browser"
 EOF
   for cancel_status in 124 125 129 130 143; do
     rm -f "$update_all_home/.brew-bundle-count"
@@ -11107,8 +11115,8 @@ EOF
     render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl \
       "$gc_focus_accept/Brewfile.browser" false false false false bitwarden \
       personal-current managed "$gc_focus_accept_posture"
-    grep -qx 'cask "google-chrome"' "$gc_focus_accept/Brewfile.browser" \
-      || fail "accepted preview posture did not keep Chrome stable for the immediate apply"
+    grep -qx 'cask "brave-browser"' "$gc_focus_accept/Brewfile.browser" \
+      || fail "accepted preview posture did not keep Brave for the immediate apply"
     assert_not_contains 'google-chrome@beta' "$gc_focus_accept/Brewfile.browser" \
       "accepted preview posture selected Chrome Beta"
 
@@ -12305,15 +12313,17 @@ EOF
 
   check "Homebrew cask policy (rendered installer behavior)"
   # The NETWORK audit (scripts/audit-brew-casks) owns upstream cask metadata.
-  # THIS owns profile resolution and the bounded installer, offline and
-  # deterministically. Every desktop posture selects Chrome stable only.
-  grep -qxF 'google-chrome' home/dot_local/share/groundwork/vendor-updater-casks.txt \
-    || fail "Chrome stable must remain a declared vendor-updater exception"
-  assert_not_contains 'google-chrome@beta' home/dot_local/share/groundwork/vendor-updater-casks.txt \
-    "Chrome Beta is still a declared vendor-updater exception"
+  # THIS owns profile resolution offline and deterministically. Every desktop
+  # posture selects Brave. Sparkle owns later updates, so Brave is declared
+  # vendor-covered even though its cask has a checksum.
+  grep -qxF 'brave-browser' home/dot_local/share/groundwork/vendor-updater-casks.txt \
+    || fail "Brave must remain a declared vendor-updater"
+  assert_not_contains 'google-chrome' home/dot_local/share/groundwork/vendor-updater-casks.txt \
+    "Chrome is still a declared vendor-updater"
   browser_current="$out_dir/browser-current"
   browser_preview="$out_dir/browser-preview"
   browser_managed="$out_dir/browser-managed"
+  browser_xcode="$out_dir/browser-xcode"
   browser_headless="$out_dir/browser-headless"
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_current" \
     false false false false bitwarden personal-current personal current
@@ -12321,35 +12331,38 @@ EOF
     false false false false bitwarden personal-preview personal preview
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_managed" \
     true false false false 1password work-managed managed current
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_xcode" \
+    false true false false bitwarden personal-current personal current
   render darwin true arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_headless" \
     false false false false none personal-current personal current
 
-  grep -qxF 'cask "google-chrome"' "$browser_current" \
-    || fail "Personal Current must select Chrome stable"
+  grep -qxF 'cask "brave-browser"' "$browser_current" \
+    || fail "Personal Current must select Brave"
   diff -u "$browser_current" "$browser_preview" \
-    || fail "Personal Preview changed the managed browser away from Chrome stable"
+    || fail "Personal Preview changed the managed browser away from Brave"
   diff -u "$browser_current" "$browser_managed" \
-    || fail "Work Managed changed the managed browser away from Chrome stable"
-  assert_not_contains 'google-chrome@beta' "$browser_current" \
-    "a desktop browser manifest selected Chrome Beta"
-  assert_not_contains 'google-chrome@beta' "$browser_preview" \
-    "Personal Preview selected Chrome Beta"
-  assert_not_contains 'google-chrome@beta' "$browser_managed" \
-    "Work Managed selected Chrome Beta"
+    || fail "Work Managed changed the managed browser away from Brave"
+  diff -u "$browser_current" "$browser_xcode" \
+    || fail "Xcode changed the managed browser away from Brave"
+  assert_not_contains 'google-chrome' "$browser_current" \
+    "a desktop browser manifest selected Chrome"
+  assert_not_contains 'google-chrome' "$browser_preview" \
+    "Personal Preview selected Chrome"
+  assert_not_contains 'google-chrome' "$browser_managed" \
+    "Work Managed selected Chrome"
   assert_not_contains '^cask ' "$browser_headless" \
     "a headless Mac selected a GUI browser"
 
-  browser_extensions="$out_dir/browser-extensions"
-  render darwin false arm64 home/dot_local/bin/executable_browser-extensions.tmpl "$browser_extensions" \
-    false false false false bitwarden personal-current personal current
-  /bin/bash -n "$browser_extensions"
-  browser_extensions_out="$(GROUNDWORK_BROWSER_EXTENSIONS_CATALOG="$PWD/home/dot_local/share/groundwork/browser-extensions.tsv" \
-    /bin/bash "$browser_extensions")"
-  grep -qF 'chrome' <<<"$browser_extensions_out" \
-    || fail "the browser extension helper must continue to list Chrome links"
+  /bin/bash -n home/dot_local/bin/executable_browser-extensions
+  browser_extensions_out="$(GROUNDWORK_BRAVE_SPEC="$PWD/core/browser/brave.json" \
+    /bin/bash home/dot_local/bin/executable_browser-extensions)"
+  grep -qF 'brave' <<<"$browser_extensions_out" \
+    || fail "the browser extension helper must list the Brave offer"
+  grep -qF 'nngceckbapebfimnlniiiahkandclblb' <<<"$browser_extensions_out" \
+    || fail "the browser extension helper must list the Bitwarden id from brave.json"
   browser_extensions_rc=0
-  GROUNDWORK_BROWSER_EXTENSIONS_CATALOG="$PWD/home/dot_local/share/groundwork/browser-extensions.tsv" \
-    /bin/bash "$browser_extensions" --browser unsupported >/dev/null 2>&1 || browser_extensions_rc=$?
+  GROUNDWORK_BRAVE_SPEC="$PWD/core/browser/brave.json" \
+    /bin/bash home/dot_local/bin/executable_browser-extensions --browser chrome >/dev/null 2>&1 || browser_extensions_rc=$?
   [[ "$browser_extensions_rc" -eq 2 ]] \
     || fail "the browser extension helper must reject an unsupported browser target"
 
@@ -12403,26 +12416,22 @@ EOF
   # The user's own cask options are preserved, never replaced.
   grep -qF "user_cask_opts=\"\${HOMEBREW_CASK_OPTS-}\"" "$chrome_current" \
     || fail "the user's HOMEBREW_CASK_OPTS must be preserved, not overwritten"
-  grep -qF "HOMEBREW_CASK_OPTS=\"\$user_cask_opts\" brew install --cask \"\$browser_cask\"" "$chrome_current" \
-    || fail "the Chrome exception must run under the USER's cask options"
-  # Ordering: a failed safe lane must never reach the unsafe exception lane.
-  chrome_exit_line="$(grep -n "exit \"\$bundle_status\"" "$chrome_current" | head -n 1 | cut -d: -f1)"
-  chrome_install_line="$(grep -nF "brew install --cask \"\$browser_cask\"" "$chrome_current" | head -n 1 | cut -d: -f1)"
-  ((chrome_exit_line < chrome_install_line)) \
-    || fail "google-chrome is installed BEFORE the bundle-failure exit — a failed safe lane must not trigger the unsafe lane"
-  # A conflicting user policy is a real failure, not a silent skip that never retries.
-  grep -qF 'this apply is incomplete' "$chrome_current" \
-    || fail "a user --require-sha policy conflict must fail explicitly, not disappear"
-  grep -qF 'unsupported browser manifest entry' "$chrome_current" \
-    || fail "the browser installer must reject any manifest entry outside its exact allowlist"
+  assert_not_contains 'browser_cask' "$chrome_current" \
+    "the retired Chrome exception lane is still installing a browser cask"
+  assert_not_contains 'this apply is incomplete' "$chrome_current" \
+    "the retired Chrome checksum conflict is still rendered"
+  assert_not_contains 'unsupported browser manifest entry' "$chrome_current" \
+    "the retired browser-manifest parser is still rendered"
 
-  # Chrome exceptions must never enter the checksum-safe Brewfile.
+  # Brave is in the checksum-safe Brewfile. Chrome is not.
   for chrome_profile in 'false false' 'true false' 'false true'; do
     read -r chrome_work chrome_game <<<"$chrome_profile"
     render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl \
       "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" "$chrome_work"
+    grep -qxF 'cask "brave-browser"' "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" \
+      || fail "desktop Brewfile omitted Brave (work=$chrome_work)"
     assert_not_contains '^cask "google-chrome(@beta)?"' "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" \
-      "a Chrome exception is in the checksum-safe Brewfile (work=$chrome_work)"
+      "Chrome is in the checksum-safe Brewfile (work=$chrome_work)"
   done
 
   # The retired browser contract is repository-wide and red-proven against a
@@ -17707,10 +17716,10 @@ EOF
     }
   done
   check "browser, Raycast, and Anybox link workflow"
-  grep -qF 'Chrome is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.' docs/apps.html \
-    || fail "apps guide must give Chrome, Raycast, and Anybox distinct ownership"
-  grep -qF 'Open With → Google Chrome' docs/apps.html \
-    || fail "apps guide must route Raycast Quicklinks through Google Chrome"
+  grep -qF 'Brave is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.' docs/apps.html \
+    || fail "apps guide must give Brave, Raycast, and Anybox distinct ownership"
+  grep -qF 'Open With → Brave Browser' docs/apps.html \
+    || fail "apps guide must route Raycast Quicklinks through Brave Browser"
   grep -qF 'global <strong>Prefer Existing Tabs</strong> setting' docs/apps.html \
     || fail "apps guide must describe Prefer Existing Tabs as one global Raycast setting"
   grep -qF 'An Anybox Quick Link is detected when its keyword is typed anywhere outside Anybox.' docs/apps.html \
@@ -17723,8 +17732,8 @@ EOF
     || fail "resources guide must present browser bookmark search as a compatibility bridge"
   grep -qF 'Keep its bookmarks bar as a small visual hot cache; Anybox owns the durable library.' README.md \
     || fail "README finish-up checklist must preserve the link ownership model"
-  grep -qF 'Set them to open with Google Chrome' README.md \
-    || fail "README finish-up checklist must route Quicklinks through Google Chrome"
+  grep -qF 'Set them to open with Brave Browser' README.md \
+    || fail "README finish-up checklist must route Quicklinks through Brave Browser"
   grep -qF 'brew uninstall --cask google-chrome@beta' docs/apps.html \
     || fail "apps guide must document the manual Chrome Beta removal command"
   assert_no_matches "stale Anybox alias, profile, or Quick Link guidance found" \
@@ -17954,10 +17963,10 @@ PY
       fi
       assert_not_contains '^cask ' "$out_dir/$case_name/Brewfile.browser" "a GUI browser leaked into $case_name"
     else
-      grep -qxF 'cask "google-chrome"' "$out_dir/$case_name/Brewfile.browser" \
-        || fail "$case_name must include Chrome stable"
-      assert_not_contains 'google-chrome@beta' "$out_dir/$case_name/Brewfile.browser" \
-        "$case_name selected Chrome Beta"
+      grep -qxF 'cask "brave-browser"' "$out_dir/$case_name/Brewfile.browser" \
+        || fail "$case_name must include Brave"
+      assert_not_contains 'google-chrome' "$out_dir/$case_name/Brewfile.browser" \
+        "$case_name selected Chrome"
     fi
     # The tap-trust troubleshooting docs name every tap Groundwork adds. That
     # list is exactly one, so any other tap fails closed here rather than
@@ -18004,29 +18013,20 @@ PY
       assert_not_contains 'SSH_AUTH_SOCK' "$out_dir/$case_name/zshrc" "SSH_AUTH_SOCK leaked into $case_name zshrc"
     fi
 
-    # The only Chrome override is PasswordManagerEnabled=false on Stable, and
-    # only on a desktop Mac when a third-party manager is configured. Upstream
-    # leaves the built-in manager on; the write exists so it does not compete
-    # with Bitwarden or 1Password. The darwin first-run backup still records
-    # the Stable key, including when that write is skipped. Headless and Linux
-    # do not write the preference. The Beta domain is never written or backed up.
+    # Brave policy is a configuration profile, not a defaults write. No Chrome
+    # preference is written. The darwin first-run backup still records the old
+    # Stable key so an older backup can restore it. The Beta domain is never
+    # written or backed up.
     chrome_defaults="$out_dir/$case_name/run_onchange_after_30-macos-defaults.sh"
     chrome_backup="$out_dir/$case_name/run_before_05-backup-current-settings.sh"
     manages_chrome=false
     if [[ "$os" == "darwin" && "$headless" == "false" ]]; then
       manages_chrome=true
     fi
-    if [[ "$manages_chrome" == true && "$password_manager" != "none" ]]; then
-      grep -qxF 'defaults write com.google.Chrome PasswordManagerEnabled -bool false' "$chrome_defaults" \
-        || fail "$case_name must disable Stable Chrome's built-in password manager"
-      chrome_domain_writes="$(grep -cE '^defaults write com\.google\.Chrome(\.beta)? ' "$chrome_defaults" || true)"
-      chrome_password_writes="$(grep -cF 'PasswordManagerEnabled -bool false' "$chrome_defaults" || true)"
-      [[ "$chrome_domain_writes" -eq 1 && "$chrome_password_writes" -eq 1 ]] \
-        || fail "$case_name must write only PasswordManagerEnabled on Stable Chrome (domains=$chrome_domain_writes keys=$chrome_password_writes)"
-    else
-      assert_not_contains 'PasswordManagerEnabled' "$chrome_defaults" \
-        "Chrome password-manager override leaked into $case_name"
-    fi
+    assert_not_contains 'defaults write com\.google\.Chrome' "$chrome_defaults" \
+      "a Chrome preference write leaked into $case_name"
+    assert_not_contains 'PasswordManagerEnabled' "$chrome_defaults" \
+      "a browser password-manager defaults write leaked into $case_name"
     assert_not_contains 'com\.google\.Chrome\.beta' "$chrome_defaults" \
       "Chrome Beta preference domain leaked into $case_name"
     assert_not_contains 'com\.google\.Chrome\.beta' "$chrome_backup" \
@@ -18613,12 +18613,12 @@ STUB
   profile_out "$profile_dir/headless" show | grep -Fq 'no desktop apps, so posture has no effect'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'AI tools (no intentional release delay)'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'release-age floors'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Managed browser   Google Chrome stable'
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Managed browser   Google Chrome stable'
+  profile_out "$profile_dir/personal-current" show | grep -Fq 'Managed browser   Brave'
+  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Managed browser   Brave'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'Release posture   preview'
   assert_not_contains 'Browser fallback|Google Chrome Beta|google-chrome@beta' "$profile_dir/output" \
     "preview profile still reported a Chrome Beta channel"
-  profile_out "$profile_dir/managed" show | grep -Fq 'Managed browser   Google Chrome stable'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Managed browser   Brave'
   profile_out "$profile_dir/headless" show | grep -Fq 'Managed browser   none (headless)'
 
   # `set` is the narrow shortcut into the same guarded settings transaction.
@@ -18704,43 +18704,46 @@ SH
   }
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
-    'google-chrome')"
+    'brave-browser')"
   grep -qF 'Current release posture: stable' <<<"$browser_doctor_out"
   grep -qF 'Xcode: disabled' <<<"$browser_doctor_out"
   grep -qF 'Xcode beta channel: disabled' <<<"$browser_doctor_out"
-  grep -qF 'ok    Google Chrome stable is installed' <<<"$browser_doctor_out"
+  grep -qF 'ok    Brave Browser is installed' <<<"$browser_doctor_out"
+  grep -qF 'Default browser: unknown (defaultbrowser is not installed)' <<<"$browser_doctor_out"
   assert_not_contains 'no longer Groundwork-managed|google-chrome@beta' <(printf '%s\n' "$browser_doctor_out") \
-    "current browser doctor reported an absent Chrome Beta install"
+    "current browser doctor reported an absent Chrome install"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"preview","environment_role":"personal","xcode":true,"beta":true}' \
-    'google-chrome google-chrome@beta')"
+    'brave-browser google-chrome google-chrome@beta')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'Xcode: enabled' <<<"$browser_doctor_out"
   grep -qF 'Xcode beta channel: enabled' <<<"$browser_doctor_out"
-  grep -qF 'ok    Google Chrome stable is installed' <<<"$browser_doctor_out"
+  grep -qF 'ok    Brave Browser is installed' <<<"$browser_doctor_out"
+  grep -qF 'Chrome is still installed and is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome' <<<"$browser_doctor_out"
   grep -qF 'Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta' <<<"$browser_doctor_out"
   assert_not_contains 'primary preview browser|compatibility fallback' <(printf '%s\n' "$browser_doctor_out") \
     "preview doctor still treated Chrome Beta as the managed browser"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
     'google-chrome@beta')"
-  grep -qF 'Google Chrome stable is selected but not installed' <<<"$browser_doctor_out"
+  grep -qF 'Brave Browser is selected but not installed' <<<"$browser_doctor_out"
   grep -qF 'brew uninstall --cask google-chrome@beta' <<<"$browser_doctor_out"
   assert_not_contains 'brew uninstall --cask google-chrome$' <(printf '%s\n' "$browser_doctor_out") \
     "doctor offered to remove Chrome stable while reporting an unmanaged Beta install"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
-    'google-chrome')"
+    'brave-browser google-chrome')"
   grep -qF 'device policy outrank this selection' <<<"$browser_doctor_out"
+  grep -qF 'This Mac is work-managed, so Groundwork did not write a Brave policy profile.' <<<"$browser_doctor_out"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
-    'google-chrome')"
+    'brave-browser')"
   grep -qF "release_posture is 'broken'" <<<"$browser_doctor_out" \
     || fail "doctor must report an invalid release posture"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out" \
     || fail "invalid posture must not suppress the independent Xcode beta diagnostic"
-  assert_not_contains 'Google Chrome stable is installed' <(printf '%s\n' "$browser_doctor_out") \
+  assert_not_contains 'Brave Browser is installed' <(printf '%s\n' "$browser_doctor_out") \
     "invalid posture must suppress browser-installation claims"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":true,"release_posture":"preview","environment_role":"disposable","xcode":false,"beta":false}' '')"

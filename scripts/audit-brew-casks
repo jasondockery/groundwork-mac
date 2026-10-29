@@ -3,21 +3,15 @@ set -euo pipefail
 
 # Prove the checksum policy against the real cask inventory, not a comment.
 #
-# Two SEPARATE invariants, because collapsing them lets an exception list defeat
-# the policy it is supposed to document:
+# Brewfile policy: NO cask in any rendered Brewfile may ship `sha256 :no_check`
+# or `version :latest`. There is no allowlist. The Brewfile is installed under
+# `--require-sha`, so an unchecked cask would fail the bundle and would put an
+# unverified artifact on every new machine.
 #
-#   1. Brewfile policy — NO cask in any rendered Brewfile may ship
-#      `sha256 :no_check` or `version :latest`. There is no allowlist here: the
-#      Brewfile is installed under `--require-sha`, so an unchecked cask in it
-#      would fail the bundle anyway, and admitting one would put an unverified
-#      artifact on every new machine.
-#
-#   2. Browser exception registry — the official Chrome stable cask cannot
-#      satisfy that policy (Google's own updater owns the binary, so the cask
-#      declares no_check). It must be absent from the checksum-safe Brewfile,
-#      selected only by the profile-rendered Brewfile.browser, and installed by
-#      the bounded exception lane. If that cask gains a checksum, this audit
-#      says so instead of preserving an unnecessary bypass.
+# Browser selection: every desktop Mac posture (current, preview, xcode, and
+# work-managed) renders brave-browser and not Google Chrome. Headless renders
+# no GUI browser. Brave is checksummed, so it lives in the main Brewfile.
+# Sparkle owns later updates; this audit does not add an upgrade lane.
 #
 # Needs macOS, Homebrew, chezmoi, jq, and network access, so this is a receipt
 # (and a required CI job), not part of the offline validator.
@@ -32,9 +26,6 @@ for tool in brew jq chezmoi; do
     exit 1
   }
 done
-
-# The only cask allowed to be unchecked — and ONLY outside the main Brewfile.
-exception_casks=(google-chrome)
 
 status=0
 declare -a all_casks=()
@@ -70,12 +61,9 @@ for work in false true; do
       while IFS= read -r cask; do
         [[ -n "$cask" ]] || continue
         all_casks+=("$cask")
-        # Invariant 2: browser exceptions must never be inside the safe Brewfile.
-        if [[ "$cask" == "google-chrome" ]]; then
+        if [[ "$cask" == "google-chrome" || "$cask" == "google-chrome@beta" ]]; then
           echo "VIOLATION $cask is in the Brewfile ($profile)." >&2
-          echo "          It ships no checksum, so the --require-sha bundle would fail — and admitting" >&2
-          echo "          it would hand every new machine an unverified artifact. It belongs in its" >&2
-          echo "          bounded browser installer (run_onchange_after_10-brew-bundle.sh)." >&2
+          echo "          Chrome is no longer Groundwork-managed." >&2
           status=1
         fi
       done <<<"$rendered"
@@ -84,31 +72,84 @@ for work in false true; do
 done
 
 render_browser_profile() {
-  local posture="$1"
+  local posture="$1" role="$2" headless="$3" xcode="$4"
   chezmoi --source "$PWD" execute-template \
-    --override-data "{\"headless\":false,\"release_posture\":\"$posture\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
+    --override-data "{\"headless\":$headless,\"xcode\":$xcode,\"release_posture\":\"$posture\",\"environment_role\":\"$role\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
     <home/dot_config/homebrew/Brewfile.browser.tmpl \
     | sed -n 's/^cask "\([^"]*\)".*/\1/p'
 }
 
-current_browser="$(render_browser_profile current)" \
+expect_brave() {
+  local label="$1" selected="$2"
+  [[ "$selected" == "brave-browser" ]] || {
+    printf 'FAIL: %s selected:\n%s\n' "$label" "$selected" >&2
+    exit 1
+  }
+}
+
+current_browser="$(render_browser_profile current personal false false)" \
   || {
     echo "FAIL: current browser profile did not render." >&2
     exit 1
   }
-preview_browser="$(render_browser_profile preview)" \
+preview_browser="$(render_browser_profile preview personal false false)" \
   || {
     echo "FAIL: preview browser profile did not render." >&2
     exit 1
   }
-[[ "$current_browser" == "google-chrome" ]] || {
-  printf 'FAIL: current browser profile selected:\n%s\n' "$current_browser" >&2
+xcode_browser="$(render_browser_profile current personal false true)" \
+  || {
+    echo "FAIL: xcode browser profile did not render." >&2
+    exit 1
+  }
+managed_browser="$(render_browser_profile current managed false false)" \
+  || {
+    echo "FAIL: work-managed browser profile did not render." >&2
+    exit 1
+  }
+headless_browser="$(render_browser_profile current personal true false)" \
+  || {
+    echo "FAIL: headless browser profile did not render." >&2
+    exit 1
+  }
+expect_brave "current" "$current_browser"
+expect_brave "preview" "$preview_browser"
+expect_brave "xcode" "$xcode_browser"
+expect_brave "work-managed" "$managed_browser"
+[[ -z "$headless_browser" ]] || {
+  printf 'FAIL: headless selected a GUI browser:\n%s\n' "$headless_browser" >&2
   exit 1
 }
-[[ "$preview_browser" == "google-chrome" ]] || {
-  printf 'FAIL: preview browser profile must select Chrome stable only; selected:\n%s\n' "$preview_browser" >&2
+
+render_main_brewfile() {
+  local headless="$1"
+  chezmoi --source "$PWD" execute-template --init \
+    --promptBool "work=false,headless=$headless,reset_existing_configs=false,game_dev=false,xcode=false" \
+    --promptString 'name=x,email_personal=x@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name=' \
+    --promptChoice "password_manager=bitwarden" \
+    --override-data "{\"headless\":$headless,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
+    <home/dot_config/homebrew/Brewfile.tmpl
+}
+desktop_main="$(render_main_brewfile false)" || {
+  echo "FAIL: desktop Brewfile did not render." >&2
   exit 1
 }
+headless_main="$(render_main_brewfile true)" || {
+  echo "FAIL: headless Brewfile did not render." >&2
+  exit 1
+}
+grep -qx 'cask "brave-browser"' <<<"$desktop_main" || {
+  echo "FAIL: desktop Brewfile did not select brave-browser." >&2
+  exit 1
+}
+if grep -qE '^cask "google-chrome(@beta)?"' <<<"$desktop_main"; then
+  echo "FAIL: desktop Brewfile still selects Google Chrome." >&2
+  exit 1
+fi
+if grep -qE '^cask "(brave-browser|google-chrome(@beta)?)"' <<<"$headless_main"; then
+  echo "FAIL: headless Brewfile selected a GUI browser." >&2
+  exit 1
+fi
 
 # Deduplicate before querying metadata (profiles overlap heavily).
 # NOT mapfile: macOS ships Bash 3.2, where mapfile does not exist — and it fails
@@ -170,44 +211,8 @@ for cask in "${unique_casks[@]}"; do
   fi
 done
 
-echo "== Browser exception registry =="
-# Every exception must justify itself on every run, in full — not just "it has
-# no sha". If any leg stops being true, the bypass is no longer earned.
-for exception_cask in "${exception_casks[@]}"; do
-  json="$(brew info --json=v2 --cask "$exception_cask" 2>/dev/null || true)"
-  if ! printf '%s' "$json" | jq -e --arg token "$exception_cask" '
-        (.casks | type) == "array" and (.casks | length) == 1
-        and (.casks[0].token == $token)
-        and (.casks[0].sha256 | type) == "string"
-        and (.casks[0].disabled | type) == "boolean"
-        and ((.casks[0].variations // {}) | type) == "object"
-      ' >/dev/null 2>&1; then
-    echo "  UNKNOWN   $exception_cask — unsupported or malformed cask metadata" >&2
-    status=1
-    continue
-  fi
-  version="$(printf '%s' "$json" | jq -r '.casks[0].version')"
-  sha="$(printf '%s' "$json" | jq -r '.casks[0].sha256')"
-  disabled="$(printf '%s' "$json" | jq -r '.casks[0].disabled')"
-  auto_updates="$(printf '%s' "$json" | jq -r '.casks[0].auto_updates // false')"
-  if [[ "$disabled" == "true" ]]; then
-    echo "  VIOLATION $exception_cask is disabled in Homebrew; brew bundle would fail it." >&2
-    status=1
-  elif [[ "$sha" != "no_check" && "$version" != "latest" ]]; then
-    echo "  STALE     $exception_cask now HAS a checksum (version=$version sha=$sha)." >&2
-    echo "            Move it into the checksum-safe Brewfile and remove its bypass." >&2
-    status=1
-  elif [[ "$auto_updates" != "true" ]]; then
-    echo "  STALE     $exception_cask no longer declares auto_updates:true (got '$auto_updates')." >&2
-    echo "            The stated vendor-update rationale no longer holds." >&2
-    status=1
-  else
-    echo "  ok        $exception_cask ships no checksum and self-updates (version=$version sha=$sha, auto_updates=$auto_updates)"
-  fi
-done
-
 if ((status == 0)); then
-  echo "ok: ${#unique_casks[@]} safe casks are versioned and checksummed; the Chrome stable exception remains justified"
+  echo "ok: ${#unique_casks[@]} safe casks are versioned and checksummed; desktop profiles select brave-browser"
 else
   echo "FAIL: the cask inventory violates Groundwork's checksum policy" >&2
 fi

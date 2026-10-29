@@ -83,20 +83,13 @@ killall Dock 2>/dev/null || true
 # location applies only after the next login.
 killall SystemUIServer 2>/dev/null || true
 
-# Chrome enables its built-in password manager by default. The only Chrome
-# preference Groundwork writes is PasswordManagerEnabled=false, and only when
-# setup chose a third-party manager. Upstream leaves that manager on; turning
-# this one key off keeps it from competing with Bitwarden or 1Password.
-# The domain is Stable's com.google.Chrome. Verify at chrome://policy.
-# Safari and iOS stay manual.
-{{ if ne .password_manager "none" -}}
-defaults write com.google.Chrome PasswordManagerEnabled -bool false
-{{- end }}
-
 # Personal preference — uncomment if you want it:
 # defaults write com.apple.dock autohide -bool true
 
-# Groundwork installs Chrome but never changes the macOS default-browser
-# association. Run `defaultbrowser` yourself if you want to inspect or change it;
-# macOS requires a confirmation that automation must not bypass.
+# Brave policy is the configuration profile groundwork-brave-browser writes
+# for you to approve in System Settings. This hook does not write
+# com.brave.Browser or com.google.Chrome defaults. The default-browser offer
+# is that same Brave command, and macOS still asks you to confirm.
+# The first-run backup still records the old Chrome password-manager key so
+# an older backup can restore it. Safari and iOS stay manual.
 {{- end }}

@@ -1,0 +1,649 @@
+#!/usr/bin/env bash
+# bash 3.2+ (stock macOS). Offer Brave as the managed macOS browser.
+# Detect and offer. Never force a default, never uninstall a browser, never
+# delete profile data, and never install a configuration profile. macOS asks.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: groundwork-brave-browser <mode>
+
+Offer Brave Browser on a desktop Mac. Groundwork installs the brave-browser
+cask from the checksum-verified Brewfile. Policies are rendered from
+groundwork-core's browser/brave.json (v0.7.0). This command does not keep a
+second copy, and it does not install the profile itself.
+
+Modes:
+  --apply           Write the policy profile on a personal desktop, then offer
+                    adoption, the Bitwarden extension, opening that profile,
+                    and the default browser. Prompts default to no.
+  --notice          Print at most one line per unmet condition. Never prompt,
+                    write a file, or change the default browser.
+  --offer-default   Ask only whether to make Brave the default browser.
+  --doctor          Read-only status for groundwork-doctor --browser.
+  -h, --help        Show this help
+
+A decline is saved under ~/.local/state/groundwork/brave/ and later runs do
+not ask again. Deleting that file asks again. A noninteractive run, including
+update-all, prints a notice and does not save a decline.
+
+defaultbrowser returns before macOS shows its confirmation dialog. Groundwork
+records the offer once that command returns and does not bypass the dialog.
+Cancelling the macOS dialog does not repeat the Groundwork prompt; delete
+~/.local/state/groundwork/brave/default-browser to ask again.
+
+Work-managed Macs still install Brave. Organization device management owns
+browser policy, so this command does not write a profile there.
+EOF
+}
+
+script_dir="$(CDPATH='' cd -- "$(dirname "$0")" && pwd)"
+lib="$script_dir/../share/groundwork/lib/brave_browser.py"
+state_dir="${GROUNDWORK_STATE_DIR:-$HOME/.local/state/groundwork}/brave"
+share_dir="${GROUNDWORK_BRAVE_SHARE_DIR:-$HOME/.local/share/groundwork}"
+extension_dir="${GROUNDWORK_BRAVE_EXTENSION_DIR:-$HOME/Library/Application Support/BraveSoftware/Brave-Browser/External Extensions}"
+applications_dir="${GROUNDWORK_APPLICATIONS_DIR:-/Applications}"
+brew_bin="${GROUNDWORK_BREW_BIN:-brew}"
+defaultbrowser_bin="${GROUNDWORK_BRAVE_DEFAULTBROWSER:-defaultbrowser}"
+adopt_bin="${GROUNDWORK_BRAVE_ADOPT_BIN:-$HOME/.local/bin/groundwork-app-adopt}"
+profile_identifier="com.groundwork.brave.browser"
+mobileconfig_path="$share_dir/Brave-Browser.mobileconfig"
+
+spec=""
+role=""
+password_manager=""
+headless=""
+platform=""
+handler=""
+quiet="false"
+
+die() {
+  printf 'groundwork-brave-browser: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+on_interrupt() {
+  exit 130
+}
+
+resolve_spec() {
+  spec="${GROUNDWORK_BRAVE_SPEC:-}"
+  if [[ -n "$spec" ]]; then
+    return 0
+  fi
+  local candidate="" source_path=""
+  candidate="$(CDPATH='' cd -- "$script_dir/../../.." && pwd)/core/browser/brave.json"
+  if [[ -f "$candidate" ]]; then
+    spec="$candidate"
+    return 0
+  fi
+  if command -v chezmoi >/dev/null 2>&1; then
+    source_path="$(chezmoi source-path 2>/dev/null || true)"
+    if [[ -n "$source_path" && -f "$(dirname "$source_path")/core/browser/brave.json" ]]; then
+      spec="$(dirname "$source_path")/core/browser/brave.json"
+    fi
+  fi
+}
+
+load_profile() {
+  role="${GROUNDWORK_BRAVE_ROLE:-}"
+  password_manager="${GROUNDWORK_BRAVE_PASSWORD_MANAGER:-}"
+  headless="${GROUNDWORK_BRAVE_HEADLESS:-}"
+  platform="${GROUNDWORK_BRAVE_PLATFORM:-}"
+  if [[ -z "$platform" ]]; then
+    platform="$(uname -s 2>/dev/null || printf '%s' unknown)"
+  fi
+  if [[ -n "$role" && -n "$password_manager" && -n "$headless" ]]; then
+    return 0
+  fi
+  local data=""
+  if command -v chezmoi >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    data="$(chezmoi data --format=json 2>/dev/null || true)"
+  fi
+  if [[ -z "$password_manager" ]]; then
+    if [[ -n "$data" ]]; then
+      password_manager="$(printf '%s' "$data" | jq -r '.password_manager // "none"')"
+    else
+      password_manager="none"
+    fi
+  fi
+  if [[ -z "$role" ]]; then
+    if [[ -n "$data" ]]; then
+      role="$(printf '%s' "$data" | jq -r '.environment_role // (if .work then "managed" else "personal" end)')"
+    else
+      role="personal"
+    fi
+  fi
+  if [[ -z "$headless" ]]; then
+    if [[ -n "$data" ]]; then
+      headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" else "false" end')"
+    else
+      headless="false"
+    fi
+  fi
+}
+
+desktop_target() {
+  [[ "$platform" == "Darwin" && "$headless" != "true" ]]
+}
+
+prompts_allowed() {
+  [[ -z "${GROUNDWORK_UPDATE_SCOPE:-}" ]] || return 1
+  [[ -z "${GROUNDWORK_BRAVE_NONINTERACTIVE:-}" ]] || return 1
+  [[ -n "${GROUNDWORK_BRAVE_ANSWERS:-}" ]] && return 0
+  [[ -t 0 && -t 2 ]]
+}
+
+read_answer() {
+  local line="" rest=""
+  if [[ -n "${GROUNDWORK_BRAVE_ANSWERS:-}" ]]; then
+    [[ -f "$GROUNDWORK_BRAVE_ANSWERS" && -s "$GROUNDWORK_BRAVE_ANSWERS" ]] || return 130
+    IFS= read -r line <"$GROUNDWORK_BRAVE_ANSWERS" || return 130
+    rest="$(mktemp)"
+    tail -n +2 "$GROUNDWORK_BRAVE_ANSWERS" >"$rest"
+    mv -f "$rest" "$GROUNDWORK_BRAVE_ANSWERS"
+    printf '%s' "$line"
+    return 0
+  fi
+  if ! IFS= read -r line; then
+    return 130
+  fi
+  printf '%s' "$line"
+}
+
+confirm() {
+  local prompt="$1" answer="" normalized=""
+  while true; do
+    printf '%s ' "$prompt" >&2
+    if ! answer="$(read_answer)"; then
+      return 130
+    fi
+    normalized="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+    case "$normalized" in
+      y | yes | t | true | 1) return 0 ;;
+      n | no | f | false | 0 | "") return 1 ;;
+      *) printf 'Please answer y or n.\n' >&2 ;;
+    esac
+  done
+}
+
+choice_get() {
+  local file="$state_dir/$1" value=""
+  [[ -f "$file" ]] || return 1
+  value="$(tr -d '[:space:]' <"$file")"
+  case "$value" in
+    accepted | declined | pending)
+      printf '%s' "$value"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+choice_set() {
+  local key="$1" value="$2" tmp=""
+  case "$value" in
+    accepted | declined | pending) ;;
+    *) return 1 ;;
+  esac
+  mkdir -p "$state_dir"
+  chmod 700 "$state_dir"
+  tmp="$(mktemp "$state_dir/.choice.XXXXXX")"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$state_dir/$key"
+}
+
+# 0 yes, unsaved. 1 no, saved declined. 10 already accepted or declined.
+# 11 pending. 12 unasked and not prompting.
+prompt_choice() {
+  local key="$1" prompt="$2" existing="" rc=0
+  if existing="$(choice_get "$key")"; then
+    case "$existing" in
+      accepted | declined) return 10 ;;
+      pending) return 11 ;;
+    esac
+  fi
+  if ! prompts_allowed; then
+    return 12
+  fi
+  confirm "$prompt" || rc=$?
+  if [[ "$rc" -eq 130 ]]; then
+    exit 130
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    choice_set "$key" declined
+    return 1
+  fi
+  return 0
+}
+
+say() {
+  [[ "$quiet" == "true" ]] && return 0
+  printf '%s\n' "$1"
+}
+
+command_available() {
+  local bin="$1"
+  if [[ "$bin" == */* ]]; then
+    [[ -x "$bin" ]]
+  else
+    command -v "$bin" >/dev/null 2>&1
+  fi
+}
+
+cask_installed() {
+  local token="$1"
+  command_available "$brew_bin" || return 1
+  "$brew_bin" list --cask "$token" >/dev/null 2>&1
+}
+
+app_present() {
+  [[ -e "$applications_dir/$1" ]]
+}
+
+chrome_present() {
+  cask_installed google-chrome || app_present "Google Chrome.app"
+}
+
+brave_installed() {
+  cask_installed brave-browser || app_present "Brave Browser.app"
+}
+
+load_handler() {
+  handler="$(python3 "$lib" handler --spec "$spec")" || return 1
+}
+
+require_spec() {
+  resolve_spec
+  if [[ -z "$spec" || ! -f "$spec" ]]; then
+    return 1
+  fi
+}
+
+profile_state() {
+  local output=""
+  if [[ -n "${GROUNDWORK_BRAVE_PROFILES_OUTPUT:-}" ]]; then
+    [[ -f "$GROUNDWORK_BRAVE_PROFILES_OUTPUT" ]] || return 2
+    output="$(cat "$GROUNDWORK_BRAVE_PROFILES_OUTPUT")"
+  elif command -v profiles >/dev/null 2>&1; then
+    output="$(profiles list 2>/dev/null || true)"
+  else
+    return 2
+  fi
+  if printf '%s\n' "$output" | grep -qF "$profile_identifier"; then
+    return 0
+  fi
+  return 1
+}
+
+current_handler() {
+  local output="" line="" name=""
+  command_available "$defaultbrowser_bin" || return 2
+  output="$("$defaultbrowser_bin" 2>/dev/null || true)"
+  while IFS= read -r line; do
+    case "$line" in
+      "* "*)
+        name="${line#\* }"
+        name="${name%% *}"
+        printf '%s' "$name"
+        return 0
+        ;;
+    esac
+  done <<<"$output"
+  return 1
+}
+
+write_policy() {
+  local rendered="" tmp=""
+  rendered="$(python3 "$lib" mobileconfig --spec "$spec" --password-manager "$password_manager")" || return 1
+  case "$rendered" in
+    *"$profile_identifier"*) ;;
+    *)
+      die "refusing to write a Brave profile that is missing its identifier"
+      ;;
+  esac
+  case "$rendered" in
+    *upstreamDefault* | *'<key>reason</key>'* | *'<key>when</key>'*)
+      die "refusing to write spec metadata into the Brave profile"
+      ;;
+  esac
+  mkdir -p "$share_dir"
+  if [[ -f "$mobileconfig_path" ]] && printf '%s' "$rendered" | cmp -s - "$mobileconfig_path"; then
+    return 0
+  fi
+  tmp="$(mktemp "$share_dir/.brave-profile.XXXXXX")"
+  printf '%s' "$rendered" >"$tmp"
+  mv -f "$tmp" "$mobileconfig_path"
+}
+
+open_profile() {
+  if [[ -n "${GROUNDWORK_BRAVE_OPEN_LOG:-}" ]]; then
+    printf '%s\n' "$mobileconfig_path" >>"$GROUNDWORK_BRAVE_OPEN_LOG"
+    return 0
+  fi
+  open "$mobileconfig_path"
+}
+
+chrome_notice() {
+  chrome_present || return 0
+  say "Chrome is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome"
+}
+
+adoption_notice() {
+  say "Brave Browser.app is installed but Homebrew does not own it. Review interactively: groundwork-app-adopt brave-browser"
+}
+
+policy_notice() {
+  if [[ "$role" == "managed" ]]; then
+    say "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
+    return 0
+  fi
+  if [[ -f "$mobileconfig_path" ]]; then
+    say "Approve the Brave policy profile in System Settings: open \"$mobileconfig_path\""
+  else
+    say "An interactive apply writes the Brave policy profile for you to approve in System Settings."
+  fi
+}
+
+extension_notice() {
+  say "Bitwarden is the Brave extension Groundwork offers. Open it with: browser-extensions --open"
+}
+
+default_notice() {
+  say "Brave is installed but is not the default browser. Set it with: defaultbrowser $handler"
+}
+
+offer_adoption() {
+  app_present "Brave Browser.app" || return 0
+  cask_installed brave-browser && return 0
+  local rc=0
+  prompt_choice adoption "Let Homebrew adopt Brave Browser.app? [y/N]" || rc=$?
+  case "$rc" in
+    0)
+      if [[ ! -x "$adopt_bin" ]]; then
+        say "groundwork-app-adopt is not installed, so Brave was not adopted."
+        return 0
+      fi
+      if "$adopt_bin" --yes brave-browser; then
+        choice_set adoption accepted
+      fi
+      ;;
+    12) adoption_notice ;;
+    1 | 10 | 11) ;;
+    *) return "$rc" ;;
+  esac
+}
+
+offer_policy() {
+  if [[ "$role" == "managed" ]]; then
+    policy_notice
+    return 0
+  fi
+  write_policy || die "could not render the Brave policy profile"
+  local installed=0
+  profile_state || installed=$?
+  if [[ "$installed" -eq 0 ]]; then
+    return 0
+  fi
+  local rc=0
+  prompt_choice policy-open "Open the Brave policy profile for you to approve in System Settings? [y/N]" || rc=$?
+  case "$rc" in
+    0)
+      if open_profile; then
+        choice_set policy-open accepted
+      fi
+      ;;
+    12) policy_notice ;;
+    1 | 10 | 11) ;;
+    *) return "$rc" ;;
+  esac
+}
+
+write_extension() {
+  local extension_id="$1" update_url="$2" dest="" tmp=""
+  [[ "$extension_id" =~ ^[a-p]{32}$ ]] || die "refusing an unsafe Brave extension id"
+  case "$update_url" in
+    https://*) ;;
+    *) die "refusing an unsafe Brave extension update URL" ;;
+  esac
+  case "$update_url" in
+    *\"* | *' '*) die "refusing an unsafe Brave extension update URL" ;;
+  esac
+  mkdir -p "$extension_dir"
+  dest="$extension_dir/$extension_id.json"
+  tmp="$(mktemp "$extension_dir/.extension.XXXXXX")"
+  printf '{"external_update_url":"%s"}\n' "$update_url" >"$tmp"
+  mv -f "$tmp" "$dest"
+}
+
+offer_extension() {
+  local extensions_json="" count=0 index=0 name="" extension_id="" update_url="" rc=0
+  extensions_json="$(python3 "$lib" extensions --spec "$spec")" || die "could not read Brave extension offers"
+  count="$(printf '%s' "$extensions_json" | jq 'length')"
+  [[ "$count" -eq 0 ]] && return 0
+  name="$(printf '%s' "$extensions_json" | jq -r '.[0].name')"
+  prompt_choice extension-offer "Offer the $name extension in Brave? Brave asks you before enabling it. [y/N]" || rc=$?
+  case "$rc" in
+    0)
+      index=0
+      while [[ "$index" -lt "$count" ]]; do
+        extension_id="$(printf '%s' "$extensions_json" | jq -r --argjson index "$index" '.[$index].id')"
+        update_url="$(printf '%s' "$extensions_json" | jq -r --argjson index "$index" '.[$index].updateUrl')"
+        write_extension "$extension_id" "$update_url"
+        index=$((index + 1))
+      done
+      choice_set extension-offer accepted
+      ;;
+    12) extension_notice ;;
+    1 | 10 | 11) ;;
+    *) return "$rc" ;;
+  esac
+}
+
+try_set_default_browser() {
+  if ! command_available "$defaultbrowser_bin"; then
+    choice_set default-browser pending
+    say "defaultbrowser is not installed. Set Brave with: defaultbrowser $handler"
+    return 0
+  fi
+  if "$defaultbrowser_bin" "$handler"; then
+    choice_set default-browser accepted
+    return 0
+  fi
+  choice_set default-browser pending
+  say "defaultbrowser did not set Brave. The macOS command is: defaultbrowser $handler"
+}
+
+offer_default() {
+  brave_installed || return 0
+  load_handler || die "could not read the Brave default-browser handler"
+  local current="" current_rc=0 rc=0
+  current="$(current_handler)" || current_rc=$?
+  if [[ "$current_rc" -eq 0 && "$current" == "$handler" ]]; then
+    return 0
+  fi
+  prompt_choice default-browser "Make Brave the default browser? macOS will ask you to confirm. [y/N]" || rc=$?
+  case "$rc" in
+    0) try_set_default_browser ;;
+    11)
+      if prompts_allowed; then
+        try_set_default_browser
+      else
+        default_notice
+      fi
+      ;;
+    12)
+      if [[ "$current_rc" -eq 0 && "$current" != "$handler" ]]; then
+        default_notice
+      elif [[ "$current_rc" -ne 0 ]]; then
+        default_notice
+      fi
+      ;;
+    1 | 10) ;;
+    *) return "$rc" ;;
+  esac
+}
+
+notice_default() {
+  brave_installed || return 0
+  load_handler || return 1
+  local existing="" current="" current_rc=0
+  if existing="$(choice_get default-browser)"; then
+    [[ "$existing" == "pending" ]] || return 0
+  fi
+  current="$(current_handler)" || current_rc=$?
+  if [[ "$current_rc" -eq 0 && "$current" == "$handler" ]]; then
+    return 0
+  fi
+  default_notice
+}
+
+cmd_apply() {
+  quiet="false"
+  [[ -n "${GROUNDWORK_UPDATE_SCOPE:-}" ]] && quiet="true"
+  trap on_interrupt INT
+  load_profile
+  desktop_target || exit 0
+  require_spec || die "Brave spec is missing. Groundwork reads core/browser/brave.json from the checkout."
+  chrome_notice
+  offer_adoption
+  offer_policy
+  offer_extension
+  offer_default
+}
+
+cmd_notice() {
+  quiet="false"
+  load_profile
+  desktop_target || exit 0
+  chrome_notice
+  if ! require_spec; then
+    printf 'groundwork-brave-browser: Brave spec is missing, so policy and extension notices were skipped.\n' >&2
+    exit 0
+  fi
+  if app_present "Brave Browser.app" && ! cask_installed brave-browser; then
+    local existing=""
+    if ! existing="$(choice_get adoption)"; then
+      adoption_notice
+    fi
+  fi
+  if [[ "$role" == "managed" ]]; then
+    policy_notice
+  elif ! choice_get policy-open >/dev/null; then
+    local installed=0
+    profile_state || installed=$?
+    if [[ "$installed" -ne 0 ]]; then
+      policy_notice
+    fi
+  fi
+  if ! choice_get extension-offer >/dev/null; then
+    extension_notice
+  fi
+  notice_default || printf 'groundwork-brave-browser: could not read the Brave default-browser handler.\n' >&2
+  exit 0
+}
+
+cmd_offer_default() {
+  quiet="false"
+  trap on_interrupt INT
+  load_profile
+  desktop_target || exit 0
+  require_spec || die "Brave spec is missing. Groundwork reads core/browser/brave.json from the checkout."
+  offer_default
+}
+
+cmd_doctor() {
+  quiet="false"
+  load_profile
+  if [[ "$platform" != "Darwin" ]]; then
+    printf '  note  %s\n' "Groundwork manages a GUI browser on macOS only; no Linux browser path is claimed."
+    exit 0
+  fi
+  if [[ "$headless" == "true" ]]; then
+    printf '  ok    %s\n' "headless profile selects no GUI browser"
+    exit 0
+  fi
+  if ! command_available "$brew_bin"; then
+    printf '  warn  %s\n' "Homebrew is not available, so Brave Browser cannot be verified."
+  elif cask_installed brave-browser || app_present "Brave Browser.app"; then
+    printf '  ok    %s\n' "Brave Browser is installed"
+  else
+    printf '  warn  %s\n' "Brave Browser is selected but not installed; rerun update-all."
+  fi
+  if app_present "Brave Browser.app" && ! cask_installed brave-browser; then
+    printf '  note  %s\n' "Brave Browser.app is installed but Homebrew does not own it. Review interactively: groundwork-app-adopt brave-browser"
+  fi
+  if require_spec && load_handler; then
+    local current="" current_rc=0
+    current="$(current_handler)" || current_rc=$?
+    if [[ "$current_rc" -eq 2 ]]; then
+      printf '  note  %s\n' "Default browser: unknown (defaultbrowser is not installed)"
+    elif [[ "$current_rc" -eq 0 && "$current" == "$handler" ]]; then
+      printf '  ok    %s\n' "Default browser: Brave ($handler)"
+    elif [[ "$current_rc" -eq 0 ]]; then
+      printf '  note  %s\n' "Default browser: $current (not Brave). Set it with: defaultbrowser $handler"
+    else
+      printf '  note  %s\n' "Default browser: unknown (defaultbrowser did not name a current handler)"
+    fi
+  else
+    printf '  note  %s\n' "Default browser: unknown (the Brave spec could not be read)"
+  fi
+  if [[ "$role" == "managed" ]]; then
+    printf '  note  %s\n' "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
+  else
+    local installed=0
+    profile_state || installed=$?
+    if [[ "$installed" -eq 0 ]]; then
+      printf '  ok    %s\n' "Brave policy profile is installed"
+    elif [[ "$installed" -eq 1 ]]; then
+      printf '  note  %s\n' "Brave policy profile is not installed. An interactive apply can open it for approval in System Settings."
+    else
+      printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available)"
+    fi
+  fi
+  if chrome_present; then
+    printf '  note  %s\n' "Chrome is still installed and is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome"
+  fi
+  if cask_installed google-chrome@beta; then
+    printf '  note  %s\n' "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
+  fi
+}
+
+mode=""
+if [[ $# -eq 0 ]]; then
+  usage >&2
+  exit 64
+fi
+case "$1" in
+  -h | --help)
+    [[ $# -eq 1 ]] || {
+      usage >&2
+      exit 64
+    }
+    usage
+    exit 0
+    ;;
+  --apply) mode="apply" ;;
+  --notice) mode="notice" ;;
+  --offer-default) mode="offer-default" ;;
+  --doctor) mode="doctor" ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac
+[[ $# -eq 1 ]] || {
+  usage >&2
+  exit 64
+}
+
+case "$mode" in
+  apply) cmd_apply ;;
+  notice) cmd_notice ;;
+  offer-default) cmd_offer_default ;;
+  doctor) cmd_doctor ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac

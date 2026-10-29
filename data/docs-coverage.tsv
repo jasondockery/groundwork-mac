@@ -84,6 +84,7 @@ herdr	Ctrl+Space then d	key	herdr-binding	home/dot_local/share/groundwork/comman
 mac	betterdisplaycli	command	external-command	home/dot_local/share/groundwork/commands.tsv	apps.html	yes	no	macOS desktop; requires betterdisplay
 mac	browser-extensions [--open]	command	executable	home/dot_local/share/groundwork/commands.tsv	apps.html	yes	no	macOS desktop
 mac	defaultbrowser	command	external-command	home/dot_local/share/groundwork/commands.tsv	apps.html	yes	no	macOS desktop
+mac	groundwork-brave-browser	command	executable	home/dot_local/share/groundwork/commands.tsv	apps.html	no	no	macOS desktop
 mac	open -a <App>	command	external-command	home/dot_local/share/groundwork/commands.tsv	apps.html	no	no	macOS desktop
 mac	raycast-extensions [--open]	command	executable	home/dot_local/share/groundwork/commands.tsv	apps.html	yes	no	macOS desktop; requires raycast
 maintenance	groundwork-app-adopt <app>	command	executable	home/dot_local/share/groundwork/commands.tsv	commands.html	no	no	macOS desktop; requires brew

@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+"""Behavioral proof for the Brave offer, profile render, and browser helper."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+BRAVE = REPO / "home/dot_local/bin/executable_groundwork-brave-browser"
+EXTENSIONS = REPO / "home/dot_local/bin/executable_browser-extensions"
+LIB = REPO / "home/dot_local/share/groundwork/lib/brave_browser.py"
+SPEC = REPO / "core/browser/brave.json"
+HOOK = REPO / "home/run_onchange_after_15-brave-browser.sh.tmpl"
+CHROME_NOTICE = (
+    "Chrome is no longer Groundwork-managed. Import with brave://settings/importData, "
+    "then remove it by hand with: brew uninstall --cask google-chrome"
+)
+ADOPTION_NOTICE = (
+    "Brave Browser.app is installed but Homebrew does not own it. "
+    "Review interactively: groundwork-app-adopt brave-browser"
+)
+MANAGED_NOTICE = "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
+
+
+class BraveBrowserTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.home = self.root / "home"
+        self.bin = self.root / "bin"
+        self.logs = self.root / "logs"
+        self.share = self.root / "share"
+        self.ext = self.root / "ext"
+        self.state = self.root / "state"
+        self.apps = self.root / "Applications"
+        for path in (self.home, self.bin, self.logs, self.apps):
+            path.mkdir()
+        self.profiles = self.root / "profiles.txt"
+        self.profiles.write_text("no managed profiles\n")
+        self._write_brew("")
+        self._write_defaultbrowser("* chrome\n", 0)
+        self._write_adopt(0)
+        self.spec = json.loads(SPEC.read_text(encoding="utf-8"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write_brew(self, installed: str) -> None:
+        script = self.bin / "brew"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$*\" >> {self.logs / 'brew'}\n"
+            'if [ "$1 $2" = "list --cask" ]; then\n'
+            '  case " $INSTALLED_CASKS " in\n'
+            '    *" $3 "*) exit 0 ;;\n'
+            "    *) exit 1 ;;\n"
+            "  esac\n"
+            "fi\n"
+            "exit 2\n"
+        )
+        script.chmod(0o755)
+
+    def _write_defaultbrowser(self, listing: str, set_status: int) -> None:
+        listing_path = self.root / "defaultbrowser-list"
+        listing_path.write_text(listing)
+        script = self.bin / "defaultbrowser"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"if [ $# -eq 0 ]; then printf 'list\\n' >> {self.logs / 'defaultbrowser'}; "
+            f"cat {listing_path}; exit 0; fi\n"
+            f"printf 'set %s\\n' \"$1\" >> {self.logs / 'defaultbrowser'}\n"
+            f"exit {set_status}\n"
+        )
+        script.chmod(0o755)
+
+    def _write_adopt(self, status: int) -> None:
+        script = self.bin / "groundwork-app-adopt"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$*\" >> {self.logs / 'adopt'}\n"
+            f"exit {status}\n"
+        )
+        script.chmod(0o755)
+
+    def env(self, **extra: str) -> dict[str, str]:
+        base = os.environ.copy()
+        base.update(
+            {
+                "HOME": str(self.home),
+                "INSTALLED_CASKS": extra.pop("INSTALLED_CASKS", ""),
+                "GROUNDWORK_BRAVE_PLATFORM": "Darwin",
+                "GROUNDWORK_BRAVE_HEADLESS": "false",
+                "GROUNDWORK_BRAVE_ROLE": "personal",
+                "GROUNDWORK_BRAVE_PASSWORD_MANAGER": "bitwarden",
+                "GROUNDWORK_BRAVE_SPEC": str(SPEC),
+                "GROUNDWORK_STATE_DIR": str(self.state),
+                "GROUNDWORK_BRAVE_SHARE_DIR": str(self.share),
+                "GROUNDWORK_BRAVE_EXTENSION_DIR": str(self.ext),
+                "GROUNDWORK_APPLICATIONS_DIR": str(self.apps),
+                "GROUNDWORK_BREW_BIN": str(self.bin / "brew"),
+                "GROUNDWORK_BRAVE_DEFAULTBROWSER": str(self.bin / "defaultbrowser"),
+                "GROUNDWORK_BRAVE_PROFILES_OUTPUT": str(self.profiles),
+                "GROUNDWORK_BRAVE_OPEN_LOG": str(self.logs / "open"),
+                "GROUNDWORK_BRAVE_ADOPT_BIN": str(self.bin / "groundwork-app-adopt"),
+                "PATH": f"{self.bin}:{os.environ.get('PATH', '')}",
+            }
+        )
+        for key in (
+            "GROUNDWORK_UPDATE_SCOPE",
+            "GROUNDWORK_BRAVE_NONINTERACTIVE",
+            "GROUNDWORK_BRAVE_ANSWERS",
+        ):
+            base.pop(key, None)
+        base.update(extra)
+        return base
+
+    def run_brave(self, *args: str, env: dict[str, str] | None = None, answers: str | None = None):
+        environment = self.env() if env is None else env
+        if answers is not None:
+            answer_path = self.root / "answers"
+            answer_path.write_text(answers)
+            environment["GROUNDWORK_BRAVE_ANSWERS"] = str(answer_path)
+        return subprocess.run(
+            ["bash", str(BRAVE), *args],
+            text=True,
+            capture_output=True,
+            env=environment,
+            timeout=20,
+            check=False,
+        )
+
+    def choice(self, name: str) -> str | None:
+        path = self.state / "brave" / name
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8").strip()
+
+    def seed(self, name: str, value: str) -> None:
+        directory = self.state / "brave"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_text(value + "\n")
+        path.chmod(0o600)
+
+    def log(self, name: str) -> str:
+        path = self.logs / name
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def render_python(self, password_manager: str, spec: Path | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "python3",
+                str(LIB),
+                "mobileconfig",
+                "--spec",
+                str(spec or SPEC),
+                "--password-manager",
+                password_manager,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+
+    def test_help_and_bad_args_create_nothing(self):
+        help_run = self.run_brave("--help")
+        self.assertEqual(help_run.returncode, 0, help_run.stderr)
+        self.assertIn("v0.7.0", help_run.stdout)
+        self.assertFalse((self.state / "brave").exists())
+        self.assertFalse(self.share.exists())
+        bad = self.run_brave("--apply", "--notice")
+        self.assertEqual(bad.returncode, 64, bad.stderr)
+        missing = self.run_brave()
+        self.assertEqual(missing.returncode, 64)
+
+    def test_profile_renders_spec_policies_without_metadata(self):
+        rendered = self.render_python("bitwarden")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        profile = rendered.stdout
+        self.assertIn("com.groundwork.brave.browser", profile)
+        self.assertIn("<false/>", profile)
+        for policy in self.spec["policies"]:
+            self.assertIn(f"<key>{policy['name']}</key>", profile)
+            self.assertNotIn(policy["reason"], profile)
+        self.assertNotIn("upstreamDefault", profile)
+        self.assertNotIn("<key>when</key>", profile)
+        self.assertNotIn("<key>reason</key>", profile)
+        self.assertNotIn("Ads-for-crypto", profile)
+        without = self.render_python("1password")
+        self.assertEqual(without.returncode, 0, without.stderr)
+        self.assertNotIn("PasswordManagerEnabled", without.stdout)
+        none = self.render_python("none")
+        self.assertNotIn("PasswordManagerEnabled", none.stdout)
+        handler = subprocess.run(
+            ["python3", str(LIB), "handler", "--spec", str(SPEC)],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(handler.stdout.strip(), "browser")
+
+    def test_unknown_when_fails_closed(self):
+        broken = self.root / "brave.json"
+        spec = json.loads(SPEC.read_text(encoding="utf-8"))
+        spec["policies"][0]["when"] = "always"
+        broken.write_text(json.dumps(spec))
+        environment = self.env(GROUNDWORK_BRAVE_SPEC=str(broken), INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("unknown Brave policy condition", result.stderr)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
+    def test_accept_default_browser_uses_handler_from_spec(self):
+        self.profiles.write_text("com.groundwork.brave.browser\n")
+        self.seed("extension-offer", "declined")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("set browser\n", self.log("defaultbrowser"))
+        self.assertEqual(self.choice("default-browser"), "accepted")
+        self.assertNotIn("uninstall", self.log("brew"))
+
+    def test_decline_is_sticky(self):
+        self.profiles.write_text("com.groundwork.brave.browser\n")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertEqual(self.choice("default-browser"), "declined")
+
+    def test_noninteractive_notices_without_saving_or_setting(self):
+        environment = self.env(
+            INSTALLED_CASKS="brave-browser",
+            GROUNDWORK_BRAVE_NONINTERACTIVE="1",
+        )
+        result = self.run_brave("--apply", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("defaultbrowser browser", result.stdout)
+        self.assertIsNone(self.choice("default-browser"))
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertIn("list\n", self.log("defaultbrowser"))
+
+    def test_chrome_notice_does_not_uninstall(self):
+        environment = self.env(
+            INSTALLED_CASKS="google-chrome",
+            GROUNDWORK_BRAVE_NONINTERACTIVE="1",
+        )
+        result = self.run_brave("--notice", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(CHROME_NOTICE, result.stdout)
+        self.assertNotIn("uninstall", self.log("brew"))
+        app = self.apps / "Google Chrome.app"
+        app.mkdir()
+        environment = self.env(INSTALLED_CASKS="", GROUNDWORK_BRAVE_NONINTERACTIVE="1")
+        app_only = self.run_brave("--notice", env=environment)
+        self.assertIn(CHROME_NOTICE, app_only.stdout)
+        self.assertNotIn("uninstall", self.log("brew"))
+
+    def test_adoption_respects_yes_no_and_noninteractive(self):
+        (self.apps / "Brave Browser.app").mkdir()
+        self.profiles.write_text("com.groundwork.brave.browser\n")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        yes = self.run_brave("--apply", answers="y\n")
+        self.assertEqual(yes.returncode, 0, yes.stderr)
+        self.assertIn("--yes brave-browser", self.log("adopt"))
+        self.assertEqual(self.choice("adoption"), "accepted")
+
+        shutil.rmtree(self.state)
+        (self.logs / "adopt").unlink()
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        no = self.run_brave("--apply", answers="n\n")
+        self.assertEqual(no.returncode, 0, no.stderr)
+        self.assertEqual(self.log("adopt"), "")
+        self.assertEqual(self.choice("adoption"), "declined")
+
+        shutil.rmtree(self.state)
+        quiet = self.run_brave("--apply", env=self.env(GROUNDWORK_BRAVE_NONINTERACTIVE="1"))
+        self.assertEqual(quiet.returncode, 0, quiet.stderr)
+        self.assertIn(ADOPTION_NOTICE, quiet.stdout)
+        self.assertEqual(self.log("adopt"), "")
+        self.assertIsNone(self.choice("adoption"))
+
+    def test_extension_offer_writes_spec_url_only_after_yes(self):
+        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        extension_id = self.spec["extensions"][0]["id"]
+        update_url = self.spec["extensions"][0]["updateUrl"]
+        yes = self.run_brave("--apply", answers="y\n")
+        self.assertEqual(yes.returncode, 0, yes.stderr)
+        written = json.loads((self.ext / f"{extension_id}.json").read_text(encoding="utf-8"))
+        self.assertEqual(written, {"external_update_url": update_url})
+        self.assertEqual(self.choice("extension-offer"), "accepted")
+
+        shutil.rmtree(self.ext)
+        shutil.rmtree(self.state)
+        no = self.run_brave("--apply", answers="n\n")
+        self.assertEqual(no.returncode, 0, no.stderr)
+        self.assertFalse(self.ext.exists())
+        self.assertEqual(self.choice("extension-offer"), "declined")
+
+    def test_work_managed_does_not_write_a_profile(self):
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(GROUNDWORK_BRAVE_ROLE="managed", INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(MANAGED_NOTICE, result.stdout)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
+    def test_update_scope_writes_policy_without_notices_or_commands(self):
+        environment = self.env(INSTALLED_CASKS="brave-browser", GROUNDWORK_UPDATE_SCOPE="maintenance")
+        result = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        profile = (self.share / "Brave-Browser.mobileconfig").read_text(encoding="utf-8")
+        self.assertIn("PasswordManagerEnabled", profile)
+        self.assertNotIn("upstreamDefault", profile)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertIsNone(self.choice("default-browser"))
+
+    def test_browser_extensions_reads_the_spec(self):
+        environment = self.env()
+        listed = subprocess.run(
+            ["bash", str(EXTENSIONS)],
+            text=True,
+            capture_output=True,
+            env=environment,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertIn("brave", listed.stdout)
+        self.assertIn(self.spec["extensions"][0]["id"], listed.stdout)
+        rejected = subprocess.run(
+            ["bash", str(EXTENSIONS), "--browser", "chrome"],
+            text=True,
+            capture_output=True,
+            env=environment,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(rejected.returncode, 2)
+
+    def test_hook_renders_apply_on_desktop_and_exit_on_headless(self):
+        chezmoi = shutil.which("chezmoi") or str(Path.home() / ".local/bin/chezmoi")
+        self.assertTrue(Path(chezmoi).is_file(), "chezmoi is required to render the Brave hook")
+        config = self.root / "empty.toml"
+        config.write_text("")
+
+        def render(os_name: str, headless: bool) -> str:
+            data = {
+                "name": "CI User",
+                "email_personal": "ci@example.com",
+                "email_work": "",
+                "code_dir": "~/code",
+                "reset_existing_configs": False,
+                "password_manager": "bitwarden",
+                "signingkey": "",
+                "obsidian_vault_name": "ci",
+                "game_dev": False,
+                "profile_preset": "personal-current",
+                "environment_role": "personal",
+                "release_posture": "current",
+                "headless": headless,
+                "work": False,
+                "xcode": False,
+                "beta": False,
+                "chezmoi": {"os": os_name, "arch": "arm64"},
+            }
+            result = subprocess.run(
+                [
+                    chezmoi,
+                    "--config",
+                    str(config),
+                    "--source",
+                    str(REPO),
+                    "--override-data",
+                    json.dumps(data),
+                    "execute-template",
+                ],
+                input=HOOK.read_text(encoding="utf-8"),
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout
+
+        desktop = render("darwin", False)
+        self.assertIn('exec "$HOME/.local/bin/groundwork-brave-browser" --apply', desktop)
+        self.assertIn("Brave spec hash:", desktop)
+        headless = render("darwin", True)
+        self.assertNotIn('exec "$HOME/.local/bin/groundwork-brave-browser" --apply', headless)
+        self.assertIn("exit 0", headless)
+        linux = render("linux", False)
+        self.assertNotIn('exec "$HOME/.local/bin/groundwork-brave-browser" --apply', linux)
+        self.assertIn("exit 0", linux)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -7,11 +7,12 @@ Status: partially implemented (2026-08-09, local review tranche). Shipped on
 - selective editing of the `profile_preset` seed via `groundwork-configure`
   (`937ae11`);
 - the browser vertical slice: every desktop Mac posture (current, preview,
-  Xcode, and work-managed) installs Google Chrome stable; headless profiles
-  select no GUI browser. Chrome Beta is not selected. An existing Chrome Beta
-  install is left in place; removal is manual. The official stable cask is
-  rendered into `Brewfile.browser` and installed only after the checksummed
-  Brewfile succeeds.
+  Xcode, and work-managed) installs Brave from the checksummed `brave-browser`
+  cask; headless profiles select no GUI browser. Policies are rendered from
+  groundwork-core v0.7.0 (`core/browser/brave.json`) into a configuration
+  profile the user approves. Chrome is not selected. An existing Chrome
+  install is left in place; removal is manual. The old no-checksum exception
+  lane is retired.
 This local tranche makes `groundwork-configure` the first-class editor for
 independent `environment_role` and `release_posture` values plus dependent Xcode
 `beta`, removes those mutable preferences from bootstrap, treats
@@ -33,8 +34,8 @@ Implement under `skills/safe-mutating-cli` and
 
 `update-all` today has one behavior for every machine and reports it
 dishonestly: it prints skipped casks and then says `Groundwork tools
-refreshed.` The browser slice installs Google Chrome stable on every desktop
-Mac. Release posture no longer selects a browser channel. Editor and other
+refreshed.` The browser slice installs Brave on every desktop
+Mac. Release posture does not select a browser channel. Editor and other
 application families still need the same model where a real preview channel
 exists.
 
@@ -42,8 +43,9 @@ The temptation is to keep adding flags — `--greedy`, `--include-vendor-casks`,
 `--beta`. That produces a command whose behavior nobody can predict and whose
 receipt nobody can trust. A reverted attempt on 2026-07-20 demonstrated the
 failure mode: `--require-sha --greedy-auto-updates` planned to upgrade
-`google-chrome`, one of the official Chrome casks that
-`scripts/audit-brew-casks` deliberately keeps in the bounded exception lane.
+`google-chrome`. At that time the cask shipped no checksum, so the audit kept
+it out of the Brewfile. That exception lane is retired. Brave is checksummed
+and Sparkle owns its later updates, so `update-all` does not brew-upgrade it.
 
 The environment should declare its posture once, and `update-all` should read
 it.
@@ -76,7 +78,7 @@ These are not profile fields. No preset may change them.
 Presets choose starting values. What is **persisted is the concrete choice**,
 not the abstract posture, because future families may expose several concrete
 preview variants. The browser slice supports one family and one managed
-variant: Chrome stable. Release posture does not change it.
+variant: Brave. Release posture does not change it.
 
 ```yaml
 schema_version: 1
@@ -87,8 +89,8 @@ environment:
 
 tools:
   primary_browser:
-    family: chrome
-    variant: stable           # current and preview both persist stable
+    family: brave
+    variant: release          # current and preview both persist Brave release
 
 system:
   declared_channel: developer-beta   # INTENT
@@ -98,13 +100,13 @@ system:
 Two vocabularies, deliberately separate:
 
 - **Posture** — `current` or `preview`. An attitude that seeds defaults.
-- **Variant** — the concrete product a family installs. Chrome persists
-  `stable` for both postures.
+- **Variant** — the concrete product a family installs. Brave persists
+  the release cask for both postures.
 
 The two words stay separate so a later family can map its preview posture to
 a different variant without renaming posture. That split does not select
-another Chrome channel. Posture seeds the catalog default, and Chrome's
-default is stable on every desktop Mac.
+another browser. Posture seeds the catalog default, and Brave's
+default is the release cask on every desktop Mac.
 
 `system.declared_channel` records **intent**. Detected OS state is a separate
 observation made by `groundwork-doctor`, never stored as if Groundwork set it —
@@ -129,7 +131,7 @@ Role and posture are independently editable through `groundwork-configure`;
 the stored preset below is only the historical bootstrap seed. Confirming that
 transaction runs `chezmoi apply`, so the selected desired state is reconciled
 immediately. `update-all` owns later upgrades and maintenance. The managed
-browser stays Google Chrome stable either way.
+browser stays Brave either way.
 
 ### Independent developer preferences
 
@@ -164,7 +166,7 @@ AI-native developer up to succeed, for two reasons:
    delivery stability dropping about 7.2% for every 25-point rise in AI
    adoption. A workflow that has taken on that much new variance should not
    also be absorbing pre-release breakage in its editor and operating system.
-   The managed browser stays Chrome stable in every posture.
+   The managed browser stays Brave in every posture.
 2. **Agents work better against a documented substrate.** When an agent
    debugs a machine, it reasons from how the tool is documented to behave.
    Preview channels move behavior ahead of its documentation, so the developer
@@ -176,10 +178,10 @@ Preview is a first-class, fully supported choice — it is simply not the defaul
 and it is never a workaround or an integrity bypass.
 
 The settings editor confirms **concrete products**, not an abstract switch. On
-a desktop Mac the managed browser is Google Chrome stable for every release
-posture. Groundwork never changes the operating system's default-browser
-association, and organization or device policy remains authoritative. Chrome
-Beta is not installed or configured. A copy already on the machine stays until
+a desktop Mac the managed browser is Brave for every release
+posture. Groundwork asks before it runs `defaultbrowser browser`, macOS still
+asks you to confirm, and organization or device policy remains authoritative.
+Chrome is not installed or configured. A copy already on the machine stays until
 the owner removes it.
 
 There is no "production" profile. Groundwork configures development and
@@ -224,19 +226,19 @@ Shape:
 
 ```yaml
 families:
-  chrome:
-    defaults: { current: stable, preview: stable }
+  brave:
+    defaults: { current: release, preview: release }
     variants:
-      stable:
-        cask: google-chrome
-        app_bundle: Google Chrome.app
+      release:
+        cask: brave-browser
+        app_bundle: Brave Browser.app
 ```
 
 `defaults` is how a posture becomes a variant, and why posture and variant stay
-separate vocabularies. Chrome's current and preview postures both resolve to
-stable, so the browser no longer varies with release posture. Another family
+separate vocabularies. Brave's current and preview postures both resolve to
+the release cask, so the browser does not vary with release posture. Another family
 can later map preview to a different variant without touching the profile
-vocabulary. Chrome Beta is not a managed variant.
+vocabulary. Chrome is not a managed variant.
 
 ### Three owners, not one
 
@@ -248,9 +250,9 @@ update_owner         who updates it         (homebrew | vendor | organization)
 configuration_owner  who owns its settings  (groundwork | user | vendor-sync)
 ```
 
-Chrome is exactly why: Groundwork may facilitate installation, Google owns
-updates, and Groundwork may own a small set of configuration defaults. One field
-cannot say that.
+Brave is the current example: Homebrew installs the checksummed cask, Sparkle
+owns updates, and Groundwork offers a configuration profile rendered from
+groundwork-core v0.7.0. One field cannot say that.
 
 ### Each GUI variant eventually needs
 
@@ -265,15 +267,15 @@ health verification command
 platform requirements
 ```
 
-The universal catalog field is a **native settings location**. Chrome's is its
-preference domain. The editor path stays rendered files.
+The universal catalog field is a **native settings location**. Brave's is the
+`com.brave.Browser` configuration profile rendered from groundwork-core
+v0.7.0. The editor path stays rendered files.
 
-Values verified 2026-08-04 through Homebrew cask metadata for the one managed
-variant: `google-chrome` installs `Google Chrome.app`. It declares
-`sha256 :no_check` and `auto_updates: true`, so the checksummed main Brewfile
-excludes it. `Brewfile.browser` records that one exception on every desktop
-Mac, and the cask audit fails if its integrity or update-owner assumptions
-change. Chrome Beta is not in the exception registry.
+`brave-browser` installs `Brave Browser.app`. The cask is checksummed and
+declares `auto_updates: true`, so it lives in the main Brewfile and Sparkle
+owns later updates. `Brewfile.browser` records the selection. The cask audit
+fails if a desktop profile omits Brave, selects Chrome, or a headless profile
+selects a GUI browser. There is no exception registry.
 
 Start with families that actually need a decision. Do not model software with
 one channel and no ambiguity.
@@ -285,10 +287,10 @@ path, or shadows a vendor command.** Doing so breaks code signing, bundle
 identity and LaunchServices registration, the vendor's own updater,
 side-by-side installation, and rollback.
 
-Concretely: `Google Chrome.app` always means Stable and
-`Google Chrome Beta.app` always means Beta, exactly as Google intends.
-Groundwork installs only `Google Chrome.app`. It never renames Beta, symlinks
-it into the Stable path, or deletes it. Normalization, if any, happens in
+Concretely: `Brave Browser.app` is the managed app, and Groundwork does not
+rename it. `Google Chrome.app` and `Google Chrome Beta.app` keep the names
+Google gave them. Groundwork does not install them, rename them, symlink them,
+or delete them. Normalization, if any, happens in
 Groundwork's own invocation layer, never in the application bundle.
 
 ### Deferred: role-based resolver commands
@@ -300,38 +302,44 @@ out to `code`, and introduces a failure point between the user and their
 editor. Setting `$EDITOR`/`$VISUAL` to a resolver is the lower-risk half and
 can come first if a real need appears. Build the catalog and each family's
 native settings location first; add resolvers when something demonstrably
-needs them. Chrome's native settings location is its preference domain. The
-editor path stays rendered files.
+needs them. Brave's native settings location is the configuration profile.
+The editor path stays rendered files.
 
 ## Settings: overrides that differ from upstream
 
-Groundwork writes a Chrome preference only when it differs from Chrome's
-upstream default, and each write names its reason. No other Chrome preference
-is written.
+Groundwork renders the policies in groundwork-core v0.7.0
+(`core/browser/brave.json`) and does not keep a second copy. An entry applies
+only when its `when` is met. The only understood condition is "Bitwarden is
+the password manager." An unknown condition fails closed and writes nothing.
+`upstreamDefault`, `reason`, and `when` are not written into the profile.
 
-Chrome turns its built-in password manager on. When setup chose Bitwarden or
-1Password, Groundwork turns that one key off so the built-in manager does not
-compete with the chosen manager:
+The rendered file is a user-scoped `.mobileconfig`. Groundwork offers to open
+it. System Settings asks the user to approve it. Groundwork does not run
+`profiles install`. A work-managed Mac (`environment_role=managed`) does not
+get the file, because the organization owns browser policy. Brave is still
+installed there.
+
+When the password manager is Bitwarden, the spec includes
+`PasswordManagerEnabled=false`. When it is `1password` or `none`, that key is
+omitted. The first-run backup still records the old
+`com.google.Chrome PasswordManagerEnabled` key so an older backup can restore
+it. Groundwork no longer writes `defaults write com.google.Chrome`.
+
+The Bitwarden extension file under Brave's External Extensions directory is
+written only after an interactive yes, using the update URL from the spec.
+Brave asks before enabling it. A noninteractive run does not write it.
+
+Groundwork does not write account data into the profile. Do not point two
+browsers at one policy payload.
+
+An installed Chrome app is not configured and is not uninstalled.
+Removing it is manual:
 
 ```text
-defaults write com.google.Chrome PasswordManagerEnabled -bool false
+brew uninstall --cask google-chrome
 ```
 
-| Setting | Upstream | Groundwork | Reason |
-| --- | --- | --- | --- |
-| `PasswordManagerEnabled` | `true` | `false` on `com.google.Chrome` when a third-party manager is configured | The built-in manager would compete with Bitwarden or 1Password |
-
-The domain is Stable's `com.google.Chrome`. The Beta domain is not written.
-When the password manager is `none`, the write is skipped. The first-run
-backup still records the Stable key on a desktop Mac so a later choice can be
-restored.
-
-Groundwork never writes into a browser's profile data directories under
-`~/Library/Application Support`; the browser owns those. Do not point two
-channels at one domain. Policies, schemas, and migrations differ between them.
-
-An installed Chrome Beta app is not configured and is not uninstalled.
-Removing it is manual:
+An installed Chrome Beta app is the same kind of manual step.
 
 ```text
 brew uninstall --cask google-chrome@beta
@@ -371,7 +379,7 @@ groundwork-profile edit
 A change must never delete the previous channel automatically, overwrite the
 other channel's settings, or alter default-application handlers without showing
 it. Switching release posture does not install, configure, or remove a browser.
-Chrome stable stays the managed browser. A Chrome Beta cask that is already
+Brave stays the managed browser. A Chrome cask that is already
 installed stays installed, with its preferences and profile data left alone,
 until the owner runs the manual removal command above.
 
@@ -486,9 +494,8 @@ Migration preserves installed applications and their settings. The Homebrew
 upgrade scope now follows the rendered Groundwork Brewfile without a prompt:
 that narrows mutation to declared software and leaves independently installed
 applications and their data alone. A posture change does not add or remove a
-browser. Chrome stable stays selected on every desktop Mac, and an existing
-Chrome Beta cask and its profile data stay until the owner runs
-`brew uninstall --cask google-chrome@beta`.
+browser. Brave stays selected on every desktop Mac, and an existing
+Chrome cask and its profile data stay until the owner removes it by hand.
 
 ```text
 interactive, unmigrated     → show the recommended profile and plan; require a
@@ -521,7 +528,7 @@ Enforced by `scripts/validate-groundwork`:
 6. Update and retry use the same exact selected token.
 7. A profile change is idempotent.
 8. Stable fallback is preserved when the catalog says coexistence is supported.
-   Chrome does not declare a fallback. Every desktop posture selects stable only.
+   Brave does not declare a fallback. Every desktop posture selects Brave only.
 9. An upstream token or bundle rename requires one canonical production-data
    edit. Fixtures, a migration alias, and release notes may also change;
    consumers must derive the value rather than duplicate it in logic.
@@ -534,11 +541,12 @@ Enforced by `scripts/validate-groundwork`:
    intent, with storage, argument safety, and rendering proven, plus the
    `groundwork-profile` reporting command (`f46e3a7`); the numbered-menu
    interview writes the fields (`4bb48df`). No channel depends on it yet.
-4. **Browser slice done** — Google Chrome stable on every desktop Mac posture,
-   rendered browser manifest, bounded exception installer, and preserved legacy
-   `install_chrome` input. Chrome Beta is not selected and is not uninstalled
-   when already present. A general machine-readable catalog for other families
-   remains; test that channels never replace one another.
+4. **Browser slice done** — Brave on every desktop Mac posture, checksummed
+   Brewfile install, policy profile rendered from groundwork-core v0.7.0, and
+   preserved legacy `install_chrome` input. The Chrome exception lane is
+   retired. Chrome is not selected and is not uninstalled when already
+   present. A general machine-readable catalog for other families remains;
+   test that channels never replace one another.
 5. Migration and profile-changing commands, built on catalog-backed plans —
    migration needs the catalog to map observed casks to known variants.
 6. Rebuild `update-all` on explicit candidates with `--plan` and an honest

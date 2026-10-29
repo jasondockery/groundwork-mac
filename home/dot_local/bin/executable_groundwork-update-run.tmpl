@@ -2943,4 +2943,7 @@ publish_action_receipt "$action_receipt_work" 0 || {
   exit 1
 }
 echo "  Action receipt: ~/.local/state/groundwork/receipts/update-all-actions-latest.tsv"
+if [[ -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then
+  "$HOME/.local/bin/groundwork-brave-browser" --notice
+fi
 {{- end }}

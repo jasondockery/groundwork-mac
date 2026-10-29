@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# bash 3.2+ (stock macOS). List or open the Brave extension offers from the
+# shared spec. There is no second catalog and no tier list: Bitwarden is the
+# only offer, and Brave asks before enabling it.
+set -euo pipefail
+
+browser="brave"
+open_links="false"
+
+usage() {
+  cat <<'EOF'
+Usage: browser-extensions [options]
+
+List or open the Brave extension Groundwork offers. The list is
+groundwork-core's browser/brave.json. Groundwork does not force-install it.
+
+Options:
+  --browser brave                Browser to show or open (default: brave)
+  --open                         Open the store page in Brave Browser
+  -h, --help                     Show this help
+
+Examples:
+  browser-extensions
+  browser-extensions --open
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --browser)
+      if [[ $# -lt 2 || "${2:-}" == --* ]]; then
+        echo "missing value for --browser" >&2
+        usage >&2
+        exit 2
+      fi
+      browser="${2:-}"
+      shift 2
+      ;;
+    --open)
+      open_links="true"
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$browser" in
+  brave) ;;
+  *)
+    echo "unsupported browser: $browser" >&2
+    exit 2
+    ;;
+esac
+
+script_dir="$(CDPATH='' cd -- "$(dirname "$0")" && pwd)"
+lib="$script_dir/../share/groundwork/lib/brave_browser.py"
+spec="${GROUNDWORK_BRAVE_SPEC:-}"
+if [[ -z "$spec" ]]; then
+  candidate="$(CDPATH='' cd -- "$script_dir/../../.." && pwd)/core/browser/brave.json"
+  if [[ -f "$candidate" ]]; then
+    spec="$candidate"
+  elif command -v chezmoi >/dev/null 2>&1; then
+    source_path="$(chezmoi source-path 2>/dev/null || true)"
+    if [[ -n "$source_path" && -f "$(dirname "$source_path")/core/browser/brave.json" ]]; then
+      spec="$(dirname "$source_path")/core/browser/brave.json"
+    fi
+  fi
+fi
+if [[ -z "$spec" || ! -f "$spec" ]]; then
+  echo "Brave spec is missing. Groundwork reads core/browser/brave.json from the checkout." >&2
+  exit 1
+fi
+
+extensions_json="$(python3 "$lib" extensions --spec "$spec")" || exit $?
+count="$(printf '%s' "$extensions_json" | jq 'length')"
+if [[ "$count" -eq 0 ]]; then
+  echo "no matching extension links found"
+  exit 0
+fi
+
+index=0
+while [[ "$index" -lt "$count" ]]; do
+  name="$(printf '%s' "$extensions_json" | jq -r --argjson index "$index" '.[$index].name')"
+  extension_id="$(printf '%s' "$extensions_json" | jq -r --argjson index "$index" '.[$index].id')"
+  url="https://chromewebstore.google.com/detail/${extension_id}"
+  if [[ "$open_links" == "true" ]]; then
+    if [[ -n "${GROUNDWORK_BROWSER_OPEN_LOG:-}" ]]; then
+      printf '%s\n' "$url" >>"${GROUNDWORK_BROWSER_OPEN_LOG}"
+    else
+      open -a "Brave Browser" "$url" 2>/dev/null || open "$url"
+    fi
+  else
+    printf '%-8s %s\n' "brave" "$name"
+    printf '  %s\n' "$url"
+    printf '  id %s\n\n' "$extension_id"
+  fi
+  index=$((index + 1))
+done

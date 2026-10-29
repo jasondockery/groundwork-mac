@@ -43,9 +43,10 @@ brew upgrade --require-sha --greedy-auto-updates   # WRONG
 
 `--greedy-auto-updates` widens the candidate set to self-updating casks, which
 commonly include `sha256 :no_check` ones. Verified 2026-07-20 on a real
-machine: this plan included `google-chrome`, the exact cask
-`scripts/audit-brew-casks` keeps out of every Brewfile and hands to its own
-consent-gated installer. The safety flag did not filter it out.
+machine: this plan included `google-chrome`. At that time the cask shipped no
+checksum, so the audit kept it out of the Brewfile. The safety flag did not
+filter it out. Brave is checksummed and declared vendor-covered, so Sparkle
+owns its later updates and this lane does not select it.
 
 Build an explicit token list instead:
 
