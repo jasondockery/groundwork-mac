@@ -887,9 +887,16 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(checkout.stdout, "")
 
     def test_old_update_all_checks_out_core_before_the_spec_is_read(self):
+        # Protects the first update after this merge. The installed update-all
+        # is still main's launcher, and chezmoi status must render the desktop
+        # hook while core/browser/brave.json is absent. The new runner then
+        # checks out the pinned core, and the following render hashes the spec.
+        # The old and new core commits are built here. CI checks out only the
+        # pinned submodule commit, so the previous pin is not an object this
+        # test can pack out of core/.
         main = "78b4e2509d684f41022d63ee7999e68c9bc7dcd9"
-        old_core = "bc21e6297136be3f04b190fd22c517ce7d5f15eb"
-        new_core = "0395895c86ed24d942c3803c521cf2131cfa52c7"
+        spec_bytes = SPEC.read_bytes()
+        self.assertGreater(len(spec_bytes), 0)
         core_head = subprocess.run(
             ["git", "-C", str(REPO / "core"), "rev-parse", "HEAD"],
             text=True,
@@ -897,42 +904,6 @@ class BraveBrowserTests(unittest.TestCase):
             check=True,
             timeout=15,
         ).stdout.strip()
-        bare = self.root / "core.git"
-        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True, timeout=15)
-        for sha in (old_core, new_core):
-            listed = subprocess.run(
-                ["git", "-C", str(REPO / "core"), "rev-list", "--objects", sha],
-                capture_output=True,
-                check=True,
-                timeout=30,
-            )
-            ids = b"\n".join(line.split()[0] for line in listed.stdout.splitlines() if line.strip()) + b"\n"
-            packed = subprocess.run(
-                ["git", "-C", str(REPO / "core"), "pack-objects", str(self.root / "pack")],
-                input=ids,
-                capture_output=True,
-                check=True,
-                timeout=30,
-            )
-            pack_id = packed.stdout.decode().strip().splitlines()[-1]
-            pack_dir = bare / "objects" / "pack"
-            for suffix in (".pack", ".idx"):
-                shutil.copy(self.root / f"pack-{pack_id}{suffix}", pack_dir / f"pack-{pack_id}{suffix}")
-        subprocess.run(
-            ["git", "--git-dir", str(bare), "update-ref", "refs/heads/old", old_core],
-            check=True,
-            timeout=15,
-        )
-        subprocess.run(
-            ["git", "--git-dir", str(bare), "update-ref", "refs/heads/new", new_core],
-            check=True,
-            timeout=15,
-        )
-        # The source submodule is shallow, so these commits have no parents in
-        # the pack. Mark the bare repo shallow or upload-pack refuses the clone.
-        (bare / "shallow").write_text(f"{old_core}\n{new_core}\n", encoding="utf-8")
-        parent = self.root / "parent"
-        parent.mkdir()
         git_env = os.environ.copy()
         git_env.update(
             {
@@ -948,6 +919,57 @@ class BraveBrowserTests(unittest.TestCase):
                 "GIT_CONFIG_VALUE_0": "always",
             }
         )
+
+        def git_at(repo: Path, *args: str) -> str:
+            completed = subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=git_env,
+            )
+            if completed.returncode != 0:
+                raise AssertionError(
+                    f"git -C {repo} {' '.join(args)} failed ({completed.returncode})\n"
+                    f"{completed.stdout}\n{completed.stderr}"
+                )
+            return completed.stdout.strip()
+
+        synthetic = self.root / "synthetic-core"
+        synthetic.mkdir()
+        git_at(synthetic, "init", "-q", "-b", "main")
+        git_at(synthetic, "config", "user.name", "CI")
+        git_at(synthetic, "config", "user.email", "ci@example.com")
+        (synthetic / "README").write_text("old core has no browser spec\n", encoding="utf-8")
+        git_at(synthetic, "add", "README")
+        git_at(synthetic, "commit", "-q", "-m", "old core")
+        old_core = git_at(synthetic, "rev-parse", "HEAD")
+        old_names = git_at(synthetic, "ls-tree", "-r", "--name-only", old_core)
+        self.assertNotIn("browser/brave.json", old_names.splitlines())
+        (synthetic / "browser").mkdir()
+        (synthetic / "browser" / "brave.json").write_bytes(spec_bytes)
+        git_at(synthetic, "add", "browser/brave.json")
+        git_at(synthetic, "commit", "-q", "-m", "new core")
+        new_core = git_at(synthetic, "rev-parse", "HEAD")
+        self.assertNotEqual(old_core, new_core)
+        self.assertIn(
+            "browser/brave.json",
+            git_at(synthetic, "ls-tree", "-r", "--name-only", new_core).splitlines(),
+        )
+        bare = self.root / "core.git"
+        cloned = subprocess.run(
+            ["git", "clone", "--bare", "-q", str(synthetic), str(bare)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=git_env,
+        )
+        if cloned.returncode != 0:
+            raise AssertionError(f"bare clone failed ({cloned.returncode})\n{cloned.stdout}\n{cloned.stderr}")
+        parent = self.root / "parent"
+        parent.mkdir()
 
         def git(*args: str) -> None:
             completed = subprocess.run(
@@ -1101,12 +1123,11 @@ exit 1
             env=environment,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue((parent / "core" / "browser" / "brave.json").is_file())
+        checked_out = parent / "core" / "browser" / "brave.json"
+        self.assertTrue(checked_out.is_file())
+        self.assertEqual(checked_out.read_bytes(), spec_bytes)
         apply_text = apply_log.read_text(encoding="utf-8")
-        self.assertIn(
-            hashlib.sha256((parent / "core" / "browser" / "brave.json").read_bytes()).hexdigest(),
-            apply_text,
-        )
+        self.assertIn(hashlib.sha256(spec_bytes).hexdigest(), apply_text)
         self.assertIn("submodule update --init -- core", helper.read_text(encoding="utf-8"))
         headed = subprocess.run(
             ["git", "-C", str(parent), "rev-parse", "HEAD"],
