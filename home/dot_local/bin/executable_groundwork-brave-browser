@@ -35,9 +35,11 @@ Cancelling the macOS dialog does not repeat the Groundwork prompt; delete
 ~/.local/state/groundwork/brave/default-browser to ask again.
 
 Opening the policy profile returns before System Settings installs it.
-Groundwork records that acceptance only after profiles shows
-com.groundwork.brave.browser. If the identifier is still missing, the next
-interactive apply asks again. A saved decline is kept.
+Groundwork records that acceptance only when profiles shows this render's
+policy values. The profile identifier stays the same when an older payload
+is still installed, so that identifier alone is not acceptance. If the
+installed values do not match, the next interactive apply asks again. A
+saved decline is kept.
 
 Work-managed Macs still install Brave. Organization device management owns
 browser policy, so this command does not write a profile there.
@@ -322,19 +324,30 @@ require_spec() {
 }
 
 profile_state() {
-  local output=""
+  # 0: installed policy values match the rendered profile.
+  # 1: profiles ran and the profile identifier is absent.
+  # 3: the identifier is present, but the payload is not this render.
+  # 2: profiles output is unavailable. Do not treat that as a decline or as acceptance.
+  # `profiles list` only repeats the identifier, which does not change when
+  # the payload does. `profiles show -output stdout-xml` includes the values.
+  local output="" matched=0
   if [[ -n "${GROUNDWORK_BRAVE_PROFILES_OUTPUT:-}" ]]; then
     [[ -f "$GROUNDWORK_BRAVE_PROFILES_OUTPUT" ]] || return 2
     output="$(cat "$GROUNDWORK_BRAVE_PROFILES_OUTPUT")"
   elif command -v profiles >/dev/null 2>&1; then
-    output="$(profiles list 2>/dev/null || true)"
+    output="$(profiles show -type configuration -output stdout-xml </dev/null 2>/dev/null || true)"
+    [[ -n "$output" ]] || return 2
   else
     return 2
   fi
-  if printf '%s\n' "$output" | grep -qF "$profile_identifier"; then
-    return 0
+  if [[ ! -f "$mobileconfig_path" ]]; then
+    if printf '%s\n' "$output" | grep -qF "$profile_identifier"; then
+      return 3
+    fi
+    return 1
   fi
-  return 1
+  printf '%s\n' "$output" | python3 "$lib" payload-matches --mobileconfig "$mobileconfig_path" || matched=$?
+  return "$matched"
 }
 
 current_handler() {
@@ -470,22 +483,19 @@ offer_policy() {
     stamp=""
   fi
   if [[ "$installed" -eq 0 && "$policy_replaced" != "true" ]]; then
-    # A missing stamp with an already-installed identifier is the first local
-    # copy of a profile the user already approved. A stamp that names other
-    # bytes is a later run after update-all rewrote the file, so ask again.
-    # Do not record acceptance here: an identifier installed outside this
-    # prompt is not a saved yes.
-    if [[ -z "$stamp" || "$stamp" == "$digest" ]]; then
-      return 0
+    # The installed payload is already this render. Remember that digest, but
+    # do not record a yes the user did not give during this prompt.
+    if [[ "$stamp" != "$digest" ]]; then
+      render_stamp_set "$digest"
     fi
-    choice_clear policy-open
+    return 0
   fi
-  if [[ "$installed" -eq 1 ]]; then
+  if [[ "$installed" -eq 1 || "$installed" -eq 3 ]]; then
     local decision=""
     decision="$(choice_get policy-open || true)"
-    # open returns before the System Settings sheet finishes. A saved yes or
-    # a pending offer is not acceptance while profiles still lacks the
-    # identifier. A decline stays a decline.
+    # open returns before System Settings installs the new payload. A saved
+    # yes or a pending offer is not acceptance while the installed values
+    # still differ, or the identifier is missing. A decline stays a decline.
     if [[ "$decision" == "accepted" || "$decision" == "pending" ]]; then
       choice_clear policy-open
     fi
@@ -497,6 +507,9 @@ offer_policy() {
       if open_profile; then
         local after=0
         profile_state || after=$?
+        # The identifier is stable across payload updates. Record acceptance
+        # only when the installed policy values match this render, and leave
+        # the previous digest in place until then.
         if [[ "$after" -eq 0 ]]; then
           choice_set policy-open accepted
           render_stamp_set "$digest"
@@ -651,15 +664,20 @@ cmd_notice() {
     if [[ -f "$mobileconfig_path" ]]; then
       digest="$(policy_digest)"
     fi
-    if stamp="$(render_stamp_get)" && [[ -n "$digest" && "$stamp" != "$digest" ]]; then
-      say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
-    else
-      decision="$(choice_get policy-open || true)"
-      if [[ "$decision" != "declined" ]]; then
-        profile_state || installed=$?
-        if [[ "$installed" -ne 0 ]]; then
-          policy_notice
-        fi
+    if ! stamp="$(render_stamp_get)"; then
+      stamp=""
+    fi
+    decision="$(choice_get policy-open || true)"
+    if [[ "$decision" != "declined" ]]; then
+      profile_state || installed=$?
+      if [[ "$installed" -eq 0 ]]; then
+        :
+      elif [[ -n "$digest" && "$installed" -eq 3 ]]; then
+        say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
+      elif [[ -n "$stamp" && -n "$digest" && "$stamp" != "$digest" ]]; then
+        say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
+      elif [[ "$installed" -ne 0 ]]; then
+        policy_notice
       fi
     fi
   fi
@@ -718,22 +736,15 @@ cmd_doctor() {
   if [[ "$role" == "managed" ]]; then
     printf '  note  %s\n' "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
   else
-    local installed=0
+    local installed=0 decision=""
     profile_state || installed=$?
+    decision="$(choice_get policy-open || true)"
     if [[ "$installed" -eq 0 ]]; then
-      local digest="" stamp="" decision=""
-      if [[ -f "$mobileconfig_path" ]]; then
-        digest="$(policy_digest)"
-      fi
-      stamp="$(render_stamp_get || true)"
-      decision="$(choice_get policy-open || true)"
-      if [[ -n "$stamp" && -n "$digest" && "$stamp" != "$digest" ]]; then
-        printf '  note  %s\n' "Brave policy profile is installed, but it does not match the current Groundwork spec. An interactive apply can open the updated profile for approval in System Settings."
-      elif [[ "$decision" == "declined" && -n "$stamp" && "$stamp" == "$digest" ]]; then
-        printf '  note  %s\n' "Brave policy profile is installed. The current spec was declined, so System Settings may still have an older profile."
-      else
-        printf '  ok    %s\n' "Brave policy profile is installed"
-      fi
+      printf '  ok    %s\n' "Brave policy profile is installed"
+    elif [[ "$installed" -eq 3 && "$decision" == "declined" ]]; then
+      printf '  note  %s\n' "Brave policy profile is installed. The current spec was declined, so System Settings may still have an older profile."
+    elif [[ "$installed" -eq 3 ]]; then
+      printf '  note  %s\n' "Brave policy profile is installed, but it does not match the current Groundwork spec. An interactive apply can open the updated profile for approval in System Settings."
     elif [[ "$installed" -eq 1 ]]; then
       printf '  note  %s\n' "Brave policy profile is not installed. The next interactive apply will offer it again."
     else

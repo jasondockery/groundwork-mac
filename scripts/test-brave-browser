@@ -158,6 +158,14 @@ class BraveBrowserTests(unittest.TestCase):
         path = self.logs / name
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
+    def write_matching_profiles(self) -> str:
+        rendered = self.render_python("bitwarden")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        self.assertIn("<key>BraveAIChatEnabled</key>", rendered.stdout)
+        self.assertIn("com.groundwork.brave.browser", rendered.stdout)
+        self.profiles.write_text(rendered.stdout, encoding="utf-8")
+        return rendered.stdout
+
     def render_python(self, password_manager: str, spec: Path | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
@@ -259,8 +267,26 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIn("restates the upstream default", result.stderr)
         self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
 
+    def test_missing_upstream_default_fails_closed(self):
+        broken = self.root / "brave.json"
+        spec = json.loads(SPEC.read_text(encoding="utf-8"))
+        self.assertIn("upstreamDefault", spec["policies"][0])
+        del spec["policies"][0]["upstreamDefault"]
+        broken.write_text(json.dumps(spec))
+        environment = self.env(GROUNDWORK_BRAVE_SPEC=str(broken), INSTALLED_CASKS="brave-browser")
+        result = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("must have a boolean upstreamDefault", result.stderr)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+        spec["policies"][0]["upstreamDefault"] = "false"
+        broken.write_text(json.dumps(spec))
+        typed = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(typed.returncode, 1, typed.stderr)
+        self.assertIn("must have a boolean upstreamDefault", typed.stderr)
+        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
     def test_accept_default_browser_uses_handler_from_spec(self):
-        self.profiles.write_text("com.groundwork.brave.browser\n")
+        self.write_matching_profiles()
         self.seed("extension-offer", "declined")
         environment = self.env(INSTALLED_CASKS="brave-browser")
         result = self.run_brave("--apply", env=environment, answers="y\n")
@@ -270,7 +296,7 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertNotIn("uninstall", self.log("brew"))
 
     def test_decline_is_sticky(self):
-        self.profiles.write_text("com.groundwork.brave.browser\n")
+        self.write_matching_profiles()
         self.seed("extension-offer", "declined")
         self.seed("default-browser", "declined")
         environment = self.env(INSTALLED_CASKS="brave-browser")
@@ -332,7 +358,7 @@ class BraveBrowserTests(unittest.TestCase):
 
     def test_adoption_respects_yes_no_and_noninteractive(self):
         (self.apps / "Brave Browser.app").mkdir()
-        self.profiles.write_text("com.groundwork.brave.browser\n")
+        self.write_matching_profiles()
         self.seed("extension-offer", "declined")
         self.seed("default-browser", "declined")
         yes = self.run_brave("--apply", answers="y\n")
@@ -357,7 +383,7 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIsNone(self.choice("adoption"))
 
     def test_extension_offer_writes_spec_url_only_after_yes(self):
-        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.write_matching_profiles()
         extension_id = self.spec["extensions"][0]["id"]
         update_url = self.spec["extensions"][0]["updateUrl"]
         yes = self.run_brave("--apply", answers="y\n")
@@ -401,9 +427,81 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertNotIn("old profile", profile)
         self.assertIn("PasswordManagerEnabled", profile)
         self.assertNotIn("upstreamDefault", profile)
+        self.assertIsNone(self.choice("policy-open"))
+        previous = hashlib.sha256(b"old profile\n").hexdigest()
+        self.assertEqual(self.choice("policy-render"), previous)
+        doctor = self.run_brave("--doctor", env=self.env(INSTALLED_CASKS="brave-browser"))
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertNotIn("ok    Brave policy profile is installed", doctor.stdout)
+        self.assertIn("does not match the current Groundwork spec", doctor.stdout)
+        (self.logs / "open").unlink()
+        again = self.run_brave(
+            "--apply",
+            answers="y\n",
+            env=self.env(INSTALLED_CASKS="brave-browser"),
+        )
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn(str(profile_path), self.log("open"))
+        self.assertIsNone(self.choice("policy-open"))
+        self.assertEqual(self.choice("policy-render"), previous)
+
+    def test_matching_payload_is_accepted(self):
+        rendered = self.render_python("bitwarden")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n", encoding="utf-8")
+        self.profiles.write_text(rendered.stdout, encoding="utf-8")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        result = self.run_brave(
+            "--apply",
+            answers="y\n",
+            env=self.env(INSTALLED_CASKS="brave-browser"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        profile_path = self.share / "Brave-Browser.mobileconfig"
+        self.assertEqual(profile_path.read_text(encoding="utf-8"), rendered.stdout.rstrip("\n"))
+        self.assertIn(str(profile_path), self.log("open"))
         self.assertEqual(self.choice("policy-open"), "accepted")
-        digest = hashlib.sha256(profile.encode()).hexdigest()
-        self.assertEqual(self.choice("policy-render"), digest)
+        self.assertEqual(
+            self.choice("policy-render"),
+            hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+        )
+        doctor = self.run_brave("--doctor", env=self.env(INSTALLED_CASKS="brave-browser"))
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertIn("ok    Brave policy profile is installed", doctor.stdout)
+
+    def test_previous_policy_values_are_not_accepted(self):
+        rendered = self.render_python("bitwarden")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        stale = rendered.stdout.replace(
+            "<key>BraveAIChatEnabled</key>\n      <false/>",
+            "<key>BraveAIChatEnabled</key>\n      <true/>",
+            1,
+        )
+        self.assertNotEqual(stale, rendered.stdout)
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n", encoding="utf-8")
+        self.profiles.write_text(stale, encoding="utf-8")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        result = self.run_brave(
+            "--apply",
+            answers="y\n",
+            env=self.env(INSTALLED_CASKS="brave-browser"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        profile_path = self.share / "Brave-Browser.mobileconfig"
+        self.assertIn(str(profile_path), self.log("open"))
+        self.assertIsNone(self.choice("policy-open"))
+        self.assertEqual(
+            self.choice("policy-render"),
+            hashlib.sha256(b"old profile\n").hexdigest(),
+        )
+        doctor = self.run_brave("--doctor", env=self.env(INSTALLED_CASKS="brave-browser"))
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertNotIn("ok    Brave policy profile is installed", doctor.stdout)
+        self.assertIn("does not match the current Groundwork spec", doctor.stdout)
 
     def test_unchanged_installed_profile_is_not_reopened(self):
         self.seed("extension-offer", "declined")
@@ -413,7 +511,7 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertIn("Brave-Browser.mobileconfig", self.log("open"))
         (self.logs / "open").unlink()
-        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.write_matching_profiles()
         second = self.run_brave("--apply", answers="y\n", env=environment)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(self.log("open"), "")
@@ -468,13 +566,14 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(follow.returncode, 0, follow.stderr)
         profile_path = self.share / "Brave-Browser.mobileconfig"
         self.assertIn(str(profile_path), self.log("open"))
-        self.assertEqual(self.choice("policy-open"), "accepted")
-        digest = hashlib.sha256(profile_path.read_bytes()).hexdigest()
-        self.assertEqual(self.choice("policy-render"), digest)
+        self.assertIsNone(self.choice("policy-open"))
+        previous = hashlib.sha256(b"old profile\n").hexdigest()
+        self.assertEqual(self.choice("policy-render"), previous)
+        self.assertNotEqual(previous, hashlib.sha256(profile_path.read_bytes()).hexdigest())
 
     def test_failed_adoption_is_not_saved(self):
         (self.apps / "Brave Browser.app").mkdir()
-        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.write_matching_profiles()
         self.seed("extension-offer", "declined")
         self.seed("default-browser", "declined")
         self._write_adopt(1)

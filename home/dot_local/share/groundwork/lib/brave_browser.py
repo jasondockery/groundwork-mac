@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -96,7 +97,9 @@ def applicable_policies(spec: dict, password_manager: str) -> list[dict]:
             raise SpecError(f"Brave policy {name} must have a boolean value")
         if "reason" not in entry or not isinstance(entry["reason"], str) or not entry["reason"]:
             raise SpecError(f"Brave policy {name} is missing its reason")
-        if "upstreamDefault" in entry and entry["upstreamDefault"] == entry["value"]:
+        if not isinstance(entry.get("upstreamDefault"), bool):
+            raise SpecError(f"Brave policy {name} must have a boolean upstreamDefault")
+        if entry["upstreamDefault"] == entry["value"]:
             raise SpecError(
                 f"Brave policy {name} restates the upstream default and is not a Groundwork choice"
             )
@@ -104,6 +107,43 @@ def applicable_policies(spec: dict, password_manager: str) -> list[dict]:
             continue
         policies.append({"name": name, "value": entry["value"]})
     return policies
+
+
+_BOOLEAN_POLICY = re.compile(
+    r"<key>([^<]+)</key>\s*<(true|false)\s*/>",
+    re.IGNORECASE,
+)
+
+
+def boolean_policy_values(text: str) -> dict[str, bool] | None:
+    """Non-metadata boolean keys. None when one key is both true and false."""
+    found: dict[str, bool] = {}
+    for name, raw in _BOOLEAN_POLICY.findall(text):
+        name = name.strip()
+        if not name or name.startswith("Payload"):
+            continue
+        value = raw.lower() == "true"
+        if name in found and found[name] is not value:
+            return None
+        found[name] = value
+    return found
+
+
+def payload_match_status(rendered: str, profiles_output: str) -> int:
+    """0 when the installed payload matches this render, 1 when the profile
+    identifier is absent, 3 when the identifier is present but the policy
+    values are not this render.
+    """
+    if PROFILE_IDENTIFIER not in profiles_output:
+        return 1
+    expected = boolean_policy_values(rendered)
+    installed = boolean_policy_values(profiles_output)
+    if not expected or installed is None:
+        return 3
+    for name, value in expected.items():
+        if installed.get(name) is not value:
+            return 3
+    return 0
 
 
 def extension_offers(spec: dict) -> list[dict]:
@@ -222,6 +262,11 @@ def _parser() -> argparse.ArgumentParser:
         password=True,
     )
     add_spec(sub.add_parser("extensions", help="print extension offers as JSON"))
+    payload = sub.add_parser(
+        "payload-matches",
+        help="exit 0 when profiles output contains this render's policy values",
+    )
+    payload.add_argument("--mobileconfig", required=True, type=Path)
     return parser
 
 
@@ -232,6 +277,13 @@ def main(argv: list[str] | None = None) -> int:
     except (argparse.ArgumentError, UsageError):
         return 64
     try:
+        if args.command == "payload-matches":
+            try:
+                rendered = args.mobileconfig.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                print(f"groundwork-brave-browser: {error}", file=sys.stderr)
+                return 1
+            return payload_match_status(rendered, sys.stdin.read())
         spec = load_spec(args.spec)
         if args.command == "handler":
             print(handler_name(spec))
