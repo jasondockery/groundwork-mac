@@ -14,6 +14,8 @@ groundwork-cleanup	command	executable	all	all	-	commands.html
 groundwork-cleanup --yes	command	executable	all	all	-	commands.html
 groundwork-cleanup --yes --force	command	executable	all	all	-	commands.html
 groundwork-cleanup --yes --clear-pending <stage>	command	executable	all	all	-	troubleshooting.html
+groundwork-disk-clean	command	executable	all	all	-	shell.html
+groundwork-disk-clean --dry-run	command	executable	all	all	-	shell.html
 groundwork-configure	command	executable	all	all	-	setup.html
 groundwork-mux	command	executable	all	all	-	herdr.html
 groundwork-mux status --json	command	executable	all	all	-	herdr.html
@@ -119,6 +121,7 @@ y	function	shell-function	all	all	yazi	shell.html
 largest [path]	command	executable	all	all	-	shell.html
 largest --files [path]	command	executable	all	all	-	shell.html
 largest --folders [path]	command	executable	all	all	-	shell.html
+ncdu -x [path]	command	external-command	all	all	ncdu	shell.html
 mkdir -p <folder>	command	external-command	all	all	-	shell.html
 pwd	command	external-command	all	all	-	shell.html
 open .	command	external-command	macos	desktop	-	shell.html

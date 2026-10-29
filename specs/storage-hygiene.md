@@ -38,6 +38,10 @@ wider.
 | Docker ephemeral scratch resources | automatic in `update-all` | `groundwork-docker-tidy --automatic` uses canonical managed code and a verified local endpoint to enumerate only aged opted-in images and exited containers, re-check them, and remove by explicit ID; direct repair is `--yes`; no broad prune |
 | Docker legacy tagged validation images | report / owner-confirmed | `groundwork-doctor --docker` reports old unlabeled test/review/verify/spike tags; it excludes `groundwork:latest` and never deletes |
 | Docker stopped containers, dangling images, builder cache | owner-run | `groundwork-docker-cache-tidy` is daemon-wide, dry-run by default, and never invoked by `update-all` or an agent |
+| On-demand cleanup entry point | owner-run front door | `groundwork-disk-clean` previews through each owner's read-only or dry-run mode and asks per category; confirmed package-manager work runs `groundwork-cleanup --yes` and confirmed Docker work runs `groundwork-docker-cache-tidy --yes`; it owns only the two rows below; never invoked by `update-all`, and it refuses to run inside an update transaction |
+| mise versions no config uses | owner-confirmed via the front door | `groundwork-disk-clean` runs `mise uninstall` on the exact versions `mise ls --prunable --json` listed, after re-reading that list and refusing if it changed |
+| Colima VM free blocks | owner-confirmed via the front door | `groundwork-disk-clean` runs `colima ssh -- sudo fstrim -a` only on a profile that is already running; no VM file is deleted, and Colima never starts for it |
+| Interactive disk-usage viewing | read-only tools | `largest` (dust) and `ncdu` everywhere; GrandPerspective from the optional Brewfile on personal desktop Macs |
 | Docker volumes | out of scope | never removed by Groundwork; a dangling volume can be the only copy of a database |
 | Xcode device support / simulators | report only | doctor `--storage` points at Xcode Settings > Components and `simctl delete unavailable` |
 | Legacy `~/.nvm` | report only | doctor `--storage` names the intent (mise owns Node) and defers the live-owner question to `--node-toolchain` |
@@ -189,6 +193,31 @@ wider.
   update failures still make the final transaction nonzero and withhold its
   success timestamp, but a failed mise lane does not suppress supported
   Homebrew/npm/pnpm maintenance after Homebrew itself completed successfully.
+- **`groundwork-disk-clean` is a front door, not a third cleanup engine.**
+  Owner decision, 2026-10-28 ("Thin front door", issue #39). Package-manager
+  and Docker cleanup keep exactly one implementation each:
+  `groundwork-cleanup` and `groundwork-docker-cache-tidy`. The front door
+  shows their read-only report or dry run, adds Homebrew's own
+  `brew autoremove --dry-run` and `brew cleanup --prune=all --dry-run` so the
+  preview names what `groundwork-cleanup --yes` will uninstall and remove, and
+  fails closed (not offered) on any dry-run line it does not recognise. It
+  says plainly that the confirmed run includes `brew autoremove`. Before a
+  delegated run it reads the Homebrew dry runs again and skips the category
+  if the plan changed; it reads the Docker dry run again and skips the
+  category unless acting is still allowed. Docker's prune then acts on what
+  the daemon holds at that moment. It takes the machine lock only after every
+  answer is in; `groundwork-cleanup --yes` borrows that lock as the direct
+  child, exactly as it does under `update-all`. Neither owner gained a new
+  cleanup mode; the only owner change is the Docker builder refusal and the
+  dry-run `acting` line described next.
+- **Daemon-wide Docker cleanup stays on the local daemon's own builder.**
+  `groundwork-docker-cache-tidy --yes` refuses an ambient `BUILDX_BUILDER`
+  alongside `DOCKER_HOST`, `DOCKER_CONTEXT`, and `DOCKER_CONFIG`, and refuses
+  a selected buildx builder whose driver is not `docker`, because
+  `docker builder prune` acts on the selected builder, which can be remote.
+  Without the buildx plugin the classic builder is the daemon itself. Its dry
+  run ends with an `acting` line that states the same verdict, which is what
+  the front door reads.
 - **Storage is not in the default doctor run.** `du` over VM bundles and
   simulator trees can take minutes; the default run prints a pointer to
   `--storage` instead.
@@ -207,6 +236,7 @@ wider.
 | pnpm store tidy | fixture-proven (hostile args, dry-run, receipt, offline refusal, symlink alias) |
 | automatic package-manager maintenance | fixture coverage committed for hostile args, stable exact pins, terminal controls, absolute trusted roots, canonical Git discovery, trusted/custom/conflicting stores, deterministic selectors, cadence/high-water/forced no-candidate no-op/pending override, exec lock adoption and nested borrowing, stale/incomplete/reused lock recovery, observation signal propagation, resistant process-tree cancellation, and helper/per-manager repair; post-review full matrix awaits CI |
 | doctor `--storage` | fixture-proven read-only + real-machine run; reporting only |
+| `groundwork-disk-clean` front door | fixture-proven against the real `groundwork-cleanup` and `groundwork-docker-cache-tidy` with logging tool shims and a pseudo-terminal; mise output fixture captured from mise 2026.10.20, Homebrew and buildx fixtures built from upstream source formats; no real-machine run yet |
 
 ## Deferred, deliberately
 

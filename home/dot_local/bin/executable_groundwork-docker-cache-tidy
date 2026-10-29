@@ -37,8 +37,10 @@ Builder-cache target: $KEEP_STORAGE (GROUNDWORK_DOCKER_CACHE_TIDY_KEEP_STORAGE,
 e.g. 5GB, 512MB, 20GiB).
 
 This command is owner-run only: update-all and scheduled agent routines never
-invoke it. Acting mode requires a trusted Docker CLI and a verified local Unix
-endpoint. Docker observations, each prune, and the complete transaction are
+invoke it. Acting mode requires a trusted Docker CLI, a verified local Unix
+endpoint, and the daemon's own builder: it refuses a set BUILDX_BUILDER or a
+selected buildx builder whose driver is not "docker". The dry run ends with an
+"acting" line that says whether --yes would proceed. Docker observations, each prune, and the complete transaction are
 bounded; remote cleanup is refused. The advanced
 GROUNDWORK_DOCKER_CACHE_TIDY_OPERATION_DEADLINE_SECONDS,
 GROUNDWORK_DOCKER_CACHE_TIDY_OBSERVE_DEADLINE_SECONDS, and
@@ -92,6 +94,61 @@ dry_run() {
   heading "Never touched"
   note "volumes, running containers and their images, and tagged images."
   note "labeled scratch images have their own scoped command: groundwork-docker-tidy."
+
+  heading "Acting check"
+  local refusal
+  refusal="$(acting_refusal)"
+  if [[ -n "$refusal" ]]; then
+    item "acting" "--yes would refuse: $refusal"
+  else
+    item "acting" "--yes is allowed: local endpoint and the daemon's own builder"
+  fi
+}
+
+# Print why acting mode must refuse, or nothing when it may proceed. The dry
+# run reports the same answer that --yes enforces.
+ambient_refusal() {
+  local name
+  for name in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG BUILDX_BUILDER; do
+    if [[ -n "${!name:-}" ]]; then
+      printf '%s is set; daemon-wide cleanup requires the canonical local Docker context and its own builder\n' "$name"
+      return 0
+    fi
+  done
+}
+
+builder_refusal() {
+  local status=0 inspect driver
+  docker buildx version >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) ;;
+    124 | 125 | 129 | 130 | 143)
+      printf 'the buildx check did not finish (exit %s)\n' "$status"
+      return 0
+      ;;
+    # Without the buildx plugin, builder prune runs on the daemon itself.
+    *) return 0 ;;
+  esac
+  status=0
+  inspect="$(docker buildx inspect 2>/dev/null)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    printf 'the selected buildx builder could not be inspected (exit %s)\n' "$status"
+    return 0
+  fi
+  driver="$(awk '$1 == "Driver:" { print $2; exit }' <<<"$inspect")"
+  if [[ "$driver" != docker ]]; then
+    printf 'the selected buildx builder uses the %s driver, not the daemon'"'"'s own builder\n' "${driver:-unknown}"
+  fi
+}
+
+acting_refusal() {
+  local reason
+  reason="$(ambient_refusal)"
+  if [[ -z "$reason" && "$context_host" != unix://?* ]]; then
+    reason="the Docker endpoint is not local: $context_host"
+  fi
+  [[ -n "$reason" ]] || reason="$(builder_refusal)"
+  [[ -z "$reason" ]] || printf '%s\n' "$reason"
 }
 
 apply() {
@@ -167,9 +224,9 @@ done
 unset cache_deadline
 
 if [[ "$mode" == "yes" ]]; then
-  for docker_env_name in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG; do
+  for docker_env_name in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG BUILDX_BUILDER; do
     if [[ -n "${!docker_env_name:-}" ]]; then
-      echo "groundwork-docker-cache-tidy: refusing ambient $docker_env_name; daemon-wide cleanup requires the selected canonical local Docker context." >&2
+      echo "groundwork-docker-cache-tidy: refusing ambient $docker_env_name; daemon-wide cleanup requires the selected canonical local Docker context and its own builder." >&2
       exit 3
     fi
   done
@@ -244,6 +301,14 @@ docker info >/dev/null 2>&1 || info_status=$?
 if [[ "$info_status" -ne 0 ]]; then
   echo "groundwork-docker-cache-tidy: Docker daemon not reachable. On a Mac using Colima, run 'groundwork-colima-start'; otherwise start the selected Docker backend, then rerun."
   exit "$info_status"
+fi
+
+if [[ "$mode" == "yes" ]]; then
+  builder_reason="$(builder_refusal)"
+  if [[ -n "$builder_reason" ]]; then
+    echo "groundwork-docker-cache-tidy: refusing daemon-wide cleanup: $builder_reason. Nothing was changed." >&2
+    exit 3
+  fi
 fi
 
 case "$mode" in

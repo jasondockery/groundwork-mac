@@ -1,0 +1,3 @@
+==> Would autoremove 2 unneeded formulae:
+libyaml
+python@3.12
