@@ -41,7 +41,7 @@ wider.
 | On-demand cleanup entry point | owner-run front door | `groundwork-disk-clean` previews through each owner's read-only or dry-run mode and asks per category; confirmed package-manager work runs `groundwork-cleanup --yes` and confirmed Docker work runs `groundwork-docker-cache-tidy --yes`; it owns only the two rows below; never invoked by `update-all`, and it refuses to run inside an update transaction |
 | mise versions no config uses | owner-confirmed via the front door | `groundwork-disk-clean` runs `mise uninstall` on the exact versions `mise ls --prunable --json` listed, after re-reading that list and refusing if it changed |
 | Colima VM free blocks | owner-confirmed via the front door | `groundwork-disk-clean` runs `colima ssh -- sudo fstrim -a` only on a profile that is already running; no VM file is deleted, and Colima never starts for it |
-| Interactive disk-usage viewing | read-only tools | `largest` (dust) and `ncdu` everywhere; GrandPerspective from the optional Brewfile on personal desktop Macs |
+| Interactive disk-usage viewing | read-only tools | `largest` (dust) and `ncdu` everywhere; GrandPerspective from the optional Brewfile on desktop Macs when optional personal apps are on |
 | Docker volumes | out of scope | never removed by Groundwork; a dangling volume can be the only copy of a database |
 | Xcode device support / simulators | report only | doctor `--storage` points at Xcode Settings > Components and `simctl delete unavailable` |
 | Legacy `~/.nvm` | report only | doctor `--storage` names the intent (mise owns Node) and defers the live-owner question to `--node-toolchain` |

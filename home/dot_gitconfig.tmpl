@@ -1,7 +1,9 @@
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 [user]
     name = {{ .name }}
-    email = {{ if and (eq (get $developer "git_identity") "work") (ne .email_work "") }}{{ .email_work }}{{ else }}{{ .email_personal }}{{ end }}
+    {{- /* A missing or blank work email uses the personal address. work=true can
+       select git_identity=work before email_work exists, and that must not fail. */ -}}
+    email = {{ if and (eq (get $developer "git_identity") "work") (hasKey . "email_work") (ne (default "" .email_work) "") }}{{ .email_work }}{{ else }}{{ .email_personal }}{{ end }}
 {{- if and (eq .chezmoi.os "darwin") (ne .password_manager "none") (ne .signingkey "") }}
     signingkey = {{ .signingkey }}
 {{- end }}

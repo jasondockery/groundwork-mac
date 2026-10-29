@@ -24,8 +24,10 @@ class CommonSetupTests(unittest.TestCase):
                          headless=False, terminal_multiplexer="herdr", key_repeat="fast",
                          chezmoi=dict(os="darwin", arch="arm64", osRelease={"ID": "ubuntu"}))
 
-    def render(self, path, init=False, **data):
+    def render(self, path, init=False, omit=(), **data):
         effective = dict(self.data, **data)
+        for key in omit:
+            effective.pop(key, None)
         command = ["chezmoi", "--config", str(self.config), "--source", str(REPO),
                    "--override-data", json.dumps(effective), "execute-template"]
         if init:
@@ -961,6 +963,11 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         git = self.text("home/dot_gitconfig.tmpl", work=True, email_work="")
         self.assertIn("email = ci@example.com", git)
         self.assertNotIn("email = work@example.com", git)
+
+        missing = self.render("home/dot_gitconfig.tmpl", work=True, omit=("email_work",))
+        self.assertEqual(missing.returncode, 0, missing.stderr)
+        self.assertIn("email = ci@example.com", missing.stdout)
+        self.assertNotIn("email = work@example.com", missing.stdout)
 
         fresh = self.render("home/.chezmoi.toml.tmpl", init=True, work=False)
         self.assertEqual(fresh.returncode, 0, fresh.stderr)

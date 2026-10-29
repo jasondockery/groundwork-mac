@@ -160,7 +160,8 @@ on, infrastructure extensions off. Any other stored pair is kept. An explicit
 Git identity is kept. When `work=true` is stored and `git_identity` was never
 stored, regeneration writes `git_identity=work`. That is the identity the work
 flag used to select, so the Git email stays the work email when one is saved
-and the personal email when the work email is blank. A managed role or
+and the personal email when the work email is blank or the `email_work` key
+is missing. A missing key does not fail the render. A managed role or
 `work-managed` preset does not by itself choose a Git identity. A fresh setup
 has no work/personal install question.
 Docker Desktop removal and data migration are explicit owner operations:

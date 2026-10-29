@@ -18,7 +18,7 @@
       "lastmod": "2026-08-13"
     },
     "apps.html": {
-      "sha256": "005247210d1c9ac35052e786ed16f43c314fb7614fcb4d914aeba79aae6cd8bf",
+      "sha256": "65bf9f281e28ebcf7eb91d70eee0cb5fc48d44e51176f2bf32b2d636183f5150",
       "lastmod": "2026-10-29"
     },
     "cheatsheet.html": {
@@ -98,8 +98,8 @@
       "lastmod": "2026-08-11"
     },
     "grok.html": {
-      "sha256": "4be0e5acc370443428db89d21f0652b7ab2af0613c16af5c3a5a486fe48fcde1",
-      "lastmod": "2026-08-13"
+      "sha256": "ad5b692f207beea905b3bc9e4204850580794be3971b5095ca3077e0508a67f6",
+      "lastmod": "2026-10-29"
     },
     "groundwork-twelve.html": {
       "sha256": "8525f79e82b1ce9fabe59a6c620563fda64f63ac5cfcf29b08daadc06e2668af",
@@ -114,7 +114,7 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "95ccf14c6598c38aaabd0e74e0006d8b20ffc91df7feb446f9787468baac59d4",
+      "sha256": "41fd647b3716202843ae36ee81af9b57f7d118565637978ab592358fc04227c1",
       "lastmod": "2026-10-29"
     },
     "keyboard.html": {
@@ -166,7 +166,7 @@
       "lastmod": "2026-10-29"
     },
     "shell.html": {
-      "sha256": "3e11b78f1c69938ad38aba2a859f3b7161385a7578e2e5ba1d0241504e9da0f2",
+      "sha256": "4eba0bef70f43e29c15a1732c03b1a47527cecbfb67769cd543c27b877286d2e",
       "lastmod": "2026-10-29"
     },
     "skills-playbooks.html": {
@@ -186,7 +186,7 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "89be7ef70003d8a083a152bb6a4bd953a78b92824901251e54487a2c48670c3c",
+      "sha256": "7bc5f71ae0d8425f2e091558f516d82f34c4ed120bca5d4bd01cefbc31be87cd",
       "lastmod": "2026-10-29"
     },
     "web-dev.html": {
