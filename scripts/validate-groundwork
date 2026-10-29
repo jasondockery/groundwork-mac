@@ -2741,12 +2741,26 @@ brew "git"
 cask "ghostty"
 mas "Anybox", id: 1593408455
 EOF
-  update_all_saved_xdg_config="${XDG_CONFIG_HOME-}"
-  update_all_saved_xdg_cache="${XDG_CACHE_HOME-}"
-  update_all_had_xdg_config="${XDG_CONFIG_HOME+x}"
-  update_all_had_xdg_cache="${XDG_CACHE_HOME+x}"
+  # Redirect every inherited XDG_* name into the fixture home. HOME alone does
+  # not: groundwork-cleanup trusts $XDG_DATA_HOME/pnpm/store, so a host value
+  # adds that machine's real store generations to the owner-review report.
+  update_all_xdg_saved_names=()
+  while IFS= read -r update_all_xdg_name; do
+    case "$update_all_xdg_name" in
+      XDG_*) ;;
+      *) continue ;;
+    esac
+    update_all_xdg_saved_names+=("$update_all_xdg_name")
+    printf -v "update_all_xdg_saved_${update_all_xdg_name}" '%s' "${!update_all_xdg_name}"
+  done < <(compgen -v)
+  for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
+    unset "$update_all_xdg_name"
+  done
   export XDG_CONFIG_HOME="$update_all_home/.config"
   export XDG_CACHE_HOME="$update_all_home/.cache"
+  export XDG_DATA_HOME="$update_all_home/.local/share"
+  export XDG_STATE_HOME="$update_all_home/.local/state"
+  export XDG_RUNTIME_DIR="$update_all_home/xdg-runtime"
   cp home/dot_local/bin/executable_groundwork-repos \
     "$update_all_bin/groundwork-repos"
   cat >"$update_all_home/.config/groundwork/repos.conf" <<EOF
@@ -7797,16 +7811,13 @@ SH
   test ! -e "$helper_pending" \
     || fail "a successful maintenance helper did not clear generic pending state"
 
-  if [[ -n "$update_all_had_xdg_config" ]]; then
-    export XDG_CONFIG_HOME="$update_all_saved_xdg_config"
-  else
-    unset XDG_CONFIG_HOME
-  fi
-  if [[ -n "$update_all_had_xdg_cache" ]]; then
-    export XDG_CACHE_HOME="$update_all_saved_xdg_cache"
-  else
-    unset XDG_CACHE_HOME
-  fi
+  unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
+  for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
+    update_all_xdg_saved_ref="update_all_xdg_saved_${update_all_xdg_name}"
+    printf -v "$update_all_xdg_name" '%s' "${!update_all_xdg_saved_ref}"
+    export "$update_all_xdg_name"
+  done
+  unset update_all_xdg_name update_all_xdg_saved_ref
 
   check "groundwork-cleanup fixture setup"
   cleanup_fixture="$out_dir/package-maintenance-fixture"
@@ -8323,10 +8334,21 @@ SH
   chmod +x "$cleanup_bin/brew" "$cleanup_bin/mise" "$cleanup_bin/pnpm" \
     "$cleanup_bin/du" "$cleanup_bin/groundwork-repos"
 
+  cleanup_xdg_clear=()
+  while IFS= read -r cleanup_xdg_name; do
+    case "$cleanup_xdg_name" in
+      XDG_*) cleanup_xdg_clear+=(-u "$cleanup_xdg_name") ;;
+    esac
+  done < <(compgen -v)
   cleanup_env=(
+    ${cleanup_xdg_clear[@]+"${cleanup_xdg_clear[@]}"}
+    -u PNPM_HOME
     HOME="$cleanup_home"
     XDG_CACHE_HOME="$cleanup_home/.cache"
     XDG_CONFIG_HOME="$cleanup_home/.config"
+    XDG_DATA_HOME="$cleanup_home/.local/share"
+    XDG_STATE_HOME="$cleanup_home/.local/state"
+    XDG_RUNTIME_DIR="$cleanup_home/xdg-runtime"
     PATH="/usr/bin:/bin"
     GROUNDWORK_TEST_LOG="$cleanup_log"
     CLEANUP_BREW_CACHE="$cleanup_fixture/brew-cache"
@@ -8416,9 +8438,27 @@ SH
   # candidates. Same-major selectors choose the highest pin deterministically;
   # offline, unknown-version, custom-root, false-marker, and whole-generation
   # cases stay review-only.
+  # A host XDG_DATA_HOME with a real pnpm store must not change that report.
+  # The decoy is exported in this shell; cleanup_env has to override it.
+  host_xdg_data="$cleanup_fixture/host-xdg-data"
+  mkdir -p "$host_xdg_data/pnpm/store/v99/payload"
+  : >"$host_xdg_data/pnpm/store/v99/payload/pkg"
+  cleanup_saved_xdg_data="${XDG_DATA_HOME-}"
+  cleanup_had_xdg_data="${XDG_DATA_HOME+x}"
+  export XDG_DATA_HOME="$host_xdg_data"
   : >"$cleanup_log"
   (cd "$cleanup_fixture/unrelated" && env "${cleanup_env[@]}" "$cleanup_command") \
     >"$cleanup_fixture/report"
+  if [[ -n "$cleanup_had_xdg_data" ]]; then
+    export XDG_DATA_HOME="$cleanup_saved_xdg_data"
+  else
+    unset XDG_DATA_HOME
+  fi
+  if grep -Fq -- "$host_xdg_data" "$cleanup_fixture/report"; then
+    fail "a host XDG_DATA_HOME pnpm store changed the cleanup fixture report"
+  fi
+  assert_not_contains 'pnpm v99 store' "$cleanup_fixture/report" \
+    "a host XDG_DATA_HOME generation was reviewed as if it belonged to the fixture"
   grep -qF 'Automatic candidates: 2' "$cleanup_fixture/report" \
     || {
       cat "$cleanup_fixture/report" >&2
@@ -9884,7 +9924,13 @@ SH
     local output="$1"
     shift
     : >"$storage_log"
-    env HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
+    env -u PNPM_HOME \
+      HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
+      XDG_CONFIG_HOME="$storage_home/.config" \
+      XDG_CACHE_HOME="$storage_home/.cache" \
+      XDG_DATA_HOME="$storage_home/.local/share" \
+      XDG_STATE_HOME="$storage_home/.local/state" \
+      XDG_RUNTIME_DIR="$storage_home/xdg-runtime" \
       GROUNDWORK_TEST_LOG="$storage_log" "$@" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
       >"$output" 2>&1
