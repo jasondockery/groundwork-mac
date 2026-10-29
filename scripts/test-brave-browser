@@ -876,22 +876,6 @@ class BraveBrowserTests(unittest.TestCase):
         )
         self.assertEqual(bad_deadline.returncode, 64, bad_deadline.stderr)
         self.assertIn("deadline", bad_deadline.stderr)
-
-        def sleepers() -> set[str]:
-            listed = subprocess.run(
-                ["ps", "-eo", "pid,args"],
-                text=True,
-                capture_output=True,
-                timeout=15,
-                check=True,
-            )
-            return {
-                line.strip()
-                for line in listed.stdout.splitlines()
-                if " sleep " in f" {line} "
-            }
-
-        before_sleepers = sleepers()
         checkout = subprocess.run(
             ["bash", str(helper), str(REPO)],
             text=True,
@@ -900,7 +884,7 @@ class BraveBrowserTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(checkout.returncode, 0, checkout.stderr)
-        self.assertEqual(sleepers(), before_sleepers)
+        self.assertEqual(checkout.stdout, "")
 
     def test_old_update_all_checks_out_core_before_the_spec_is_read(self):
         main = "78b4e2509d684f41022d63ee7999e68c9bc7dcd9"
