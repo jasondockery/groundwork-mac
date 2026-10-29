@@ -33,17 +33,18 @@ source (`internal/cmd/prompt.go`,
    list, no numbers, no visible selection — the modern installer convention (gum,
    fzf, @clack, enquirer) users expect is absent; a chezmoi limitation to work
    around.
-2. Our own values defeat the matching chezmoi does have. `personal-current` and
-   `personal-preview` share a nine-character prefix, so nothing is unique until
-   the tenth character, while `work-managed` and `disposable-experimental` submit
-   on a single letter. Selection effort is wildly uneven, and the long shared
-   prefix reads as "it ignored me".
+2. Our own values defeated the matching chezmoi does have. `personal-current` and
+   `personal-preview` shared a nine-character prefix, so nothing was unique until
+   the tenth character, while `disposable-experimental` submitted on a single
+   letter. Selection effort was uneven, and the long shared prefix read as "it
+   ignored me". The later work-managed choice had the same shape and has been
+   removed.
 
 Re-running a plain `chezmoi init` does not re-ask (once-semantics: it reuses any
 field already saved). The built-in way back is `chezmoi init --prompt`, which
 forces `prompt*Once` to ask again — but it replays using the TEMPLATE's defaults,
 NOT the current stored answers, so pressing Enter through it can reset choices (an
-existing `personal-preview` back to `personal-current`, `work` back to `false`).
+existing `personal-preview` back to `personal-current`).
 Present it as "replays the full interview using template defaults; review every
 question and inspect the diff before applying", never a safe one-key reconfirm.
 `--promptDefaults` and the `--promptString`/`--promptChoice`/`--promptBool` pairs
@@ -55,12 +56,14 @@ is `groundwork-configure`.
 
 ### Bootstrap establishes the machine; configure owns preferences
 
-`chezmoi init` asks only for bootstrap-critical facts such as work/headless
+`chezmoi init` asks only for bootstrap-critical facts such as headless
 status, identity, code root, package-manager integration, and selected large
-toolchains. A fresh install derives a stable `profile_preset`,
-`environment_role`, and `release_posture` from those facts without asking a
-second stable-versus-preview question. Existing valid stored values are carried
-forward unchanged on every regeneration.
+toolchains. A fresh install seeds `profile_preset=personal-current`,
+`environment_role=personal`, and `release_posture=current` without asking a
+work-versus-personal or stable-versus-preview question. A stored `work=true`,
+`environment_role=managed`, or `profile_preset=work-managed` migrates to that
+common setup, with one notice line, and never fails. Other valid stored values
+are carried forward unchanged on every regeneration.
 
 `groundwork-configure` is the canonical interactive settings surface for
 mutable preferences, including independent `environment_role` and

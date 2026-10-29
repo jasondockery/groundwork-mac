@@ -1,8 +1,8 @@
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
-{{- $work := get $developer "work_extensions" -}}
+{{- $infrastructure := get $developer "work_extensions" -}}
 {{- $gameDev := false -}}
 {{- if hasKey . "game_dev" }}{{- $gameDev = .game_dev -}}{{- end -}}
-# VS Code / Cursor extensions, curated from the work Mac.
+# VS Code / Cursor extensions. The same list is installed on every Mac.
 # Lines starting with # are skipped by the installer (run_onchange_after_25).
 # Prefix with code: for extensions only published on the Microsoft Marketplace.
 # Unprefixed extensions are shared by VS Code and Cursor/Open VSX.
@@ -59,8 +59,8 @@ ms-azuretools.vscode-docker
 ms-azuretools.vscode-containers
 code:ms-vscode-remote.remote-containers
 
-{{ if or $work $gameDev -}}
-# C# / Unity / .NET — work stack or optional game-dev track
+{{ if or $infrastructure $gameDev -}}
+# C# / Unity / .NET. Explicit infrastructure extensions or the optional game-dev track
 code:ms-dotnettools.csharp
 code:ms-dotnettools.csdevkit
 ms-dotnettools.vscode-dotnet-runtime
@@ -70,8 +70,8 @@ fernandoescolar.vscode-solution-explorer
 aliasadidev.nugetpackagemanagergui
 patcx.vscode-nuget-gallery
 {{- end }}
-{{ if $work -}}
-# Work stack (SQL Server / Kubernetes / Terraform) — optional infrastructure extensions
+{{ if $infrastructure -}}
+# Optional infrastructure extensions (SQL Server / Kubernetes / Terraform)
 ms-mssql.mssql
 code:ms-mssql.data-workspace-vscode
 code:ms-mssql.sql-bindings-vscode

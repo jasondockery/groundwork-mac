@@ -10,7 +10,7 @@ Editors, multiplexers, launchers, and browsers are options to choose from, not t
 
 Groundwork targets AI-native developers, so it imposes no intentional delay on supported AI tools: it targets the newest Groundwork-supported release available through the configured official channel. Falling several releases behind can leave a user with incompatible MCP or hook behavior, delayed model support, and defects already corrected upstream, so a deliberately delayed posture is not offered. That freshness is a product invariant, not a preference a profile can turn off — but it is a promise about Groundwork's own behavior, not a claim to override organization policy or a vendor's staged rollout. When availability, compatibility, device policy, or external update ownership prevents an update, Groundwork says so rather than reporting the toolchain as current.
 
-Everything else is a choice about blast radius, made per surface rather than per personality. An environment declares how it is used — a personal machine, a managed work machine, a disposable container — and Groundwork derives its application release channels from that. Preview channels are never selected without explicit profile or per-tool consent.
+Everything else is a choice about blast radius, made per surface rather than per personality. An environment declares how it is used — a personal machine or a disposable container — and Groundwork derives its application release channels from that. Every Mac uses that same setup. Preview channels are never selected without explicit profile or per-tool consent.
 
 Four things stay true in every posture:
 

@@ -147,8 +147,8 @@ fields_clear=(no no no no no no no no no no yes no no no yes yes no no no no)
 
 posture_values=(current preview)
 posture_labels=("Stable channels (managed browser: Google Chrome stable)" "Preview channels (managed browser stays Google Chrome stable)")
-role_values=(personal managed disposable)
-role_labels=("Personal" "Managed" "Disposable")
+role_values=(personal disposable)
+role_labels=("Personal" "Disposable")
 pw_values=(bitwarden 1password none)
 keyrepeat_values=(fast standard aggressive)
 keyrepeat_labels=("Fast (recommended)" "Standard (slower repeat)" "Aggressive (starts sooner)")
@@ -528,6 +528,28 @@ apply_changes() {
 if [[ "$(current_value xcode)" != "true" && "$(current_value beta)" == "true" ]]; then
   echo "Stored Xcode beta was enabled while Xcode was disabled; applying this transaction will clear that inactive preference."
   stage_change beta false migration-normalization
+fi
+
+# The work-managed profile is gone. Surface the migration in this transaction
+# so declining leaves the file unchanged and accepting writes the common setup.
+# chezmoi init performs the same migration when this editor is not used.
+retired_work_managed=false
+if [[ "$(persisted environment_role)" == "managed" ]]; then
+  retired_work_managed=true
+  stage_change environment_role personal migration
+fi
+if [[ "$(persisted profile_preset)" == "work-managed" ]]; then
+  retired_work_managed=true
+fi
+if [[ "$(persisted work)" == "true" || "$(persisted environment_role)" == "managed" || "$(persisted profile_preset)" == "work-managed" ]]; then
+  if [[ "$(persisted personal_apps)" == "false" && "$(persisted work_extensions)" == "true" ]]; then
+    retired_work_managed=true
+    stage_change personal_apps true migration
+    stage_change work_extensions false migration
+  fi
+fi
+if [[ "$retired_work_managed" == "true" ]]; then
+  echo "Retired work-managed setting ignored; this Mac uses the common setup."
 fi
 
 # --- focused shortcut or main menu loop ---
