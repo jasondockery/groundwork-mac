@@ -18082,18 +18082,24 @@ PY
   check "rendered shell template ShellCheck matrix"
   run_shellcheck "${rendered_shell_scripts[@]}"
 
-  check "rendered work macOS profile"
+  check "rendered retired work flag uses the common Mac setup"
   mkdir -p "$out_dir/darwin-work"
   render darwin false arm64 home/.chezmoiignore "$out_dir/darwin-work/chezmoiignore" true
   render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-work/Brewfile" true
-  assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" "Karabiner was ignored on work macOS"
+  assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" \
+    "Karabiner was ignored for a stored work flag"
   grep -q '^cask "karabiner-elements"$' "$out_dir/darwin-work/Brewfile"
   grep -q '^brew "colima"$' "$out_dir/darwin-work/Brewfile"
+  grep -q '^cask "appcleaner"' "$out_dir/darwin-work/Brewfile" \
+    || fail "a stored work flag dropped the common personal apps"
+  grep -q '^cask "obsidian"' "$out_dir/darwin-work/Brewfile" \
+    || fail "a stored work flag dropped Obsidian from the common Mac setup"
   assert_not_contains '^tap |^(brew|cask) "[^"]*/' "$out_dir/darwin-work/Brewfile" \
-    "a third-party tap entered the work Brewfile — the docs promise Groundwork adds none"
-  assert_not_contains '^cask "docker-desktop"$' "$out_dir/darwin-work/Brewfile" "Docker Desktop leaked into work macOS"
-  assert_not_contains '^cask "appcleaner"' "$out_dir/darwin-work/Brewfile" "AppCleaner leaked into work macOS"
-  assert_not_contains '^mas "Xcode"' "$out_dir/darwin-work/Brewfile" "Xcode leaked into default work macOS"
+    "a third-party tap entered the Brewfile for a stored work flag"
+  assert_not_contains '^cask "docker-desktop"$' "$out_dir/darwin-work/Brewfile" \
+    "Docker Desktop replaced Colima for a stored work flag"
+  assert_not_contains '^mas "Xcode"' "$out_dir/darwin-work/Brewfile" \
+    "Xcode leaked into the default Mac setup"
 
   check "rendered Xcode macOS profile"
   mkdir -p "$out_dir/darwin-no-xcode" "$out_dir/darwin-xcode" "$out_dir/darwin-legacy-no-xcode"
