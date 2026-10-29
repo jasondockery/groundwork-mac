@@ -31,8 +31,8 @@ extract_function() {
     capture { sub(/^  /, ""); print }
   ' "$template" >"$root/function.sh"
   grep -q 'run_foreground_mas_authorization()' "$root/function.sh"
-  grep -F 'started + seconds' "$root/function.sh" | grep -F -- '-gt' >/dev/null ||
-    {
+  grep -F 'started + seconds' "$root/function.sh" | grep -F -- '-gt' >/dev/null \
+    || {
       echo "mas auth watchdog does not use the strict whole-second comparison" >&2
       exit 1
     }
