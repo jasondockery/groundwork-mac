@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -317,6 +318,99 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(MANAGED_NOTICE, result.stdout)
         self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
+
+    def test_replaced_profile_is_offered_again(self):
+        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n")
+        self.seed("policy-open", "accepted")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        result = self.run_brave(
+            "--apply",
+            answers="y\n",
+            env=self.env(INSTALLED_CASKS="brave-browser"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        profile_path = self.share / "Brave-Browser.mobileconfig"
+        self.assertIn(str(profile_path), self.log("open"))
+        profile = profile_path.read_text(encoding="utf-8")
+        self.assertNotIn("old profile", profile)
+        self.assertIn("PasswordManagerEnabled", profile)
+        self.assertNotIn("upstreamDefault", profile)
+        self.assertEqual(self.choice("policy-open"), "accepted")
+        digest = hashlib.sha256(profile.encode()).hexdigest()
+        self.assertEqual(self.choice("policy-render"), digest)
+
+    def test_unchanged_installed_profile_is_not_reopened(self):
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        environment = self.env(INSTALLED_CASKS="brave-browser")
+        first = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("Brave-Browser.mobileconfig", self.log("open"))
+        (self.logs / "open").unlink()
+        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        second = self.run_brave("--apply", answers="y\n", env=environment)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(self.log("open"), "")
+        self.assertEqual(self.choice("policy-open"), "accepted")
+
+    def test_noninteractive_profile_change_does_not_save_a_decline(self):
+        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n")
+        self.seed("policy-open", "accepted")
+        environment = self.env(
+            GROUNDWORK_BRAVE_NONINTERACTIVE="1",
+            INSTALLED_CASKS="brave-browser",
+        )
+        result = self.run_brave("--apply", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("The Brave policy profile changed.", result.stdout)
+        self.assertIsNone(self.choice("policy-open"))
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        notice = self.run_brave("--notice", env=environment)
+        self.assertEqual(notice.returncode, 0, notice.stderr)
+        self.assertIn("The Brave policy profile changed.", notice.stdout)
+        doctor = self.run_brave("--doctor", env=self.env(INSTALLED_CASKS="brave-browser"))
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        self.assertIn("does not match the current Groundwork spec", doctor.stdout)
+        self.assertNotIn("ok    Brave policy profile is installed", doctor.stdout)
+
+    def test_update_scope_profile_change_stays_quiet(self):
+        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.share.mkdir()
+        (self.share / "Brave-Browser.mobileconfig").write_text("old profile\n")
+        result = self.run_brave(
+            "--apply",
+            answers="y\n",
+            env=self.env(
+                GROUNDWORK_UPDATE_SCOPE="maintenance",
+                INSTALLED_CASKS="brave-browser",
+            ),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIsNone(self.choice("policy-open"))
+        self.assertNotIn("old profile", (self.share / "Brave-Browser.mobileconfig").read_text())
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+
+    def test_failed_adoption_is_not_saved(self):
+        (self.apps / "Brave Browser.app").mkdir()
+        self.profiles.write_text("attribute: com.groundwork.brave.browser\n")
+        self.seed("extension-offer", "declined")
+        self.seed("default-browser", "declined")
+        self._write_adopt(1)
+        first = self.run_brave("--apply", answers="y\n")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("--yes brave-browser", self.log("adopt"))
+        self.assertIsNone(self.choice("adoption"))
+        (self.logs / "adopt").unlink()
+        second = self.run_brave("--apply", answers="y\n")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("--yes brave-browser", self.log("adopt"))
+        self.assertIsNone(self.choice("adoption"))
 
     def test_update_scope_writes_policy_without_notices_or_commands(self):
         environment = self.env(INSTALLED_CASKS="brave-browser", GROUNDWORK_UPDATE_SCOPE="maintenance")

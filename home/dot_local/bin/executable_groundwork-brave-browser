@@ -25,7 +25,9 @@ Modes:
 
 A decline is saved under ~/.local/state/groundwork/brave/ and later runs do
 not ask again. Deleting that file asks again. A noninteractive run, including
-update-all, prints a notice and does not save a decline.
+update-all, prints a notice and does not save a decline. Replacing the
+on-disk profile with a different render asks for approval again; an older
+installed identifier is not treated as the current spec.
 
 defaultbrowser returns before macOS shows its confirmation dialog. Groundwork
 records the offer once that command returns and does not bypass the dialog.
@@ -56,6 +58,8 @@ headless=""
 platform=""
 handler=""
 quiet="false"
+policy_replaced="false"
+policy_previous_digest=""
 
 die() {
   printf 'groundwork-brave-browser: %s\n' "$1" >&2
@@ -193,6 +197,34 @@ choice_set() {
   mv -f "$tmp" "$state_dir/$key"
 }
 
+choice_clear() {
+  rm -f -- "$state_dir/$1"
+}
+
+policy_digest() {
+  python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' \
+    "$mobileconfig_path"
+}
+
+render_stamp_get() {
+  local file="$state_dir/policy-render" value=""
+  [[ -f "$file" ]] || return 1
+  value="$(tr -d '[:space:]' <"$file")"
+  [[ "$value" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$value"
+}
+
+render_stamp_set() {
+  local value="$1" tmp=""
+  [[ "$value" =~ ^[0-9a-f]{64}$ ]] || return 1
+  mkdir -p "$state_dir"
+  chmod 700 "$state_dir"
+  tmp="$(mktemp "$state_dir/.choice.XXXXXX")"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$state_dir/policy-render"
+}
+
 # 0 yes, unsaved. 1 no, saved declined. 10 already accepted or declined.
 # 11 pending. 12 unasked and not prompting.
 prompt_choice() {
@@ -308,8 +340,14 @@ write_policy() {
       ;;
   esac
   mkdir -p "$share_dir"
+  policy_replaced="false"
+  policy_previous_digest=""
   if [[ -f "$mobileconfig_path" ]] && printf '%s' "$rendered" | cmp -s - "$mobileconfig_path"; then
     return 0
+  fi
+  if [[ -f "$mobileconfig_path" ]]; then
+    policy_previous_digest="$(policy_digest)"
+    policy_replaced="true"
   fi
   tmp="$(mktemp "$share_dir/.brave-profile.XXXXXX")"
   printf '%s' "$rendered" >"$tmp"
@@ -367,6 +405,8 @@ offer_adoption() {
       if "$adopt_bin" --yes brave-browser; then
         choice_set adoption accepted
       fi
+      # A failed adoption is not consent withdrawn and not a completed adopt.
+      # Leave the choice unset so the next interactive apply can retry.
       ;;
     12) adoption_notice ;;
     1 | 10 | 11) ;;
@@ -380,9 +420,20 @@ offer_policy() {
     return 0
   fi
   write_policy || die "could not render the Brave policy profile"
-  local installed=0
+  local digest="" installed=0
+  digest="$(policy_digest)" || die "could not identify the Brave policy profile"
+  if [[ "$policy_replaced" == "true" ]]; then
+    # The saved yes/no applied to the previous render. An installed profile
+    # identifier still names that older payload until the user approves again.
+    choice_clear policy-open
+    if ! render_stamp_get >/dev/null; then
+      if [[ "$policy_previous_digest" =~ ^[0-9a-f]{64}$ ]]; then
+        render_stamp_set "$policy_previous_digest"
+      fi
+    fi
+  fi
   profile_state || installed=$?
-  if [[ "$installed" -eq 0 ]]; then
+  if [[ "$installed" -eq 0 && "$policy_replaced" != "true" ]]; then
     return 0
   fi
   local rc=0
@@ -391,10 +442,18 @@ offer_policy() {
     0)
       if open_profile; then
         choice_set policy-open accepted
+        render_stamp_set "$digest"
       fi
       ;;
-    12) policy_notice ;;
-    1 | 10 | 11) ;;
+    1) render_stamp_set "$digest" ;;
+    12)
+      if [[ "$policy_replaced" == "true" ]]; then
+        say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
+      else
+        policy_notice
+      fi
+      ;;
+    10 | 11) ;;
     *) return "$rc" ;;
   esac
 }
@@ -529,11 +588,18 @@ cmd_notice() {
   fi
   if [[ "$role" == "managed" ]]; then
     policy_notice
-  elif ! choice_get policy-open >/dev/null; then
-    local installed=0
-    profile_state || installed=$?
-    if [[ "$installed" -ne 0 ]]; then
-      policy_notice
+  else
+    local digest="" stamp="" installed=0
+    if [[ -f "$mobileconfig_path" ]]; then
+      digest="$(policy_digest)"
+    fi
+    if stamp="$(render_stamp_get)" && [[ -n "$digest" && "$stamp" != "$digest" ]]; then
+      say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
+    elif ! choice_get policy-open >/dev/null; then
+      profile_state || installed=$?
+      if [[ "$installed" -ne 0 ]]; then
+        policy_notice
+      fi
     fi
   fi
   if ! choice_get extension-offer >/dev/null; then
@@ -594,7 +660,19 @@ cmd_doctor() {
     local installed=0
     profile_state || installed=$?
     if [[ "$installed" -eq 0 ]]; then
-      printf '  ok    %s\n' "Brave policy profile is installed"
+      local digest="" stamp="" decision=""
+      if [[ -f "$mobileconfig_path" ]]; then
+        digest="$(policy_digest)"
+      fi
+      stamp="$(render_stamp_get || true)"
+      decision="$(choice_get policy-open || true)"
+      if [[ -n "$stamp" && -n "$digest" && "$stamp" != "$digest" ]]; then
+        printf '  note  %s\n' "Brave policy profile is installed, but it does not match the current Groundwork spec. An interactive apply can open the updated profile for approval in System Settings."
+      elif [[ "$decision" == "declined" && -n "$stamp" && "$stamp" == "$digest" ]]; then
+        printf '  note  %s\n' "Brave policy profile is installed. The current spec was declined, so System Settings may still have an older profile."
+      else
+        printf '  ok    %s\n' "Brave policy profile is installed"
+      fi
     elif [[ "$installed" -eq 1 ]]; then
       printf '  note  %s\n' "Brave policy profile is not installed. An interactive apply can open it for approval in System Settings."
     else
