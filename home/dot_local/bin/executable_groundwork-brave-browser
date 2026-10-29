@@ -75,11 +75,28 @@ resolve_spec() {
   if [[ -n "$spec" ]]; then
     return 0
   fi
-  local candidate="" source_path=""
+  local candidate="" source_dir="" source_path=""
   candidate="$(CDPATH='' cd -- "$script_dir/../../.." && pwd)/core/browser/brave.json"
   if [[ -f "$candidate" ]]; then
     spec="$candidate"
     return 0
+  fi
+  # chezmoi apply holds chezmoistate.boltdb until the hook finishes. Read the
+  # checkout from the environment it already exported, and only then call
+  # chezmoi (a manual run, outside apply).
+  if [[ -n "${CHEZMOI_WORKING_TREE:-}" && -f "${CHEZMOI_WORKING_TREE}/core/browser/brave.json" ]]; then
+    spec="${CHEZMOI_WORKING_TREE}/core/browser/brave.json"
+    return 0
+  fi
+  if [[ -n "${CHEZMOI_SOURCE_DIR:-}" ]]; then
+    source_dir="$CHEZMOI_SOURCE_DIR"
+    if [[ "$(basename "$source_dir")" == "home" ]]; then
+      source_dir="$(dirname "$source_dir")"
+    fi
+    if [[ -f "$source_dir/core/browser/brave.json" ]]; then
+      spec="$source_dir/core/browser/brave.json"
+      return 0
+    fi
   fi
   if command -v chezmoi >/dev/null 2>&1; then
     source_path="$(chezmoi source-path 2>/dev/null || true)"
@@ -273,8 +290,12 @@ app_present() {
   [[ -e "$applications_dir/$1" ]]
 }
 
-chrome_present() {
+chrome_stable_present() {
   cask_installed google-chrome || app_present "Google Chrome.app"
+}
+
+chrome_beta_present() {
+  cask_installed "google-chrome@beta" || app_present "Google Chrome Beta.app"
 }
 
 brave_installed() {
@@ -363,8 +384,12 @@ open_profile() {
 }
 
 chrome_notice() {
-  chrome_present || return 0
-  say "Chrome is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome"
+  if chrome_stable_present; then
+    say "Chrome is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome"
+  fi
+  if chrome_beta_present; then
+    say "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
+  fi
 }
 
 adoption_notice() {
@@ -420,7 +445,7 @@ offer_policy() {
     return 0
   fi
   write_policy || die "could not render the Brave policy profile"
-  local digest="" installed=0
+  local digest="" installed=0 stamp=""
   digest="$(policy_digest)" || die "could not identify the Brave policy profile"
   if [[ "$policy_replaced" == "true" ]]; then
     # The saved yes/no applied to the previous render. An installed profile
@@ -433,8 +458,17 @@ offer_policy() {
     fi
   fi
   profile_state || installed=$?
+  if ! stamp="$(render_stamp_get)"; then
+    stamp=""
+  fi
   if [[ "$installed" -eq 0 && "$policy_replaced" != "true" ]]; then
-    return 0
+    # A missing stamp with an already-installed identifier is the first local
+    # copy of a profile the user already approved. A stamp that names other
+    # bytes is a later run after update-all rewrote the file, so ask again.
+    if [[ -z "$stamp" || "$stamp" == "$digest" ]]; then
+      return 0
+    fi
+    choice_clear policy-open
   fi
   local rc=0
   prompt_choice policy-open "Open the Brave policy profile for you to approve in System Settings? [y/N]" || rc=$?
@@ -447,7 +481,7 @@ offer_policy() {
       ;;
     1) render_stamp_set "$digest" ;;
     12)
-      if [[ "$policy_replaced" == "true" ]]; then
+      if [[ "$policy_replaced" == "true" || (-n "$stamp" && "$stamp" != "$digest") ]]; then
         say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
       else
         policy_notice
@@ -679,10 +713,10 @@ cmd_doctor() {
       printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available)"
     fi
   fi
-  if chrome_present; then
+  if chrome_stable_present; then
     printf '  note  %s\n' "Chrome is still installed and is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome"
   fi
-  if cask_installed google-chrome@beta; then
+  if chrome_beta_present; then
     printf '  note  %s\n' "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
   fi
 }

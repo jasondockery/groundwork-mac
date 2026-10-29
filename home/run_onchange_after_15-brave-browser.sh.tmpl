@@ -15,6 +15,12 @@ if [[ ! -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then
   echo "Groundwork: groundwork-brave-browser is not installed." >&2
   exit 1
 fi
+# Pass the spec and profile in. chezmoi apply still holds its state lock, so
+# this hook must not call chezmoi again.
+export GROUNDWORK_BRAVE_SPEC={{ $specPath | quote }}
+export GROUNDWORK_BRAVE_PASSWORD_MANAGER={{ .password_manager | quote }}
+export GROUNDWORK_BRAVE_ROLE={{ .environment_role | quote }}
+export GROUNDWORK_BRAVE_HEADLESS=false
 exec "$HOME/.local/bin/groundwork-brave-browser" --apply
 {{- else }}
 exit 0

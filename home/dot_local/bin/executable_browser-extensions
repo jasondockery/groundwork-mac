@@ -63,15 +63,31 @@ esac
 script_dir="$(CDPATH='' cd -- "$(dirname "$0")" && pwd)"
 lib="$script_dir/../share/groundwork/lib/brave_browser.py"
 spec="${GROUNDWORK_BRAVE_SPEC:-}"
+candidate=""
+source_dir=""
+source_path=""
 if [[ -z "$spec" ]]; then
   candidate="$(CDPATH='' cd -- "$script_dir/../../.." && pwd)/core/browser/brave.json"
   if [[ -f "$candidate" ]]; then
     spec="$candidate"
-  elif command -v chezmoi >/dev/null 2>&1; then
-    source_path="$(chezmoi source-path 2>/dev/null || true)"
-    if [[ -n "$source_path" && -f "$(dirname "$source_path")/core/browser/brave.json" ]]; then
-      spec="$(dirname "$source_path")/core/browser/brave.json"
-    fi
+  fi
+fi
+if [[ -z "$spec" && -n "${CHEZMOI_WORKING_TREE:-}" && -f "${CHEZMOI_WORKING_TREE}/core/browser/brave.json" ]]; then
+  spec="${CHEZMOI_WORKING_TREE}/core/browser/brave.json"
+fi
+if [[ -z "$spec" && -n "${CHEZMOI_SOURCE_DIR:-}" ]]; then
+  source_dir="$CHEZMOI_SOURCE_DIR"
+  if [[ "$(basename "$source_dir")" == "home" ]]; then
+    source_dir="$(dirname "$source_dir")"
+  fi
+  if [[ -f "$source_dir/core/browser/brave.json" ]]; then
+    spec="$source_dir/core/browser/brave.json"
+  fi
+fi
+if [[ -z "$spec" ]] && command -v chezmoi >/dev/null 2>&1; then
+  source_path="$(chezmoi source-path 2>/dev/null || true)"
+  if [[ -n "$source_path" && -f "$(dirname "$source_path")/core/browser/brave.json" ]]; then
+    spec="$(dirname "$source_path")/core/browser/brave.json"
   fi
 fi
 if [[ -z "$spec" || ! -f "$spec" ]]; then

@@ -96,6 +96,10 @@ def applicable_policies(spec: dict, password_manager: str) -> list[dict]:
             raise SpecError(f"Brave policy {name} must have a boolean value")
         if "reason" not in entry or not isinstance(entry["reason"], str) or not entry["reason"]:
             raise SpecError(f"Brave policy {name} is missing its reason")
+        if "upstreamDefault" in entry and entry["upstreamDefault"] == entry["value"]:
+            raise SpecError(
+                f"Brave policy {name} restates the upstream default and is not a Groundwork choice"
+            )
         if not _policy_applies(entry, password_manager):
             continue
         policies.append({"name": name, "value": entry["value"]})

@@ -173,6 +173,9 @@ jobs:
           # unless this is set.
           submodules: true
 
+      - name: Require the pinned Brave spec
+        run: test -f core/browser/brave.json
+
       - name: Install repository Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
