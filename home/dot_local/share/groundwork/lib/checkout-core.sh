@@ -31,15 +31,8 @@ fi
 
 marker="$(mktemp)"
 child_pid=""
-watch_pid=""
 
 finish() {
-  if [[ -n "$watch_pid" ]]; then
-    kill "$watch_pid" 2>/dev/null || true
-    pkill -P "$watch_pid" 2>/dev/null || true
-    wait "$watch_pid" 2>/dev/null || true
-    watch_pid=""
-  fi
   if [[ -n "$child_pid" ]]; then
     kill "$child_pid" 2>/dev/null || true
     pkill -P "$child_pid" 2>/dev/null || true
@@ -56,17 +49,22 @@ trap finish EXIT
 trap 'finish; exit 130' INT
 trap 'finish; exit 143' TERM
 
-# git's own stderr is the progress. The deadline is a failure, not a slow success.
+# git's own stderr is the progress. The wait stays in this process: a background
+# sleeper would outlive the checkout and fail the validator's process-group check.
+# The deadline is a failure, not a slow success.
 GIT_TERMINAL_PROMPT=0 git -C "$root" submodule update --init -- core &
 child_pid=$!
-(
-  sleep "$deadline"
-  printf 'timed-out\n' >"$marker"
-  kill "$child_pid" 2>/dev/null || true
-  pkill -P "$child_pid" 2>/dev/null || true
-) &
-watch_pid=$!
-
+elapsed=0
+while kill -0 "$child_pid" 2>/dev/null; do
+  if [[ "$elapsed" -ge "$deadline" ]]; then
+    printf 'timed-out\n' >"$marker"
+    kill "$child_pid" 2>/dev/null || true
+    pkill -P "$child_pid" 2>/dev/null || true
+    break
+  fi
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
 status=0
 wait "$child_pid" || status=$?
 child_pid=""
