@@ -12169,6 +12169,50 @@ validate_static_runtime() {
   grep -qxF 'switch' "$prompt_fixture/switch-out" \
     || fail "an answer typed on the controlling terminal must win over the default"
 
+  # Credentialed URLs (origin or GROUNDWORK_REPO_URL) must never be printed.
+  redact_fixture="$out_dir/redact-fixture"
+  mkdir -p "$redact_fixture/bin" "$redact_fixture/checkout/.git"
+  redact_secret="s3$(printf 'cr%s' 'et')$$-$(date +%s)"
+  cat >"$redact_fixture/bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"remote get-url origin"* ]]; then
+  printf '%s\n' "$STUB_ORIGIN"
+  exit 0
+fi
+[[ -z "${STUB_READABLE:-}" ]] || exit 0
+exit 1
+SH
+  chmod +x "$redact_fixture/bin/git"
+  # Mismatched origin carrying userinfo, query and fragment.
+  set +e
+  env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo STUB_READABLE=1 \
+    GROUNDWORK_DIR="$redact_fixture/checkout" \
+    GROUNDWORK_REPO_URL="https://deploy:${redact_secret}-repo@github.com/example/wanted.git?t=${redact_secret}-q#${redact_secret}-f" \
+    STUB_ORIGIN="https://deploy:${redact_secret}-origin@github.com/example/other.git?t=${redact_secret}-oq" \
+    /bin/bash bootstrap-mac.sh >"$redact_fixture/mismatch-out" 2>"$redact_fixture/mismatch-err" </dev/null
+  redact_status=$?
+  set -e
+  [[ "$redact_status" -ne 0 ]] || fail "a mismatched origin must stop the bootstrap"
+  if grep -qF "$redact_secret" "$redact_fixture/mismatch-out" "$redact_fixture/mismatch-err"; then
+    fail "bootstrap printed credentials from an origin or repo URL"
+  fi
+  grep -qF "github.com/example/other.git" "$redact_fixture/mismatch-err" \
+    || fail "the origin mismatch message must still name the existing origin"
+  grep -qF "github.com/example/wanted.git" "$redact_fixture/mismatch-err" \
+    || fail "the origin mismatch message must still name the expected repo"
+  # Unreadable repo: git ls-remote fails, so the access message prints the URL.
+  rm -rf "$redact_fixture/checkout"
+  set +e
+  env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo \
+    GROUNDWORK_REPO_URL="ssh://deploy:${redact_secret}-repo@github.com/example/wanted.git" \
+    /bin/bash bootstrap-mac.sh >"$redact_fixture/access-out" 2>"$redact_fixture/access-err" </dev/null
+  set -e
+  if grep -qF "$redact_secret" "$redact_fixture/access-out" "$redact_fixture/access-err"; then
+    fail "bootstrap printed credentials while reporting repo access"
+  fi
+  grep -qF "github.com/example/wanted.git" "$redact_fixture/access-err" \
+    || fail "the repo access message must still name the repo"
+
   # groundwork-brew-repair keeps the same convention around its [y/N] gate.
   cat >"$prompt_fixture/bin/brew" <<'SH'
 #!/usr/bin/env bash
