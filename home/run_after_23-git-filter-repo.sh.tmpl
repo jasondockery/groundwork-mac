@@ -8,7 +8,9 @@
 set -euo pipefail
 
 # Per-user locations first, then Homebrew's pipx (installed from Brewfile.optional).
-export PATH="$HOME/.local/bin:$PATH:/opt/homebrew/bin:/usr/local/bin"
+# GROUNDWORK_TEST_BREW_BIN_DIRS lets the tests keep a host Homebrew pipx out of reach.
+brew_dirs="${GROUNDWORK_TEST_BREW_BIN_DIRS-/opt/homebrew/bin:/usr/local/bin}"
+export PATH="$HOME/.local/bin:$PATH${brew_dirs:+:$brew_dirs}"
 
 has_proof() {
   git filter-repo -h 2>&1 | grep -q -- '--sensitive-data-removal'

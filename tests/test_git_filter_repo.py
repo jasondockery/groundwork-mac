@@ -87,6 +87,7 @@ class GitFilterRepoTests(unittest.TestCase):
         env = {
             "HOME": str(self.home),
             "PATH": str(self.bin),
+            "GROUNDWORK_TEST_BREW_BIN_DIRS": "",
             "FAKE_LOG": str(self.log),
             "FAKE_STATE": str(self.state),
             "FAKE_HELP": help_text,
