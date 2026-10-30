@@ -1,6 +1,8 @@
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 {{- $headless := false -}}
 {{- if hasKey . "headless" }}{{- $headless = .headless -}}{{- end -}}
+{{- $gitFilterRepo := false -}}
+{{- if and (hasKey . "git_filter_repo") (kindIs "bool" .git_filter_repo) }}{{- $gitFilterRepo = .git_filter_repo -}}{{- end -}}
 {{- $localInference := false -}}
 {{- if and (hasKey . "local_inference") (kindIs "bool" .local_inference) }}{{- $localInference = .local_inference -}}{{- end -}}
 # Optional packages: wanted, but never worth failing an update over.
@@ -46,4 +48,13 @@ cask "grandperspective"
 # does not download model weights. The menu-bar cask is omitted while this
 # formula is selected because both provide the ollama command.
 brew "ollama"
+{{- end }}
+
+{{ if and (eq .chezmoi.os "darwin") $gitFilterRepo -}}
+# pipx: per-user installer for the opt-in git-filter-repo history-purge tool
+# (groundwork-core docs/history-purge.md). Nothing else depends on it, so a
+# failure here is reported and the update still succeeds. The git-filter-repo
+# package itself comes from pipx in run_after_23-git-filter-repo.sh.tmpl, not
+# from Homebrew, so no brew-installed copy can shadow the checked build.
+brew "pipx"
 {{- end }}
