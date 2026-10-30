@@ -128,9 +128,10 @@ offer_bitwarden() {
   note "To use Bitwarden in Brave, add it from https://chromewebstore.google.com/detail/$bitwarden_id (optional; nothing is installed for you)."
 }
 
-# Integrity check, not a launch. Brave 1.98 in headless mode never exits when
-# it is given --user-data-dir with --dump-dom, so a headless launch cannot be
-# bounded reliably. Instead require a version string and a valid, deep, strict
+# Integrity check, not a launch. Brave 1.98 headless with --dump-dom and
+# --user-data-dir was observed not to exit in a scrubbed environment on Linux.
+# That was not measured on macOS, and this check avoids depending on launch
+# behavior at all. Require a version string and a valid, deep, strict
 # code signature, which is what Gatekeeper needs before the app can start.
 # codesign runs under the same deadline as any finite operation.
 brave_intact() {
