@@ -10,7 +10,7 @@ Usage: groundwork-brave-browser <mode>
 
 Offer Brave Browser on a desktop Mac. Groundwork installs the brave-browser
 cask from the checksum-verified Brewfile. Policies are rendered from
-groundwork-core's browser/brave.json (v0.8.0). This command does not keep a
+groundwork-core's browser/brave.json. This command does not keep a
 second copy, and it does not install the profile itself.
 
 Modes:

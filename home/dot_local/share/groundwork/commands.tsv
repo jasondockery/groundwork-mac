@@ -134,8 +134,8 @@ shell	fdh <name>	alias	Find hidden and ordinary paths while preserving ignore ru
 shell	Ctrl+R	key	Search shell history with atuin/fzf.
 shell	atuin ai inline	command	Run Atuin's opt-in English-to-shell assistant after setup.
 mac	defaultbrowser	command	List or set the macOS default browser. Groundwork runs defaultbrowser browser once from Safari or an unset default, and macOS asks you to confirm. To decline first: mkdir -p ~/.local/state/groundwork/brave && echo declined > ~/.local/state/groundwork/brave/default-browser
-mac	browser-extensions [--open]	command	List or open the Bitwarden extension Groundwork offers for Brave. The id comes from groundwork-core v0.8.0.
-mac	groundwork-brave-browser	command	Offer Brave as the default browser, write the policy profile from groundwork-core v0.8.0 for you to approve, and offer the Bitwarden extension. --notice only prints. --doctor only reports. Nothing is uninstalled.
+mac	browser-extensions [--open]	command	List or open the Bitwarden extension Groundwork offers for Brave. The id comes from groundwork-core.
+mac	groundwork-brave-browser	command	Offer Brave as the default browser, write the policy profile from groundwork-core for you to approve, and offer the Bitwarden extension. --notice only prints. --doctor only reports. Nothing is uninstalled.
 mac	raycast-extensions [--open]	command	List or open the recommended Raycast Store extension links.
 mac	betterdisplaycli	command	BetterDisplay command-line interface for display automation.
 mac	open -a <App>	command	Open a macOS app from the shell.

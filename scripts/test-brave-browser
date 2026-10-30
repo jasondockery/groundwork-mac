@@ -261,7 +261,7 @@ class BraveBrowserTests(unittest.TestCase):
     def test_help_and_bad_args_create_nothing(self):
         help_run = self.run_brave("--help")
         self.assertEqual(help_run.returncode, 0, help_run.stderr)
-        self.assertIn("v0.8.0", help_run.stdout)
+        self.assertIn("groundwork-core", help_run.stdout)
         self.assertFalse((self.state / "brave").exists())
         self.assertFalse(self.share.exists())
         bad = self.run_brave("--apply", "--notice")
