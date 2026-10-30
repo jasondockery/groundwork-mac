@@ -13,6 +13,8 @@ Options:
   --runtimes    run only the runtime release-age section
   --node-toolchain  run only the Node/pnpm ownership section
   --ai-tools    run only the Claude Code command-ownership section
+  --commit-identity
+                run only the commit identity guard section
   --browser     run only the managed-browser section
   --karabiner   run only the Karabiner compatibility and process section
   --always-on-apps  run only the always-on-app relaunch section
@@ -37,6 +39,13 @@ Sections (all run by default):
                 project-local or mise-managed CLI lanes.
   AI tools      effective Claude Code executable, native/manual ownership, and
                 comparison with the selected Homebrew installation.
+  Commit identity
+                the groundwork-core commit identity guard: whether the user-level
+                hooks are installed and point at the pinned guard, whether a
+                different core.hooksPath or the opt-out flag
+                (~/.config/groundwork/commit-guard-off) is in effect, and the
+                guard's own doctor output (denylist, git identity, Claude Code
+                attribution).
   Browser       whether Brave is installed on a desktop Mac, whether it is the
                 default browser, and whether its policy profile is installed.
                 An existing Chrome install is reported as unmanaged and is
@@ -1351,11 +1360,48 @@ ai_tools_section() {
   gw_claude_ownership_report
 }
 
+commit_identity_section() {
+  heading "Commit identity"
+  local gw="${XDG_CONFIG_HOME:-$HOME/.config}/groundwork" hooks guard
+  hooks="$gw/git-hooks"
+  guard="$hooks/commit-identity-guard.sh"
+  if [[ -e "$gw/commit-guard-off" ]]; then
+    note "opted out: $gw/commit-guard-off exists, so the hooks skip the guard. Remove the file to turn it back on."
+  fi
+  if [[ ! -x "$guard" ]]; then
+    warn "commit identity guard is not installed at $guard; run groundwork-update."
+    return 0
+  fi
+  local xdg_git="${XDG_CONFIG_HOME:-$HOME/.config}/git/config" current includes repo code_dir
+  current="$(cd "$HOME" && git config --get core.hooksPath 2>/dev/null || true)"
+  includes="$(git config --file "$xdg_git" --get-regexp '^includeif\..*\.path$' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -n "$current" ]]; then
+    warn "core.hooksPath is $current for every repository, so the guard hooks are not scoped or active; chain $hooks/commit-msg and $hooks/pre-push from it."
+  elif [[ "${includes:-0}" -ge 4 && -f "$gw/commit-guard.gitconfig" ]]; then
+    ok "hooks apply to repositories with a github.com remote owned by this user; other repositories are untouched"
+  else
+    warn "the owned-repository hook scope is not set up (needs git 2.36 or newer); run groundwork-update."
+  fi
+  note "not guarded: a push straight to an owned URL from a repository with no owned remote, owned repositories with their own core.hooksPath (husky, lefthook), and remote URLs with userinfo (https://user@github.com/...)."
+  code_dir="${GROUNDWORK_CODE_DIR:-$HOME/code}"
+  if [[ -d "$code_dir" ]]; then
+    while IFS= read -r repo; do
+      repo="$(dirname "$repo")"
+      if git -C "$repo" config --local --get core.hooksPath >/dev/null 2>&1 \
+        && git -C "$repo" config --local --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE '[:/]jasondockery/'; then
+        warn "guard bypassed by its own core.hooksPath: $repo"
+      fi
+    done < <(find "$code_dir" -maxdepth 3 -name .git -prune 2>/dev/null | head -200)
+  fi
+  "$guard" doctor 2>&1 | sed 's/^/  /' || true
+}
+
 section=""
 
 while (($#)); do
   case "$1" in
     --ai-tools) section="ai-tools" ;;
+    --commit-identity) section="commit-identity" ;;
     --browser) section="browser" ;;
     --docker) section="docker" ;;
     --shell) section="shell" ;;
@@ -1388,6 +1434,7 @@ case "$section" in
     runtimes_section
     node_toolchain_section
     ai_tools_section
+    commit_identity_section
     browser_section
     karabiner_section
     always_on_apps_section
@@ -1398,6 +1445,7 @@ case "$section" in
   runtimes) runtimes_section ;;
   node-toolchain) node_toolchain_section ;;
   ai-tools) ai_tools_section ;;
+  commit-identity) commit_identity_section ;;
   browser) browser_section ;;
   karabiner) karabiner_section ;;
   always-on-apps) always_on_apps_section ;;

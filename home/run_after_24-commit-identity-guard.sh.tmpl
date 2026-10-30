@@ -1,0 +1,6 @@
+{{- /* Installs groundwork-core's commit identity guard (core/docs/commit-identity.md) at user level. The guard is called in place from the pinned core checkout, never copied. Opt out with ~/.config/groundwork/commit-guard-off. Prints nothing on a rerun that changes nothing. */ -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec bash {{ joinPath .chezmoi.sourceDir "dot_local/share/groundwork/lib/commit-identity-install.sh" | quote }} \
+  --guard {{ joinPath .chezmoi.workingTree "core/commit-guard/commit-identity-guard.sh" | quote }}
