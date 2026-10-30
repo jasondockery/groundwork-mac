@@ -872,6 +872,32 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         git = self.text("home/dot_gitconfig.tmpl", work=False, git_identity="work")
         self.assertIn("email = work@example.com", git)
 
+    def test_gitconfig_user_name_and_email_render_on_separate_lines(self):
+        cases = [
+            ("work email", dict(work=True), "work@example.com"),
+            ("blank work email", dict(work=True, email_work=""), "ci@example.com"),
+            ("missing work email", dict(work=True), "ci@example.com", ("email_work",)),
+            ("personal", dict(work=True, git_identity="personal"), "ci@example.com"),
+            ("personal default", dict(work=False), "ci@example.com"),
+        ]
+        for label, data, email, *omit in cases:
+            with self.subTest(case=label):
+                rendered = self.render("home/dot_gitconfig.tmpl", omit=omit[0] if omit else (), **data)
+                self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                path = self.root / "gitconfig"
+                path.write_text(rendered.stdout)
+                for key, expected in (("user.name", "CI"), ("user.email", email)):
+                    got = subprocess.run(["git", "config", "-f", str(path), "--get", key],
+                                         text=True, capture_output=True, timeout=5)
+                    self.assertEqual(got.stdout, expected + "\n", got.stderr)
+                lines = rendered.stdout.splitlines()
+                start = lines.index("[user]")
+                self.assertEqual(lines[start + 1], "    name = CI")
+                self.assertEqual(lines[start + 2], "    email = " + email)
+                self.assertTrue(lines[start + 3] == "" or lines[start + 3].startswith("["))
+        signed = self.text("home/dot_gitconfig.tmpl", password_manager="1password", signingkey="ssh-ed25519 AAAA")
+        self.assertIn("    email = ci@example.com\n    signingkey = ssh-ed25519 AAAA\n\n[init]", signed)
+
     def test_remote_desktop_hook_excludes_headless_and_wsl(self):
         for system, headless, kernel, invokes in [
             ('darwin', False, '', True), ('darwin', True, '', False),
