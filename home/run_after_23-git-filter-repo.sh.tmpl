@@ -26,10 +26,16 @@ if ! command -v pipx >/dev/null 2>&1; then
   exit 0
 fi
 
+# Bound the network install like the other hooks. Homebrew's coreutils provides gtimeout.
+if ! command -v gtimeout >/dev/null 2>&1; then
+  echo "GNU timeout is required to install git-filter-repo; apply the Brewfile first. Will retry on next chezmoi apply." >&2
+  exit 0
+fi
+
 if pipx list --short 2>/dev/null | grep -q '^git-filter-repo '; then
-  pipx upgrade git-filter-repo || true
+  gtimeout --kill-after=5s 300 pipx upgrade git-filter-repo || true
 else
-  pipx install git-filter-repo || true
+  gtimeout --kill-after=5s 300 pipx install git-filter-repo || true
 fi
 
 if has_proof; then

@@ -82,6 +82,7 @@ class GitFilterRepoTests(unittest.TestCase):
         script = self.root / "run.sh"
         script.write_text(text, encoding="utf-8")
         self.install_fake("git", FAKE_GIT)
+        self.install_fake("gtimeout", 'echo "gtimeout $*" >> "$FAKE_LOG"\nshift 2\nexec "$@"\n'.join(["#!/usr/bin/env bash\n", ""]))
         if with_pipx:
             self.install_fake("pipx", FAKE_PIPX)
         env = {
@@ -117,6 +118,7 @@ class GitFilterRepoTests(unittest.TestCase):
         result = self.run_script(text, help_text="usage: git filter-repo --sensitive-data-removal")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls().count("pipx install git-filter-repo"), 1)
+        self.assertIn("gtimeout --kill-after=5s 300 pipx install git-filter-repo", self.calls())
         self.assertIn("git filter-repo -h", self.calls())
         self.assertIn("--sensitive-data-removal", self.state.read_text())
         self.assertIn("installed for this user", result.stdout)
@@ -146,7 +148,7 @@ class GitFilterRepoTests(unittest.TestCase):
     def test_no_history_rewrite_command_is_ever_run(self):
         self.run_script(self.render(SCRIPT, git_filter_repo=True))
         for call in self.calls():
-            self.assertTrue(call in ("git filter-repo -h",) or call.startswith("pipx"), call)
+            self.assertTrue(call == "git filter-repo -h" or call.startswith(("pipx", "gtimeout")), call)
 
     def test_pipx_comes_from_the_optional_brewfile_only_when_opted_in(self):
         on = self.render("home/dot_config/homebrew/Brewfile.optional.tmpl", git_filter_repo=True)
