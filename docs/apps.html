@@ -140,8 +140,8 @@
       <h2 id="configuration-boundary"><span class="hash" aria-hidden="true">#</span>What Groundwork can configure</h2>
       <p>Groundwork should only automate settings that live in stable files, templates, or documented macOS defaults. Many Mac apps keep their real state in app databases, account sync, Keychain, iCloud, or per-device stores; those should stay in the app that owns them.</p>
       <table class="keytable">
-        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, Google Chrome stable, the one Chrome password-manager setting described below, browser/Raycast extension checklists, and Obsidian vault/plugin seed files.</td></tr>
-        <tr><td><strong>Use app sync/export</strong></td><td>Raycast aliases, hotkeys, snippets, Quicklinks, and extensions belong in Raycast Cloud Sync if available on your plan, or Raycast export/import. Anybox links, folders, tags, Smart Lists, Quick Links, snippets, and Anydock profiles sync through iCloud. Chrome Sync is optional and owned by your Google account.</td></tr>
+        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, Brave on desktop Macs, the Brave policy profile rendered from groundwork-core v0.8.0, the Bitwarden extension offer, and Obsidian vault/plugin seed files.</td></tr>
+        <tr><td><strong>Use app sync/export</strong></td><td>Raycast aliases, hotkeys, snippets, Quicklinks, and extensions belong in Raycast Cloud Sync if available on your plan, or Raycast export/import. Anybox links, folders, tags, Smart Lists, Quick Links, snippets, and Anydock profiles sync through iCloud. Brave Sync is optional and owned by the account you sign into.</td></tr>
         <tr><td><strong>Manual by design</strong></td><td>App Store purchases, sign-in, password-manager unlock, API keys, SSH-agent approval, default-browser confirmation, macOS privacy prompts, display presets, and app-level hotkeys that depend on your hands, monitors, and existing shortcuts.</td></tr>
       </table>
       <div class="callout note">
@@ -150,52 +150,49 @@
       </div>
 
       <h2 id="link-workflow"><span class="hash" aria-hidden="true">#</span>One link workflow</h2>
-      <p>You can choose another capable browser, launcher, or bookmark manager. If you use the installed Chrome, Raycast, and Anybox stack, give each tool one clear job instead of maintaining three competing libraries.</p>
+      <p>You can choose another capable browser, launcher, or bookmark manager. If you use the installed Brave, Raycast, and Anybox stack, give each tool one clear job instead of maintaining three competing libraries.</p>
       <div class="callout key">
         <span class="label">One owner for each job</span>
-        <p><strong>Chrome is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.</strong> A tiny Chrome bookmarks bar and a few Raycast Quicklinks may duplicate important destinations for speed; Anybox remains the source of truth for everything worth keeping.</p>
+        <p><strong>Brave is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.</strong> A tiny Brave bookmarks bar and a few Raycast Quicklinks may duplicate important destinations for speed; Anybox remains the source of truth for everything worth keeping.</p>
       </div>
       <table class="keytable">
-        <tr><td><strong>Chrome · hot cache</strong></td><td>Keep roughly six to ten links you need at a glance, plus an optional <strong>Daily</strong> folder. This is a visual working set, not the archive.</td></tr>
+        <tr><td><strong>Brave · hot cache</strong></td><td>Keep roughly six to ten links you need at a glance, plus an optional <strong>Daily</strong> folder. This is a visual working set, not the archive.</td></tr>
         <tr><td><strong>Raycast · front door</strong></td><td>Open exact frequent destinations with a small set of native Quicklinks. Use <code>ab</code> for Anybox Search Links and <code>as</code> for Anybox Save Current Tab.</td></tr>
         <tr><td><strong>Anybox · durable library</strong></td><td>Keep all saved links here. Start with <strong>Daily</strong>, <strong>Work/&lt;project&gt;</strong>, <strong>Personal</strong>, and <strong>Reference</strong> folders; use tags for themes that cross those folders.</td></tr>
       </table>
-      <p>The daily loop is short: save a page to Anybox with <code>as</code> or the browser extension, leave it in Unsorted when you are busy, and retrieve it with <code>ab</code>. Once a week, empty Unsorted, remove dead or duplicated links, and demote anything that no longer deserves space in Chrome or a Raycast Quicklink.</p>
+      <p>The daily loop is short: save a page to Anybox with <code>as</code> or the browser extension, leave it in Unsorted when you are busy, and retrieve it with <code>ab</code>. Once a week, empty Unsorted, remove dead or duplicated links, and demote anything that no longer deserves space in Brave or a Raycast Quicklink.</p>
 
       <h2 id="browsers"><span class="hash" aria-hidden="true">#</span>Browsers</h2>
       <table class="keytable">
-        <tr><td><strong>Chrome stable</strong></td><td>The managed browser on every desktop Mac: current, preview, and Xcode. Headless profiles install no GUI browser. Release posture does not change this choice.</td></tr>
+        <tr><td><strong>Brave</strong></td><td>The managed browser on every desktop Mac posture: current, preview, and Xcode. Headless profiles install no GUI browser. Release posture does not change this choice. The cask is <code>brave-browser</code>, checksummed, and updated by Brave's own Sparkle updater.</td></tr>
       </table>
       <div class="callout note">
         <span class="label">Installed is not the same as default</span>
-        <p>Groundwork installs Google Chrome stable. It never changes the macOS default-browser association: that confirmation remains your decision. Organization and device policy outrank the profile on any Mac.</p>
+        <p>Groundwork installs Brave and makes it the default browser once, automatically, the first time it passes a code-signature check in a desktop session. It runs <code>defaultbrowser browser</code> only when the default is still Safari or unset; macOS shows its own confirmation and Groundwork does not bypass it. The next run reads the real default: Brave means done, and a Keep Safari answer is saved as a decline and never asked again. Any other default, such as Chrome, only gets the usual prompt, which defaults to no. Over SSH or with no desktop session the switch waits for the next desktop run. To decline ahead of time, run <code>mkdir -p ~/.local/state/groundwork/brave && echo declined > ~/.local/state/groundwork/brave/default-browser</code>. A default you choose later is never overridden. Organization and device policy outrank the profile on any Mac.</p>
       </div>
       <div class="callout note">
-        <span class="label">Chrome Beta is no longer managed</span>
-        <p>Groundwork does not install Chrome Beta, write its settings, or uninstall it. If Google Chrome Beta is already on the Mac, the app and its data stay until you remove them. To remove the Homebrew cask by hand, run <code>brew uninstall --cask google-chrome@beta</code>. That removes the app cask and leaves unrelated personal files alone. Add <code>--zap</code> only after you inspect the cask and mean to delete its preferences and caches too. <code>groundwork-doctor --browser</code> notes an installed Beta cask and does not remove it.</p>
+        <span class="label">Policies come from groundwork-core v0.8.0</span>
+        <p>The only policy list is <a href="https://github.com/jasondockery/groundwork-core/blob/v0.8.0/docs/browser.md">groundwork-core's browser contract</a>. <code>groundwork-brave-browser --apply</code> renders that spec into a <code>com.brave.Browser</code> configuration profile and offers to open it. System Settings asks you to approve it. Groundwork does not install the profile for you. Organization and device policy outrank the profile on any Mac. Confirm the installed values at <code>brave://policy</code>. <code>groundwork-brave-browser --doctor</code> only reports.</p>
       </div>
       <div class="callout note">
-        <span class="label">Chrome Sync is optional</span>
-        <p>Use Chrome without signing in, or sign in if you want Google to sync bookmarks, history, saved passwords, settings, and open tabs. Groundwork does not sign in, enable sync, or put account data into dotfiles. Any browser Groundwork no longer manages remains installed with its data untouched until you decide what to do with it.</p>
+        <span class="label">Chrome is no longer managed</span>
+        <p>Groundwork does not install Chrome, write its settings, or uninstall it. If Chrome or Chrome Beta is already on the Mac, the app and its data stay until you remove them. Import into Brave with <code>brave://settings/importData</code>, then remove the Homebrew cask by hand with <code>brew uninstall --cask google-chrome</code>. An older Beta cask is the same kind of manual step: <code>brew uninstall --cask google-chrome@beta</code>. That removes the app cask and leaves unrelated personal files alone. Add <code>--zap</code> only after you inspect the cask and mean to delete its preferences and caches too. <code>groundwork-doctor --browser</code> notes an installed Chrome cask and does not remove it.</p>
+      </div>
+      <div class="callout note">
+        <span class="label">Brave Sync is optional</span>
+        <p>Use Brave without signing in, or sign in if you want Brave to sync bookmarks, history, saved passwords, settings, and open tabs. Groundwork does not sign in, enable sync, or put account data into dotfiles.</p>
       </div>
       <h3>Browser extensions</h3>
-      <p>Groundwork keeps the extension source of truth in <code>~/.local/share/groundwork/browser-extensions.tsv</code>. Run <code>browser-extensions</code> to list the vetted links, or <code>browser-extensions --open</code> on macOS to open them in Chrome through the Chrome Web Store.</p>
-      <table class="keytable">
-        <tr><td><strong>Core</strong></td><td>Password manager, uBlock Origin Lite, Anybox Browser Extension, and Obsidian Web Clipper.</td></tr>
-        <tr><td><strong>Privacy</strong></td><td>Privacy.com is included as the official virtual-card service link. I could not verify a current official browser extension, so it is not treated as an extension install.</td></tr>
-        <tr><td><strong>Optional privacy</strong></td><td>Privacy Badger is available, but keep the extension set small unless you need it; every extension is another trusted code path.</td></tr>
-        <tr><td><strong>Frontend dev</strong></td><td>React Developer Tools, Redux DevTools, Vue.js devtools, Angular DevTools for Chromium, and axe DevTools for accessibility.</td></tr>
-      </table>
+      <p>Bitwarden is the only extension Groundwork offers. The id and update URL come from groundwork-core v0.8.0, not from a second catalog. An interactive apply asks before writing the external-extension file, and Brave asks again before enabling it. Run <code>browser-extensions</code> to list it, or <code>browser-extensions --open</code> to open the store page in Brave.</p>
       <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">browser extension helper</span></div><pre><code><span class="prompt">$ </span>browser-extensions
-<span class="prompt">$ </span>browser-extensions --browser chrome --tier core --open
-<span class="prompt">$ </span>browser-extensions --browser chrome --tier dev --open</code></pre></div>
+<span class="prompt">$ </span>browser-extensions --open</code></pre></div>
 
       <h3>Password manager and autofill</h3>
       <p>Groundwork installs Bitwarden or 1Password based on the setup choice, but sign-in, autofill provider selection, and SSH-agent approval are intentionally manual. Password managers protect the keys and credentials agents should never see in prompts or dotfiles.</p>
       <table class="keytable">
         <tr><td><strong>SSH agent</strong></td><td>Sign in to the desktop app, then enable its SSH agent. Bitwarden: Settings → enable SSH agent. 1Password: Settings → Developer → Use the SSH agent. If commits stop signing, unlock the app and retry. See <a href="git.html">Git</a> for the signing flow.</td></tr>
         <tr><td><strong>macOS + Safari</strong></td><td>System Settings → General → AutoFill &amp; Passwords: turn on Bitwarden and turn off Passwords/iCloud Keychain if Bitwarden is the source of truth.</td></tr>
-        <tr><td><strong>Chrome</strong></td><td>Install the Bitwarden extension, sign in, and pin it. When you chose Bitwarden or 1Password, Groundwork turns off Chrome's built-in password manager in Google Chrome stable. Chrome leaves that manager on; this is the only Chrome setting Groundwork writes, so the built-in manager does not compete with the one you chose. Confirm it at chrome://policy. Chrome Beta is not managed, so this setting is not written there.</td></tr>
+        <tr><td><strong>Brave</strong></td><td>Accept the Bitwarden offer, sign in, and pin it. When Bitwarden is the password manager, the shared spec turns Brave's built-in password manager off. Confirm that at <code>brave://policy</code>. Groundwork does not write that setting when the password manager is 1Password or none, because the spec does not include it then.</td></tr>
         <tr><td><strong>iOS / iPadOS</strong></td><td>Install Bitwarden, sign in, then Settings → General → AutoFill &amp; Passwords: enable Bitwarden and disable Passwords if you want the same source of truth on mobile.</td></tr>
       </table>
 
@@ -234,7 +231,7 @@
       <table class="keytable">
         <tr><td><strong>Clipboard history</strong></td><td>Search Clipboard History inside the launcher; leave its global hotkey empty</td></tr>
         <tr><td><strong>Window management</strong></td><td>Search a window command inside Raycast if needed; leave global hotkeys empty</td></tr>
-        <tr><td><strong>Quicklinks</strong></td><td>Keep roughly five to ten exact destinations or parameterized searches you open constantly. Add a <code>daily</code> tag and choose <strong>Open With → Google Chrome</strong>. In <strong>Raycast Settings → Quicklinks</strong>, enable the global <strong>Prefer Existing Tabs</strong> setting to reuse matching open tabs instead of creating duplicates.</td></tr>
+        <tr><td><strong>Quicklinks</strong></td><td>Keep roughly five to ten exact destinations or parameterized searches you open constantly. Add a <code>daily</code> tag and choose <strong>Open With → Brave Browser</strong>. In <strong>Raycast Settings → Quicklinks</strong>, enable the global <strong>Prefer Existing Tabs</strong> setting to reuse matching open tabs instead of creating duplicates.</td></tr>
         <tr><td><strong>Aliases &amp; hotkeys</strong></td><td>Use typed aliases inside the launcher. Keep its only global hotkey on Cmd+Space</td></tr>
         <tr><td><strong>Extensions</strong></td><td>Add from the Store — Browser Bookmarks, Browser Tabs, GitHub, Homebrew, Anybox, the VS Code project opener — and search them right from the bar</td></tr>
       </table>
@@ -248,7 +245,7 @@
         <tr><td><strong>Chrome bookmark</strong></td><td>A visible link in the small browser hot cache. Keep only the destinations that earn permanent space in the current working surface.</td></tr>
         <tr><td><strong>Browser Bookmarks extension</strong></td><td>A compatibility bridge for bookmarks that already live in Chrome or Safari. It is useful during migration or when another browser must retain its own library, but it is not the Groundwork source of truth.</td></tr>
         <tr><td><strong>Browser Tabs</strong></td><td>Use for live open tabs in browsers Raycast can read through macOS automation, especially Safari and Chromium-family browsers.</td></tr>
-        <tr><td><strong>Browser add-ons</strong></td><td>Install the Anybox and Obsidian Web Clipper add-ons in Chrome with <code>browser-extensions --tier core --open</code>. They are for capturing pages, not for making Raycast itself work.</td></tr>
+        <tr><td><strong>Browser add-ons</strong></td><td>Install Anybox and Obsidian Web Clipper yourself if you want them. Groundwork offers only Bitwarden, with <code>browser-extensions --open</code>. Those other add-ons are for capturing pages, not for making Raycast itself work.</td></tr>
       </table>
 
       <h3>Asking Claude, GPT, or Grok from Raycast</h3>
@@ -377,7 +374,7 @@ font-family = JetBrainsMono Nerd Font</code></pre>
         <div class="num">2</div>
         <div class="body">
           <h3>Confirm the managed browser</h3>
-          <p>Run <code>groundwork-profile show</code>. Every desktop Mac posture reports Google Chrome stable. If you want to change the macOS default browser, run <code>defaultbrowser</code> and make that separate choice yourself. An older Chrome Beta install stays in place; remove it with <code>brew uninstall --cask google-chrome@beta</code> when you want it gone.</p>
+          <p>Run <code>groundwork-profile show</code>. Every desktop Mac posture reports Brave. Groundwork runs <code>defaultbrowser browser</code> once from Safari or an unset default, and macOS asks you to confirm. An older Chrome install stays in place; remove it with <code>brew uninstall --cask google-chrome</code> or <code>brew uninstall --cask google-chrome@beta</code> when you want it gone.</p>
         </div>
       </div>
       <div class="drill">

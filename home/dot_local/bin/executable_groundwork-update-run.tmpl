@@ -499,12 +499,26 @@ if [[ "$config_only" -eq 1 ]]; then
 else
   export GROUNDWORK_UPDATE_SCOPE=maintenance
 fi
+# Check out the pinned core submodule before apply renders the desktop Brave
+# hook. The launcher that exec'd this runner may be the previous update-all,
+# which renders chezmoi status before any new pre-status step exists. The
+# targeted apply that installed this runner does not run that hook.
+{{ $coreCheckout := joinPath .chezmoi.workingTree "home/dot_local/share/groundwork/lib/checkout-core.sh" }}
+bash {{ $coreCheckout | quote }} {{ .chezmoi.workingTree | quote }}
 chezmoi apply
 
 if [[ "$config_only" -eq 1 ]]; then
   append_maintenance_receipt configuration applied
   append_maintenance_receipt upgrades not-requested
   append_maintenance_receipt maintenance not-requested
+{{ if eq .chezmoi.os "darwin" }}
+  # chezmoi apply already wrote the profile without prompting. Say so once,
+  # still without asking or saving a decline. GROUNDWORK_UPDATE_SCOPE is set.
+  if [[ -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then
+    "$HOME/.local/bin/groundwork-brave-browser" --auto-default || true
+    "$HOME/.local/bin/groundwork-brave-browser" --notice
+  fi
+{{ end }}
   echo "Groundwork configuration applied using saved settings."
   echo "Routine upgrades and maintenance were not requested. Run update-all for those."
   exit 0
@@ -2943,4 +2957,8 @@ publish_action_receipt "$action_receipt_work" 0 || {
   exit 1
 }
 echo "  Action receipt: ~/.local/state/groundwork/receipts/update-all-actions-latest.tsv"
+if [[ -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then
+  "$HOME/.local/bin/groundwork-brave-browser" --auto-default || true
+  "$HOME/.local/bin/groundwork-brave-browser" --notice
+fi
 {{- end }}

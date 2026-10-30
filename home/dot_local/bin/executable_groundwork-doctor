@@ -37,8 +37,9 @@ Sections (all run by default):
                 project-local or mise-managed CLI lanes.
   AI tools      effective Claude Code executable, native/manual ownership, and
                 comparison with the selected Homebrew installation.
-  Browser       whether Google Chrome stable is installed on a desktop Mac.
-                An existing Chrome Beta cask is reported as unmanaged and is
+  Browser       whether Brave is installed on a desktop Mac, whether it is the
+                default browser, and whether its policy profile is installed.
+                An existing Chrome install is reported as unmanaged and is
                 not removed. Device policy remains authoritative.
   Karabiner     installed version, macOS support, and root Core Service PID,
                 owner, elapsed time, RSS, memory footprint, and compressed
@@ -237,13 +238,15 @@ browser_section() {
     return 0
   fi
 
-  local data headless posture xcode beta
+  local data headless posture xcode beta password_manager brave_headless
   if ! data="$(chezmoi data --format=json 2>/dev/null)" \
     || ! printf '%s' "$data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     warn "Groundwork could not read the chezmoi profile; browser status is unknown."
     return 0
   fi
   headless="$(printf '%s' "$data" | jq -r '.headless // false')"
+  password_manager="$(printf '%s' "$data" | jq -r '.password_manager // empty')"
+  brave_headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" elif .headless == false then "false" else empty end')"
   posture="$(printf '%s' "$data" | jq -r '.release_posture // "current"')"
   xcode="$(printf '%s' "$data" | jq -r '.xcode // false')"
   beta="$(printf '%s' "$data" | jq -r '.beta // false')"
@@ -278,20 +281,23 @@ browser_section() {
     ok "headless profile selects no GUI browser"
     return 0
   fi
-  if ! command -v brew >/dev/null 2>&1; then
-    warn "Homebrew is not available, so Google Chrome stable cannot be verified."
+  if [[ -z "$password_manager" || -z "$brave_headless" ]]; then
+    warn "Groundwork could not read the Brave profile selection; browser status is unknown."
     return 0
   fi
-
-  if brew list --cask google-chrome >/dev/null 2>&1; then
-    ok "Google Chrome stable is installed"
-  else
-    warn "Google Chrome stable is selected but not installed; rerun update-all."
+  local brave_script
+  brave_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/executable_groundwork-brave-browser"
+  if [[ ! -f "$brave_script" ]]; then
+    brave_script="$HOME/.local/bin/groundwork-brave-browser"
   fi
-  if brew list --cask google-chrome@beta >/dev/null 2>&1; then
-    note "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
+  if [[ ! -f "$brave_script" ]]; then
+    warn "groundwork-brave-browser is not installed, so Brave status is unknown."
+    return 0
   fi
-  note "Groundwork installs Google Chrome stable but does not change the macOS default-browser association."
+  GROUNDWORK_BRAVE_PASSWORD_MANAGER="$password_manager" \
+    GROUNDWORK_BRAVE_HEADLESS="$brave_headless" \
+    GROUNDWORK_BRAVE_PLATFORM=Darwin \
+    /bin/bash "$brave_script" --doctor
 }
 
 docker_section() {

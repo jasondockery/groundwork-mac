@@ -28,9 +28,9 @@ Usage:
 
 Postures:
   current   Latest stable release of each application. The default.
-            Desktop Macs install Google Chrome stable.
+            Desktop Macs install Brave.
   preview   Pre-release posture for families that have a preview channel.
-            The managed browser stays Google Chrome stable.
+            The managed browser stays Brave.
             Expect occasional breakage where a preview channel is selected.
 
 Fixed in every profile, and not settable here:
@@ -111,7 +111,7 @@ xcode={{ if and (hasKey . "xcode") .xcode }}true{{ else }}false{{ end }}
 local_inference={{ if and (hasKey . "local_inference") (kindIs "bool" .local_inference) .local_inference }}true{{ else }}false{{ end }}
 local_inference_applies={{ if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") }}true{{ else }}false{{ end }}
 stored_beta={{ if and (hasKey . "beta") .beta }}true{{ else }}false{{ end }}
-browser="Google Chrome stable"
+browser="Brave"
 if [[ "$headless" == "true" ]]; then
   browser="none (headless)"
 fi

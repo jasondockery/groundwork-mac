@@ -146,7 +146,7 @@ fields_kind=(posture role multiplexer bool docker pw keyrepeat string string str
 fields_clear=(no no no no no no no no no no yes no no no yes yes no no no no)
 
 posture_values=(current preview)
-posture_labels=("Stable channels (managed browser: Google Chrome stable)" "Preview channels (managed browser stays Google Chrome stable)")
+posture_labels=("Stable channels (managed browser: Brave)" "Preview channels (managed browser stays Brave)")
 role_values=(personal disposable)
 role_labels=("Personal" "Disposable")
 pw_values=(bitwarden 1password none)
@@ -523,6 +523,23 @@ apply_changes() {
   return "$rc"
 }
 
+# Ask once, before the menu or a focused posture change, and only when the
+# Brave command is installed. A missing command leaves existing configure
+# tests and a not-yet-applied checkout unchanged.
+offer_brave_default() {
+  local brave_cmd="$HOME/.local/bin/groundwork-brave-browser" rc=0
+  [[ -x "$brave_cmd" ]] || return 0
+  "$brave_cmd" --offer-default || rc=$?
+  if [[ "$rc" -eq 130 ]]; then
+    echo "Cancelled; nothing changed."
+    exit 130
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    echo "groundwork-configure: the Brave default-browser offer did not finish." >&2
+    exit "$rc"
+  fi
+}
+
 # Normalize a legacy or hand-edited impossible state transparently. The change
 # remains pending until the user reviews the receipt and confirms it.
 if [[ "$(current_value xcode)" != "true" && "$(current_value beta)" == "true" ]]; then
@@ -551,6 +568,7 @@ fi
 if [[ "$retired_work_managed" == "true" ]]; then
   echo "Retired work-managed setting ignored; this Mac uses the common setup."
 fi
+offer_brave_default
 
 # --- focused shortcut or main menu loop ---
 if [[ -n "$target_posture" ]]; then

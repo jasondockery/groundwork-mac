@@ -526,17 +526,16 @@ done nor lost in review prose.
       `sha256 :no_check`), so no unchecked "fast lane" exists and no
       `groundwork-ai-update` split is warranted. An earlier unscoped
       `--greedy-latest` was a no-op and removed; the current exact-token lane is
-      a separately proved contract. The official Chrome stable cask genuinely
-      ships `sha256 :no_check` (Google's updater owns the binary): it stays OUT
-      of the checksum-safe Brewfile. Every desktop Mac posture renders that one
-      cask into `Brewfile.browser`, the bounded lane installs it only after the
-      checksummed bundle succeeds, and failure makes the next apply retry.
-      Chrome Beta is not selected. An existing Beta install is not removed by
+      a separately proved contract. Brave is the managed desktop browser. Its
+      cask is checksummed, so it lives in the main Brewfile, and Sparkle owns
+      later updates. The earlier Chrome no-checksum exception lane is retired.
+      Chrome is not selected. An existing Chrome install is not removed by
       Groundwork. The obsolete setup opt-in remains ignored compatibility input
       rather than a rendering failure.
-      `scripts/audit-brew-casks` enforces both invariants across every
-      conditional profile (work, password manager, game-dev) and self-audits
-      the exception — it is a required macOS CI job, not a manual habit.
+      `scripts/audit-brew-casks` enforces the checksum rule across every
+      conditional profile (work, password manager, game-dev) and checks that
+      desktop profiles select Brave. It is a required macOS CI job, not a
+      manual habit.
 - [ ] Homebrew release-age floor (the one real remaining gap): Homebrew has no
       `minimumReleaseAge` equivalent, so formula/cask upgrades still take
       whatever is published — including the deliberately fast

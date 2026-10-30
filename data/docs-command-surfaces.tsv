@@ -135,6 +135,7 @@ Ctrl+R	key	shell-binding	all	all	atuin	shell.html
 atuin ai inline	command	external-command	all	all	atuin	shell.html
 defaultbrowser	command	external-command	macos	desktop	-	apps.html
 browser-extensions [--open]	command	executable	macos	desktop	-	apps.html
+groundwork-brave-browser	command	executable	macos	desktop	-	apps.html
 raycast-extensions [--open]	command	executable	macos	desktop	raycast	apps.html
 betterdisplaycli	command	external-command	macos	desktop	betterdisplay	apps.html
 open -a <App>	command	external-command	macos	desktop	-	apps.html

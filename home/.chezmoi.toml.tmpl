@@ -53,8 +53,8 @@ question text always matches the real one. */ -}}
 {{- $signingKey := promptStringOnce . "signingkey" "What SSH public key should Git use for signing (leave blank to skip)" "" -}}
 {{- $obsidianVault := promptStringOnce . "obsidian_vault_name" "What should the Obsidian vault be named (leave blank to skip)" "my_obsidian_vault" -}}
 {{- /* Browser migration compatibility. `install_chrome` used to gate an
-unchecked opt-in. Every desktop Mac now installs Chrome stable, and release
-posture does not change that choice, so the field is intentionally ignored.
+unchecked opt-in. Desktop Macs now install Brave, and release posture does
+not change that choice, so the field is intentionally ignored.
 Carry an existing value through unchanged until a deliberate schema migration
 removes it; never make an older config fail or silently rewrite unrelated
 answers. */ -}}
