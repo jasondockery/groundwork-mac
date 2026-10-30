@@ -4285,9 +4285,11 @@ EOF
   # exist in that branch.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
     "$update_all_fixture/darwin-runner"
+  # The common Mac setup uses Colima. Pass that backend explicitly. A retired
+  # work-managed profile is not a separate render.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
-    "$update_all_fixture/darwin-work-runner" true false false false bitwarden \
-    work-managed managed current
+    "$update_all_fixture/darwin-work-runner" false false false false bitwarden \
+    personal-current personal current colima
   chmod +x "$update_all_fixture/darwin-runner" \
     "$update_all_fixture/darwin-work-runner"
   cat >"$update_all_bin/groundwork-apps-start" <<'SH'
@@ -10569,12 +10571,34 @@ PYTHON
     || fail "a fresh personal install must seed personal-current without another prompt"
   grep -qF 'release_posture = "current"' <<<"$preset_out" \
     || fail "a fresh install must default to stable/current release posture"
+  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
+    || fail "a fresh install must use the personal role"
   preset_out="$(_profile_render '{"work":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
-    || fail "fresh work profile did not render"
-  grep -qF 'profile_preset = "work-managed"' <<<"$preset_out" \
-    || fail "a fresh work install must seed work-managed from the work answer"
+    || fail "a stored work flag must still render"
+  grep -qF 'profile_preset = "personal-current"' <<<"$preset_out" \
+    || fail "a stored work flag must seed the common personal-current profile"
+  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
+    || fail "a stored work flag must not select a managed role"
   grep -qF 'release_posture = "current"' <<<"$preset_out" \
-    || fail "a fresh work install must default to stable/current release posture"
+    || fail "a stored work flag must keep the stable/current release posture"
+  grep -qF 'personal_apps = true' <<<"$preset_out" \
+    || fail "a stored work flag must keep the common personal-apps setup"
+  grep -qF 'work_extensions = false' <<<"$preset_out" \
+    || fail "a stored work flag must not enable the old infrastructure-extension seed"
+  grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' <<<"$preset_out" \
+    || fail "a stored work flag must record the one-line retirement notice"
+  grep -qF 'work = false' <<<"$preset_out" \
+    || fail "a stored work flag must be written back as false once migrated"
+  ! grep -qF 'work = true' <<<"$preset_out" \
+    || fail "a migrated config must not keep work = true"
+  preset_out="$(_profile_render '{"work":false,"personal_apps":false,"work_extensions":true,"git_identity":"work","chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
+    || fail "a migrated config must still render"
+  grep -qF 'personal_apps = false' <<<"$preset_out" \
+    || fail "a migrated config must keep an explicit personal_apps choice"
+  grep -qF 'work_extensions = true' <<<"$preset_out" \
+    || fail "a migrated config must keep an explicit work_extensions choice"
+  ! grep -qF 'Retired work-managed setting ignored' <<<"$preset_out" \
+    || fail "a migrated config must not repeat the retirement notice"
   preset_out="$(_profile_render '{"work":false,"profile_preset":"personal-preview","release_posture":"preview","xcode":true,"beta":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
     || fail "stored preview preferences did not render"
   grep -qF 'profile_preset = "personal-preview"' <<<"$preset_out" \
@@ -10865,8 +10889,8 @@ KRXS
     || fail "groundwork-configure must expose independent posture/role and dependent Xcode beta settings"
   grep -qE '^fields_kind=\(posture role multiplexer bool docker ' "$gc_bin" \
     || fail "release posture, environment role, terminal multiplexer, and Xcode beta must use the matching guarded field types"
-  grep -qE '^role_values=\(personal managed disposable\)$' "$gc_bin" \
-    || fail "groundwork-configure must keep every supported environment role reachable"
+  grep -qE '^role_values=\(personal disposable\)$' "$gc_bin" \
+    || fail "groundwork-configure must offer personal and disposable, and no managed role"
   grep -qF 'pending_origin=()' "$gc_bin" \
     || fail "groundwork-configure must distinguish user and dependency-created pending changes"
   assert_no_matches "profile_preset is bootstrap history, not a live settings master" \
@@ -11076,7 +11100,7 @@ EOF
     }
     # Accept: only posture moves. Preset and independently stored role survive.
     gc_focus_accept="$gc_focus/accept"
-    write_gc_focus_config "$gc_focus_accept" current false false managed
+    write_gc_focus_config "$gc_focus_accept" current false false disposable
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_accept")"
     await_gc_output "$gc_focus_sock" "$gc_focus_accept/out" \
       'Preview the dotfiles this would change?' 1 \
@@ -11094,7 +11118,7 @@ EOF
       "focused release-posture receipt included an unselected independent field"
     grep -qF 'release_posture = "preview"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "accepted focused transaction did not persist preview posture"
-    grep -qF 'environment_role = "managed"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
+    grep -qF 'environment_role = "disposable"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "focused posture change rewrote the independent environment role"
     grep -qF 'profile_preset = "personal-current"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "focused posture change rewrote the bootstrap preset history"
@@ -11106,7 +11130,7 @@ EOF
     )"
     render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl \
       "$gc_focus_accept/Brewfile.browser" false false false false bitwarden \
-      personal-current managed "$gc_focus_accept_posture"
+      personal-current disposable "$gc_focus_accept_posture"
     grep -qx 'cask "google-chrome"' "$gc_focus_accept/Brewfile.browser" \
       || fail "accepted preview posture did not keep Chrome stable for the immediate apply"
     assert_not_contains 'google-chrome@beta' "$gc_focus_accept/Brewfile.browser" \
@@ -11114,7 +11138,7 @@ EOF
 
     # Already-active posture is a true no-op: no receipt, preview, or apply.
     gc_focus_noop="$gc_focus/noop"
-    write_gc_focus_config "$gc_focus_noop" preview false false managed
+    write_gc_focus_config "$gc_focus_noop" preview false false disposable
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_noop")"
     await_gc_output "$gc_focus_sock" "$gc_focus_noop/out" 'No changes to apply.' 1 \
       "focused no-op transaction did not finish within ten seconds"
@@ -11367,9 +11391,9 @@ EOF
       "role-change transaction did not reach the settings menu within ten seconds"
     tmux -L "$gc_focus_sock" send-keys -t 0 "$gc_role_index" Enter
     await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
-      'Choose 1-3 (Enter keeps current)' 1 \
+      'Choose 1-2 (Enter keeps current)' 1 \
       "role-change transaction did not reach the role choice within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 3 Enter
+    tmux -L "$gc_focus_sock" send-keys -t 0 2 Enter
     await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
       'Choose a setting to change' 2 \
       "role-change transaction did not return to the settings menu within ten seconds"
@@ -12329,13 +12353,13 @@ EOF
   diff -u "$browser_current" "$browser_preview" \
     || fail "Personal Preview changed the managed browser away from Chrome stable"
   diff -u "$browser_current" "$browser_managed" \
-    || fail "Work Managed changed the managed browser away from Chrome stable"
+    || fail "a retired work-managed config changed the managed browser away from Chrome stable"
   assert_not_contains 'google-chrome@beta' "$browser_current" \
     "a desktop browser manifest selected Chrome Beta"
   assert_not_contains 'google-chrome@beta' "$browser_preview" \
     "Personal Preview selected Chrome Beta"
   assert_not_contains 'google-chrome@beta' "$browser_managed" \
-    "Work Managed selected Chrome Beta"
+    "a retired work-managed config selected Chrome Beta"
   assert_not_contains '^cask ' "$browser_headless" \
     "a headless Mac selected a GUI browser"
 
@@ -17233,22 +17257,41 @@ EOF
   # together, right here, rather than in separate places that can drift apart.
   grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
     || fail "groundwork-configure must own mutable role/release preferences and preserve existing baseline settings"
-  # Role and posture are stored separately from the preset PRECISELY so they can
-  # diverge (specs/environment-profiles-and-release-posture.md): a managed
-  # machine may take preview posture without becoming personal. Deriving them on
-  # every render silently reverted a hand-edited posture, so prove independence.
+  # Role and posture are stored separately from the preset so a disposable
+  # machine can take current posture without becoming personal. A retired
+  # managed role migrates to personal and keeps an independent preview posture.
   interview_role_in="$out_dir/interview-role.toml"
   interview_role_out="$out_dir/interview-role-rendered.toml"
   sed 's/profile_preset = "personal-preview"/profile_preset = "work-managed"/' "$interview_in" >"$interview_role_in"
-  printf '    environment_role = "managed"\n    release_posture = "preview"\n' >>"$interview_role_in"
+  printf '    environment_role = "managed"\n    release_posture = "preview"\n    personal_apps = false\n    work_extensions = true\n' >>"$interview_role_in"
   chezmoi --config "$interview_role_in" --source "$repo/home" \
     --persistent-state "$out_dir/interview-role-state.boltdb" --cache "$out_dir/interview-role-cache" \
     init --config-path "$interview_role_out" </dev/null \
-    || fail "the chezmoi interview could not regenerate a divergent role/posture config"
-  grep -qF 'environment_role = "managed"' "$interview_role_out" \
-    || fail "a stored environment_role must survive regeneration, not be re-derived from the preset"
+    || fail "the chezmoi interview failed on a retired work-managed config"
+  grep -qF 'environment_role = "personal"' "$interview_role_out" \
+    || fail "a stored managed role must migrate to personal"
+  grep -qF 'profile_preset = "personal-current"' "$interview_role_out" \
+    || fail "a stored work-managed preset must migrate to personal-current"
   grep -qF 'release_posture = "preview"' "$interview_role_out" \
-    || fail "a stored release_posture must survive regeneration so it can diverge from the preset"
+    || fail "migrating a retired role must keep an independent preview posture"
+  grep -qF 'personal_apps = true' "$interview_role_out" \
+    || fail "the retired work seed must turn personal apps back on"
+  grep -qF 'work_extensions = false' "$interview_role_out" \
+    || fail "the retired work seed must turn infrastructure extensions off"
+  grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' "$interview_role_out" \
+    || fail "a retired work-managed config must record the one-line notice"
+  interview_disposable_in="$out_dir/interview-disposable.toml"
+  interview_disposable_out="$out_dir/interview-disposable-rendered.toml"
+  cp "$interview_in" "$interview_disposable_in"
+  printf '    environment_role = "disposable"\n    release_posture = "current"\n' >>"$interview_disposable_in"
+  chezmoi --config "$interview_disposable_in" --source "$repo/home" \
+    --persistent-state "$out_dir/interview-disposable-state.boltdb" --cache "$out_dir/interview-disposable-cache" \
+    init --config-path "$interview_disposable_out" </dev/null \
+    || fail "the chezmoi interview could not regenerate a disposable role"
+  grep -qF 'environment_role = "disposable"' "$interview_disposable_out" \
+    || fail "a stored disposable role must survive regeneration"
+  grep -qF 'release_posture = "current"' "$interview_disposable_out" \
+    || fail "a stored current posture must survive regeneration beside a disposable role"
   interview_posture_in="$out_dir/interview-posture.toml"
   interview_posture_out="$out_dir/interview-posture-rendered.toml"
   cp "$interview_in" "$interview_posture_in"
@@ -17265,7 +17308,7 @@ EOF
   grep -qF 'environment_role = "personal"' "$interview_out" \
     || fail "an unstored environment_role must be seeded from the preset"
   # groundwork-profile must not send a posture-only change through the preset:
-  # that would move environment_role too and turn a managed machine personal.
+  # that would move environment_role too.
   assert_no_matches "groundwork-profile must not route a posture change through profile_preset" \
     rg -n 'Environment profile  ->|set profile_preset' home/dot_local/bin/executable_groundwork-profile.tmpl
   assert_no_matches "groundwork-profile must not tell users to set release_posture through a promptChoice that does not exist" \
@@ -18049,18 +18092,24 @@ PY
   check "rendered shell template ShellCheck matrix"
   run_shellcheck "${rendered_shell_scripts[@]}"
 
-  check "rendered work macOS profile"
+  check "rendered retired work flag uses the common Mac setup"
   mkdir -p "$out_dir/darwin-work"
   render darwin false arm64 home/.chezmoiignore "$out_dir/darwin-work/chezmoiignore" true
   render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-work/Brewfile" true
-  assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" "Karabiner was ignored on work macOS"
+  assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" \
+    "Karabiner was ignored for a stored work flag"
   grep -q '^cask "karabiner-elements"$' "$out_dir/darwin-work/Brewfile"
   grep -q '^brew "colima"$' "$out_dir/darwin-work/Brewfile"
+  grep -q '^cask "appcleaner"' "$out_dir/darwin-work/Brewfile" \
+    || fail "a stored work flag dropped the common personal apps"
+  grep -q '^cask "obsidian"' "$out_dir/darwin-work/Brewfile" \
+    || fail "a stored work flag dropped Obsidian from the common Mac setup"
   assert_not_contains '^tap |^(brew|cask) "[^"]*/' "$out_dir/darwin-work/Brewfile" \
-    "a third-party tap entered the work Brewfile — the docs promise Groundwork adds none"
-  assert_not_contains '^cask "docker-desktop"$' "$out_dir/darwin-work/Brewfile" "Docker Desktop leaked into work macOS"
-  assert_not_contains '^cask "appcleaner"' "$out_dir/darwin-work/Brewfile" "AppCleaner leaked into work macOS"
-  assert_not_contains '^mas "Xcode"' "$out_dir/darwin-work/Brewfile" "Xcode leaked into default work macOS"
+    "a third-party tap entered the Brewfile for a stored work flag"
+  assert_not_contains '^cask "docker-desktop"$' "$out_dir/darwin-work/Brewfile" \
+    "Docker Desktop replaced Colima for a stored work flag"
+  assert_not_contains '^mas "Xcode"' "$out_dir/darwin-work/Brewfile" \
+    "Xcode leaked into the default Mac setup"
 
   check "rendered Xcode macOS profile"
   mkdir -p "$out_dir/darwin-no-xcode" "$out_dir/darwin-xcode" "$out_dir/darwin-legacy-no-xcode"
@@ -18573,10 +18622,11 @@ EOF
   render_profile current false false "$profile_dir/xcode-beta" personal personal-current true true
   render_profile current false false "$profile_dir/xcode-beta-inactive" personal personal-current false true
 
-  # The role is derived from the existing `work` answer, never asked twice.
-  # Role is stored, not derived: a bool could not express three roles.
+  # Role is stored, not derived from the retired work flag. A retired managed
+  # role or work-managed preset renders as personal and records the notice.
   grep -q '^role="personal"' "$profile_dir/personal-current"
-  grep -q '^role="managed"' "$profile_dir/managed"
+  grep -q '^role="personal"' "$profile_dir/managed"
+  grep -q '^retired_work_managed=true' "$profile_dir/managed"
   grep -q '^role="disposable"' "$profile_dir/disposable"
   grep -q '^posture="preview"' "$profile_dir/personal-preview"
 
@@ -18605,10 +18655,12 @@ STUB
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Xcode beta        disabled'
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Release posture   current'
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Multiplexer       herdr'
-  profile_out "$profile_dir/managed" show | grep -Fq 'Role              managed'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Role              personal'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Retired work-managed setting ignored; this Mac uses the common setup.'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Bootstrap seed    personal-current'
   profile_out "$profile_dir/disposable" show | grep -Fq 'Role              disposable'
-  # A managed machine must say policy outranks the profile, never imply a bypass.
-  profile_out "$profile_dir/managed" show | grep -Fq 'never works around policy'
+  # Device policy still outranks the profile on every Mac. That is not a role.
+  profile_out "$profile_dir/personal-current" show | grep -Fq 'does not work around it'
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Bootstrap seed    personal-current'
   profile_out "$profile_dir/headless" show | grep -Fq 'no desktop apps, so posture has no effect'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'AI tools (no intentional release delay)'
@@ -18731,7 +18783,8 @@ SH
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
     'google-chrome')"
-  grep -qF 'device policy outrank this selection' <<<"$browser_doctor_out"
+  assert_not_contains 'device policy outrank this selection' <(printf '%s\n' "$browser_doctor_out") \
+    "a retired managed role must not get a special doctor note"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \

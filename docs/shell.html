@@ -335,10 +335,10 @@
       </div>
 
       <h3 id="disk-browse">Browse disk usage visually</h3>
-      <p><code>largest</code> gives a ranked list. When you want to walk around instead, use <code>ncdu</code> in any terminal (macOS, Linux, and WSL), or GrandPerspective on a personal desktop Mac. Both ship with their upstream defaults; Groundwork changes none of their settings.</p>
+      <p><code>largest</code> gives a ranked list. When you want to walk around instead, use <code>ncdu</code> in any terminal (macOS, Linux, and WSL), or GrandPerspective on a desktop Mac. Turn optional personal apps off in <code>groundwork-configure</code> to skip GrandPerspective. Both ship with their upstream defaults; Groundwork changes none of their settings.</p>
       <table class="keytable">
         <tr><td><code>ncdu -x ~</code></td><td>Scan your home folder on one filesystem, then use the arrow keys or <kbd>Enter</kbd> to open folders, <kbd>?</kbd> for help, and <kbd>q</kbd> to quit. Its delete key asks before removing anything; the guidance above still applies.</td></tr>
-        <tr><td><strong>GrandPerspective</strong></td><td>A treemap: each rectangle is a file, sized by how much space it uses. Open a folder from its window and hover to see paths. It is installed from the optional Brewfile on personal desktop Macs; managed Macs keep the terminal tools only.</td></tr>
+        <tr><td><strong>GrandPerspective</strong></td><td>A treemap: each rectangle is a file, sized by how much space it uses. Open a folder from its window and hover to see paths. It is installed from the optional Brewfile on desktop Macs. Turn optional personal apps off in <code>groundwork-configure</code> to skip it.</td></tr>
       </table>
 
       <h3 id="disk-clean">groundwork-disk-clean: one place to free tool-owned space</h3>

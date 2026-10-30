@@ -24,8 +24,10 @@ class CommonSetupTests(unittest.TestCase):
                          headless=False, terminal_multiplexer="herdr", key_repeat="fast",
                          chezmoi=dict(os="darwin", arch="arm64", osRelease={"ID": "ubuntu"}))
 
-    def render(self, path, init=False, **data):
+    def render(self, path, init=False, omit=(), **data):
         effective = dict(self.data, **data)
+        for key in omit:
+            effective.pop(key, None)
         command = ["chezmoi", "--config", str(self.config), "--source", str(REPO),
                    "--override-data", json.dumps(effective), "execute-template"]
         if init:
@@ -53,7 +55,7 @@ class CommonSetupTests(unittest.TestCase):
                                 self.assertIn('brew "colima"', source)
                                 self.assertNotIn('cask "docker-desktop"', source)
                             if platform == "darwin" and not headless:
-                                for line in ('cask "chatgpt"', 'cask "claude"', 'cask "cursor"'):
+                                for line in ('cask "chatgpt"', 'cask "claude"', 'cask "cursor"', 'cask "obsidian"'):
                                     self.assertIn(line, source)
                             if headless:
                                 for app in ("chatgpt", "claude", "cursor", "docker-desktop"):
@@ -893,8 +895,104 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         data = tomllib.loads(result.stdout)["data"]
         self.assertEqual({key: data[key] for key in ("docker_backend", "personal_apps", "work_extensions", "git_identity")},
                          dict(docker_backend="none", personal_apps=True, work_extensions=False, git_identity="personal"))
-        self.assertTrue(data["work"])
+        self.assertFalse(data["work"])
+        self.assertEqual(data["environment_role"], "personal")
+        self.assertEqual(data["profile_preset"], "personal-current")
         self.assertEqual(data["release_posture"], "preview")
+        self.assertIn("Retired work-managed setting ignored; this Mac uses the common setup.", result.stdout)
+
+    def test_retired_work_managed_seed_migrates_without_failing(self):
+        result = self.render(
+            "home/.chezmoi.toml.tmpl", init=True, work=True,
+            personal_apps=False, work_extensions=True, git_identity="work",
+            environment_role="managed", profile_preset="work-managed",
+            release_posture="preview",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Retired work-managed setting ignored; this Mac uses the common setup.", result.stdout)
+        data = tomllib.loads(result.stdout)["data"]
+        self.assertEqual(data["environment_role"], "personal")
+        self.assertEqual(data["profile_preset"], "personal-current")
+        self.assertEqual(data["release_posture"], "preview")
+        self.assertTrue(data["personal_apps"])
+        self.assertFalse(data["work_extensions"])
+        self.assertFalse(data["work"])
+        self.assertEqual(data["git_identity"], "work")
+
+        divergent = self.render(
+            "home/.chezmoi.toml.tmpl", init=True, work=True,
+            personal_apps=False, work_extensions=False,
+        )
+        self.assertEqual(divergent.returncode, 0, divergent.stderr)
+        divergent_data = tomllib.loads(divergent.stdout)["data"]
+        self.assertFalse(divergent_data["personal_apps"])
+        self.assertFalse(divergent_data["work_extensions"])
+
+        fresh = self.render("home/.chezmoi.toml.tmpl", init=True, work=False)
+        self.assertEqual(fresh.returncode, 0, fresh.stderr)
+        self.assertNotIn("Retired work-managed setting ignored", fresh.stdout)
+        fresh_data = tomllib.loads(fresh.stdout)["data"]
+        self.assertEqual(fresh_data["environment_role"], "personal")
+        self.assertEqual(fresh_data["profile_preset"], "personal-current")
+        self.assertFalse(fresh_data["work"])
+
+        git = self.text("home/dot_gitconfig.tmpl", work=True)
+        self.assertIn("email = work@example.com", git)
+
+    def test_migrated_work_flag_does_not_revert_later_choices(self):
+        first = self.render("home/.chezmoi.toml.tmpl", init=True, work=True,
+                            personal_apps=False, work_extensions=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        migrated = tomllib.loads(first.stdout)["data"]
+        self.assertFalse(migrated["work"])
+        self.assertEqual(migrated["git_identity"], "work")
+        second = self.render("home/.chezmoi.toml.tmpl", init=True,
+                             **{**migrated, "personal_apps": False, "work_extensions": True})
+        self.assertEqual(second.returncode, 0, second.stderr)
+        data = tomllib.loads(second.stdout)["data"]
+        self.assertFalse(data["personal_apps"])
+        self.assertTrue(data["work_extensions"])
+        self.assertFalse(data["work"])
+        self.assertNotIn("Retired work-managed setting ignored", second.stdout)
+
+    def test_retired_work_flag_keeps_the_work_git_email(self):
+        implied = self.render("home/.chezmoi.toml.tmpl", init=True, work=True)
+        self.assertEqual(implied.returncode, 0, implied.stderr)
+        implied_data = tomllib.loads(implied.stdout)["data"]
+        self.assertEqual(implied_data["git_identity"], "work")
+        self.assertFalse(implied_data["work"])
+        git = self.text("home/dot_gitconfig.tmpl", work=True)
+        self.assertIn("email = work@example.com", git)
+
+        explicit = self.render(
+            "home/.chezmoi.toml.tmpl", init=True, work=True, git_identity="personal",
+        )
+        self.assertEqual(explicit.returncode, 0, explicit.stderr)
+        self.assertEqual(tomllib.loads(explicit.stdout)["data"]["git_identity"], "personal")
+        git = self.text("home/dot_gitconfig.tmpl", work=True, git_identity="personal")
+        self.assertIn("email = ci@example.com", git)
+        self.assertNotIn("email = work@example.com", git)
+
+        blank = self.render("home/.chezmoi.toml.tmpl", init=True, work=True, email_work="")
+        self.assertEqual(blank.returncode, 0, blank.stderr)
+        self.assertEqual(tomllib.loads(blank.stdout)["data"]["git_identity"], "work")
+        git = self.text("home/dot_gitconfig.tmpl", work=True, email_work="")
+        self.assertIn("email = ci@example.com", git)
+        self.assertNotIn("email = work@example.com", git)
+
+        missing = self.render("home/dot_gitconfig.tmpl", work=True, omit=("email_work",))
+        self.assertEqual(missing.returncode, 0, missing.stderr)
+        self.assertIn("email = ci@example.com", missing.stdout)
+        self.assertNotIn("email = work@example.com", missing.stdout)
+
+        fresh = self.render("home/.chezmoi.toml.tmpl", init=True, work=False)
+        self.assertEqual(fresh.returncode, 0, fresh.stderr)
+        self.assertEqual(tomllib.loads(fresh.stdout)["data"]["git_identity"], "personal")
+        role_only = self.render(
+            "home/.chezmoi.toml.tmpl", init=True, work=False, environment_role="managed",
+        )
+        self.assertEqual(role_only.returncode, 0, role_only.stderr)
+        self.assertEqual(tomllib.loads(role_only.stdout)["data"]["git_identity"], "personal")
 
     def test_invalid_preferences_fail_before_rendering_a_manifest(self):
         for values in (dict(docker_backend="typo"), dict(personal_apps="false"), dict(git_identity="typo")):

@@ -34,10 +34,10 @@ tap "bjarneo/cliamp"
 brew "cliamp"
 {{- end }}
 {{ if and (eq .chezmoi.os "darwin") (not $headless) (get $developer "personal_apps") -}}
-# GrandPerspective: visual disk-usage map beside `largest` and ncdu on personal
-# desktop Macs. Optional because nothing depends on it and its cask requires
-# macOS 14 or newer, so an older Mac reports it and the update still succeeds.
-# Managed Macs keep the terminal tools only; install it yourself if you want it.
+# GrandPerspective: visual disk-usage map beside `largest` and ncdu on desktop
+# Macs. Optional because nothing depends on it and its cask requires macOS 14
+# or newer, so an older Mac reports it and the update still succeeds. Turn
+# optional personal apps off in groundwork-configure to skip it.
 cask "grandperspective"
 {{- end }}
 {{ if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") $localInference -}}

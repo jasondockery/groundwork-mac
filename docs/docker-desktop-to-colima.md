@@ -1,8 +1,8 @@
 # Move from Docker Desktop to Colima on macOS
 
-Groundwork recommends Colima with the Docker CLI on personal and managed Macs. It gives developers and coding agents the same inspectable container workflow on both. Docker Desktop remains an explicit alternative when its integrations are required. This guide is the single migration procedure for the Groundwork family. Native Linux, Omarchy, and WSL use their own container runtime; Apple hardware running Linux does not need a macOS VM manager.
+Groundwork recommends Colima with the Docker CLI on every Mac. It gives developers and coding agents one inspectable container workflow. Docker Desktop remains an explicit alternative when its integrations are required. This guide is the single migration procedure for the Groundwork family. Native Linux, Omarchy, and WSL use their own container runtime. Apple hardware running Linux does not need a macOS VM manager.
 
-Installing the new default does not transfer existing workloads. A Docker **context** selects an engine; each engine has its own containers, images, named volumes, and build cache. Keep Docker Desktop available until you have verified the replacement. Device policy takes precedence on managed Macs.
+Installing the new default does not transfer existing workloads. A Docker **context** selects an engine; each engine has its own containers, images, named volumes, and build cache. Keep Docker Desktop available until you have verified the replacement. Device policy takes precedence when an organization manages the Mac.
 
 ## Choose the work your situation needs
 
