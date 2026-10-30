@@ -2,6 +2,7 @@
 """git-filter-repo is opt-in, per-user, proven by its help text, and never rewrites history."""
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -43,6 +44,11 @@ class GitFilterRepoTests(unittest.TestCase):
         self.config.write_text("", encoding="utf-8")
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # Private PATH: a host pipx or git-filter-repo must never be reached.
+        for tool in ("bash", "grep", "cat", "env"):
+            found = shutil.which(tool)
+            self.assertTrue(found, tool)
+            (self.bin / tool).symlink_to(found)
         self.home = self.root / "home"
         self.home.mkdir()
         self.log = self.root / "log"
@@ -80,7 +86,7 @@ class GitFilterRepoTests(unittest.TestCase):
             self.install_fake("pipx", FAKE_PIPX)
         env = {
             "HOME": str(self.home),
-            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "PATH": str(self.bin),
             "FAKE_LOG": str(self.log),
             "FAKE_STATE": str(self.state),
             "FAKE_HELP": help_text,
