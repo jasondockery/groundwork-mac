@@ -477,6 +477,27 @@ stop_copylast_control_clients() {
   copylast_control_pids=()
 }
 
+# TERM a process and every descendant. Descendants are collected before any
+# signal so a parent cannot respawn between listing and killing, and the tree is
+# signalled directly instead of relying on a shared process group.
+terminate_process_tree() {
+  local root="$1" pid
+  local -a tree=("$root") queue=("$root") children=()
+  while [[ "${#queue[@]}" -gt 0 ]]; do
+    pid="${queue[0]}"
+    queue=("${queue[@]:1}")
+    children=()
+    while IFS= read -r child_pid; do
+      [[ -n "$child_pid" ]] && children+=("$child_pid")
+    done < <(pgrep -P "$pid" 2>/dev/null || true)
+    if [[ "${#children[@]}" -gt 0 ]]; then
+      tree+=("${children[@]}")
+      queue+=("${children[@]}")
+    fi
+  done
+  kill -TERM "${tree[@]}" 2>/dev/null || true
+}
+
 report_and_cleanup() {
   local status="${1:-0}" failed_line="${2:-unknown}" failed_command="${3:-unknown}"
   local reason title validation_finished_epoch total_duration platform_name
@@ -491,6 +512,17 @@ report_and_cleanup() {
     finish_current_check_timing passed
   else
     finish_current_check_timing failed
+  fi
+  if [[ -n "${update_maintenance_pid:-}" ]]; then
+    # The suite ended (failure, signal, or deadline) while the concurrent
+    # maintenance group was still running. Stop its whole subtree, then keep its
+    # evidence: replay its held output and merge its timing rows before the
+    # temporary directory is removed.
+    terminate_process_tree "$update_maintenance_pid"
+    wait "$update_maintenance_pid" 2>/dev/null || true
+    update_maintenance_pid=""
+    cat "$update_maintenance_log" >&2 2>/dev/null || true
+    cat "$update_maintenance_rows" >>"$timing_rows" 2>/dev/null || true
   fi
   stop_copylast_control_clients
   if [[ -n "${copylast_socket:-}" ]]; then
@@ -1330,7 +1362,68 @@ PY
   scripts/test-aggregate-ci-receipts
 }
 
+# The groundwork-cleanup and groundwork-pnpm-store-tidy runtime checks own a
+# private fixture root, define every helper they use, and share no state with the
+# rest of the update suite. validate_update runs them in a concurrent subshell:
+# the checks keep their names and per-check timing rows (written to a private
+# file and merged at the join), their output is held and replayed at the join,
+# and a failure fails the suite exactly as a serial one would. The subshell
+# shares the suite's process group, so the hard deadline still bounds it.
+# A backgrounded subshell has SIGINT ignored and inherits no job control, so no
+# test that needs a real INT delivered may live in this group; keep such cases
+# in the serial part of the suite.
+update_maintenance_pid=""
+update_maintenance_rows=""
+update_maintenance_log=""
+
+update_maintenance_record_exit() {
+  local status="$1"
+  [[ "$status" -eq 0 ]] \
+    || finish_current_check_timing failed "${fail_reason:-line exited $status}"
+}
+
+start_update_maintenance_group() {
+  update_maintenance_rows="$out_dir/update-maintenance-timings.tsv"
+  update_maintenance_log="$out_dir/update-maintenance.log"
+  : >"$update_maintenance_rows"
+  : >"$update_maintenance_log"
+  (
+    # shellcheck disable=SC2030 # The subshell deliberately records into its own rows file.
+    timing_rows="$update_maintenance_rows"
+    current_check_active=0
+    trap 'exit 143' TERM
+    trap 'update_maintenance_record_exit "$?"' EXIT
+    validate_update_maintenance_group
+    finish_current_check_timing passed
+  ) >"$update_maintenance_log" 2>&1 &
+  update_maintenance_pid=$!
+}
+
+join_update_maintenance_group() {
+  local status=0 failed_name
+  [[ -n "$update_maintenance_pid" ]] || return 0
+  finish_current_check_timing passed
+  # Attribute a deadline or signal during the wait to the group, not to the last
+  # serial check. The group's own checks carry the real timing rows.
+  current_check="update maintenance group"
+  current_check_started_epoch="$(date +%s)"
+  current_check_active=1
+  wait "$update_maintenance_pid" || status=$?
+  current_check_active=0
+  update_maintenance_pid=""
+  cat "$update_maintenance_log"
+  # shellcheck disable=SC2031 # The subshell's own rows file is merged back here.
+  cat "$update_maintenance_rows" >>"$timing_rows"
+  if [[ "$status" -ne 0 ]]; then
+    failed_name="$(awk -F '\t' '$3 == "failed" { print $1; exit }' "$update_maintenance_rows")"
+    current_check="${failed_name:-update maintenance group}"
+    fail "the concurrent update maintenance group failed (exit $status)"
+  fi
+}
+
 validate_update() {
+  start_update_maintenance_group
+
   check "sudo metadata completeness and retry intent"
   python3 -B scripts/test-sudo-preflight
 
@@ -7831,6 +7924,414 @@ SH
   done
   unset update_all_xdg_name update_all_xdg_saved_ref
 
+  check "groundwork-disk-clean: preview, consent, bounded receipt, update-all isolation"
+  # Logging shims on a closed PATH stand in for brew, mise, docker, and
+  # colima; a pseudo-terminal drives every confirmation state.
+  python3 -B scripts/test-disk-clean
+
+  check "groundwork-doctor --storage stays read-only, opt-in, and honest"
+  storage_fixture="$out_dir/doctor-storage-fixture"
+  storage_home="$storage_fixture/home"
+  storage_bin="$storage_fixture/bin"
+  mkdir -p "$storage_bin" "$storage_home/.nvm/versions" "$storage_home/.npm/_cacache"
+  dd if=/dev/urandom of="$storage_home/.nvm/versions/node.blob" bs=1024 count=512 >/dev/null 2>&1
+  storage_brew_cache="$storage_fixture/brew cache"
+  mkdir -p "$storage_brew_cache/downloads"
+  dd if=/dev/urandom of="$storage_brew_cache/downloads/big.blob" bs=1024 count=1024 >/dev/null 2>&1
+  storage_pnpm_root="$storage_fixture/pnpm-store"
+  mkdir -p "$storage_pnpm_root/v10" "$storage_pnpm_root/v11"
+  dd if=/dev/urandom of="$storage_pnpm_root/v11/pkg.blob" bs=1024 count=1024 >/dev/null 2>&1
+  # An alias of the selected store: canonical dedup must report it exactly once.
+  ln -s "$storage_pnpm_root/v11" "$storage_pnpm_root/v-alias"
+  dd if=/dev/urandom of="$storage_home/.npm/_cacache/data.blob" bs=1024 count=1024 >/dev/null 2>&1
+  cat >"$storage_bin/brew" <<SH
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "--cache" ]]; then
+  printf '%s\n' "$storage_brew_cache"
+  exit 0
+fi
+printf 'brew %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
+SH
+  cat >"$storage_bin/pnpm" <<SH
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "store" && "\${2:-}" == "path" ]]; then
+  [[ -z "\${PNPM_ENV_PROBE:-}" ]] \\
+    || printf 'corepack_net=%s\n' "\${COREPACK_ENABLE_NETWORK:-unset}" >"\$PNPM_ENV_PROBE"
+  [[ "\${PNPM_STORE_PATH_FAIL:-0}" == "0" ]] || exit 1
+  printf '%s\n' "$storage_pnpm_root/v11"
+  exit 0
+fi
+printf 'pnpm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
+SH
+  cat >"$storage_bin/npm" <<SH
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "cache" ]]; then
+  [[ "\${NPM_CONFIG_FAIL:-0}" == "0" ]] || exit 1
+  if [[ "\${NPM_CACHE_MISSING:-0}" != "0" ]]; then
+    printf '%s\n' "$storage_home/uncreated-npm-cache"
+    exit 0
+  fi
+  printf '%s\n' "$storage_home/.npm"
+  exit 0
+fi
+printf 'npm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
+SH
+  cat >"$storage_bin/mise" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "which" ]]; then
+  exit "${MISE_WHICH_NPM_STATUS:-1}"
+fi
+if [[ "${1:-}" == "exec" ]]; then
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+  exec "$@"
+fi
+exit 0
+SH
+  # du passthrough that can be told to fail for one path — how else would a
+  # doctor prove that a broken measurement is not reported as healthy?
+  cat >"$storage_bin/du" <<'SH'
+#!/usr/bin/env bash
+if [[ -n "${DU_FAIL_GLOB:-}" ]]; then
+  for arg in "$@"; do
+    [[ "$arg" == *"$DU_FAIL_GLOB"* ]] && exit 1
+  done
+fi
+exec /usr/bin/du "$@"
+SH
+  chmod +x "$storage_bin/brew" "$storage_bin/pnpm" "$storage_bin/npm" \
+    "$storage_bin/mise" "$storage_bin/du"
+  storage_log="$storage_fixture/commands.log"
+  # One list for every doctor invocation in this fixture. Unset host PNPM_HOME
+  # and every current XDG_* name, then pin the five fixture directories.
+  # GNU env applies -u only while it is still an option, so every -u precedes
+  # the assignments. The nopnpm run replaces PATH after this list.
+  storage_xdg_clear=()
+  while IFS= read -r storage_xdg_name; do
+    case "$storage_xdg_name" in
+      XDG_*) storage_xdg_clear+=(-u "$storage_xdg_name") ;;
+    esac
+  done < <(compgen -v)
+  storage_env=(
+    ${storage_xdg_clear[@]+"${storage_xdg_clear[@]}"}
+    -u PNPM_HOME
+    HOME="$storage_home"
+    XDG_CONFIG_HOME="$storage_home/.config"
+    XDG_CACHE_HOME="$storage_home/.cache"
+    XDG_DATA_HOME="$storage_home/.local/share"
+    XDG_STATE_HOME="$storage_home/.local/state"
+    XDG_RUNTIME_DIR="$storage_home/xdg-runtime"
+    PATH="$storage_bin:/usr/bin:/bin"
+    GROUNDWORK_TEST_LOG="$storage_log"
+  )
+  run_storage_doctor() {
+    local output="$1"
+    shift
+    : >"$storage_log"
+    env "${storage_env[@]}" "$@" \
+      /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
+      >"$output" 2>&1
+  }
+
+  run_storage_doctor "$storage_fixture/output" PNPM_ENV_PROBE="$storage_fixture/env-probe" \
+    || fail "groundwork-doctor --storage must succeed"
+  # Read-only is the contract: every brew/pnpm/npm call other than the size
+  # queries would have been logged.
+  test ! -s "$storage_log" \
+    || fail "doctor --storage invoked a non-query command: $(cat "$storage_log")"
+  grep -qF 'read-only report' "$storage_fixture/output"
+  grep -qF 'not a full disk scan' "$storage_fixture/output" \
+    || fail "the storage report must say it is curated, not exhaustive"
+  grep -qxF 'corepack_net=0' "$storage_fixture/env-probe" \
+    || fail "the doctor's pnpm query must disable Corepack networking"
+  grep -qE 'Homebrew cache: [0-9.]+ MiB' "$storage_fixture/output" \
+    || fail "the storage report must size the Homebrew cache"
+  grep -qF 'pnpm store v10 (other generation)' "$storage_fixture/output" \
+    || fail "other pnpm store generations must not be called inactive — Corepack selects per repository"
+  grep -qF 'pnpm store v11 (selected here)' "$storage_fixture/output" \
+    || fail "the storage report must mark the store selected by the current directory"
+  grep -qE 'working directory .* selects: ' "$storage_fixture/output" \
+    || fail "the storage report must say which directory the selection followed"
+  grep -qF 'legacy runtime manager: ~/.nvm' "$storage_fixture/output" \
+    || fail "a legacy nvm install must be reported"
+  grep -qF "Groundwork's intended Node owner: mise" "$storage_fixture/output" \
+    || fail "the nvm finding must state intent, not assert the live Node owner"
+  grep -qF -- '--node-toolchain' "$storage_fixture/output" \
+    || fail "the nvm finding must point at the section that verifies the live owner"
+  assert_not_contains 'v-alias' "$storage_fixture/output" \
+    "an alias of the selected pnpm store was counted as a second generation"
+  # npm resolves exactly as update-all resolves it, and the report names the
+  # provider that answered — here mise owns no npm, so the PATH npm answers.
+  grep -qE 'npm cache via PATH npm \([^)]*\) \(.*\.npm\): [0-9.]+ MiB' "$storage_fixture/output" \
+    || fail "the storage report must size npm's configured cache and name the provider"
+  run_storage_doctor "$storage_fixture/mise-npm-output" MISE_WHICH_NPM_STATUS=0 \
+    || fail "doctor --storage must succeed with a mise-owned npm"
+  grep -qF 'npm cache via mise-managed npm' "$storage_fixture/mise-npm-output" \
+    || fail "a mise-owned npm must be reported as the provider update-all uses"
+  # A failed cache-path query stays unknown: ~/.npm is mentioned but never
+  # relabeled as the configured cache.
+  run_storage_doctor "$storage_fixture/npm-fail-output" NPM_CONFIG_FAIL=1 \
+    || fail "doctor --storage must survive a failed npm config get cache"
+  grep -qF 'npm cache path unavailable' "$storage_fixture/npm-fail-output" \
+    || fail "a failed npm cache query must be reported as unavailable"
+  grep -qF 'NOT verified as the active cache' "$storage_fixture/npm-fail-output" \
+    || fail "an unverified ~/.npm must be labeled unverified, not configured"
+  grep -qF 'groundwork-cleanup' "$storage_fixture/output" \
+    || fail "the storage report must point at the automatic maintenance report"
+  # Absent areas stay silent rather than being invented: no Xcode or Parallels
+  # directories exist in this fixture HOME.
+  assert_not_contains 'Parallels' "$storage_fixture/output" \
+    "the storage report invented a Parallels area that does not exist"
+  assert_not_contains 'DeviceSupport' "$storage_fixture/output" \
+    "the storage report invented an Xcode area that does not exist"
+
+  # Thresholds are policy with boundaries: forced to 0 GiB, the same data warns.
+  run_storage_doctor "$storage_fixture/warn-output" \
+    GROUNDWORK_STORAGE_BREW_WARN_GIB=0 GROUNDWORK_STORAGE_PNPM_WARN_GIB=0 \
+    GROUNDWORK_STORAGE_NPM_WARN_GIB=0 \
+    || fail "doctor --storage must succeed at a zero threshold"
+  grep -qE 'warn.*Homebrew cache.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
+    || fail "a Homebrew cache above threshold must warn and name the threshold"
+  grep -qE 'warn.*pnpm stores total.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
+    || fail "a pnpm store total above threshold must warn and name the threshold"
+  grep -qE 'warn.*npm cache via.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
+    || fail "an npm cache above threshold must warn and name the threshold"
+
+  # A FAILED measurement is never healthy: broken du on the Homebrew cache must
+  # not produce ok, and a partial pnpm total must not be judged at all.
+  run_storage_doctor "$storage_fixture/du-fail-output" DU_FAIL_GLOB="brew cache" \
+    || fail "doctor --storage must survive a failed du"
+  grep -qF 'Homebrew cache: size unavailable' "$storage_fixture/du-fail-output" \
+    || fail "a failed Homebrew measurement must be reported as unavailable"
+  assert_not_contains 'ok    Homebrew cache' "$storage_fixture/du-fail-output" \
+    "a failed Homebrew measurement was reported as healthy"
+  run_storage_doctor "$storage_fixture/partial-output" DU_FAIL_GLOB="v10" \
+    || fail "doctor --storage must survive a partial pnpm measurement"
+  grep -qF 'pnpm store total incomplete' "$storage_fixture/partial-output" \
+    || fail "a partial pnpm total must be reported incomplete, threshold unevaluated"
+  assert_not_contains 'ok    pnpm stores total' "$storage_fixture/partial-output" \
+    "a partial pnpm total was reported as complete and healthy"
+
+  # A configured npm cache path that does not exist yet is a valid zero-state,
+  # distinct from a failed query.
+  run_storage_doctor "$storage_fixture/npm-uncreated-output" NPM_CACHE_MISSING=1 \
+    || fail "doctor --storage must survive an uncreated npm cache path"
+  grep -qE 'npm cache via PATH npm .*uncreated-npm-cache\): not created yet' \
+    "$storage_fixture/npm-uncreated-output" \
+    || fail "a configured-but-uncreated npm cache must be reported, not dropped"
+
+  # Discovery does not depend on the launcher: with the selected pnpm
+  # unavailable offline, the known store roots are still found and sized.
+  mkdir -p "$storage_home/Library/pnpm/store/v7"
+  dd if=/dev/urandom of="$storage_home/Library/pnpm/store/v7/pkg.blob" bs=1024 count=512 >/dev/null 2>&1
+  run_storage_doctor "$storage_fixture/offline-output" PNPM_STORE_PATH_FAIL=1 \
+    || fail "doctor --storage must survive an offline-unavailable pnpm"
+  grep -qF 'selected-for-this-directory store: unavailable' "$storage_fixture/offline-output" \
+    || fail "an offline-unavailable selection must be named, not silently absent"
+  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/offline-output" \
+    || fail "known store roots must be sized even when pnpm cannot answer"
+
+  # pnpm removed entirely, stores left behind: still found and sized.
+  # A host PNPM_HOME store must stay out of that report. The decoy is exported
+  # in this shell; storage_env has to unset it. This run has its own PATH so
+  # the fixture pnpm is absent while the other tools stay.
+  storage_nopnpm_bin="$storage_fixture/nopnpm-bin"
+  mkdir -p "$storage_nopnpm_bin"
+  for storage_tool in brew npm mise du; do
+    ln -s "$storage_bin/$storage_tool" "$storage_nopnpm_bin/$storage_tool"
+  done
+  host_pnpm_home="$storage_fixture/host-pnpm-home"
+  mkdir -p "$host_pnpm_home/store/v98"
+  dd if=/dev/urandom of="$host_pnpm_home/store/v98/pkg.blob" bs=1024 count=64 >/dev/null 2>&1
+  storage_saved_pnpm_home="${PNPM_HOME-}"
+  storage_had_pnpm_home="${PNPM_HOME+x}"
+  export PNPM_HOME="$host_pnpm_home"
+  : >"$storage_log"
+  env "${storage_env[@]}" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
+    /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
+    >"$storage_fixture/nopnpm-output" 2>&1 \
+    || fail "doctor --storage must succeed with pnpm removed"
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/nopnpm-output"; then
+    fail "a host PNPM_HOME store changed the nopnpm storage report"
+  fi
+  assert_not_contains 'pnpm store v98' "$storage_fixture/nopnpm-output" \
+    "a host PNPM_HOME generation was sized as if it belonged to the fixture"
+  grep -qF 'pnpm not installed; known store roots are still sized' "$storage_fixture/nopnpm-output" \
+    || fail "a removed pnpm must not hide the stores it left behind"
+  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/nopnpm-output" \
+    || fail "stores that outlived pnpm must still be sized"
+
+  # Storage never runs in the default doctor: du over VM bundles and simulator
+  # trees can take minutes, and the routine health check must stay quick.
+  : >"$storage_log"
+  env "${storage_env[@]}" \
+    /bin/bash home/dot_local/bin/executable_groundwork-doctor \
+    >"$storage_fixture/default-output" 2>&1 \
+    || fail "the default doctor run must succeed"
+  if [[ -n "$storage_had_pnpm_home" ]]; then
+    export PNPM_HOME="$storage_saved_pnpm_home"
+  else
+    unset PNPM_HOME
+  fi
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/default-output"; then
+    fail "a host PNPM_HOME changed the default doctor report"
+  fi
+  assert_not_contains '== Storage ==' "$storage_fixture/default-output" \
+    "the default doctor ran the storage section"
+  grep -qF -- '--storage for the (slower)' "$storage_fixture/default-output" \
+    || fail "the default doctor must point at the opt-in storage report"
+
+  check "shell self-reload preserves background jobs"
+  # BEHAVIORAL, not a source grep. The guard used "$(jobs)", which forks — and a
+  # forked child has no job table, so the test was ALWAYS true and every reload
+  # exec'd straight through running background jobs. Source matching cannot
+  # catch that class of bug; only running the real hook with a real job can.
+  # The function under test is EXTRACTED FROM THE RENDERED TEMPLATE, so this
+  # exercises the shipped implementation rather than a copy of it.
+  if ! command -v zsh >/dev/null 2>&1; then
+    skip_current_check zsh-missing "zsh is required to run the self-reload hook"
+  else
+    reload_dir="$out_dir/shell-reload"
+    mkdir -p "$reload_dir"
+    render darwin false arm64 home/dot_zshrc.tmpl "$reload_dir/rendered-zshrc"
+    # The hook plus its module gate; nothing else from the rendered file runs.
+    sed -n '/^zmodload -F zsh\/stat b:zstat/,/^fi$/p' "$reload_dir/rendered-zshrc" \
+      >"$reload_dir/hook.zsh"
+    grep -qF '_groundwork_config_refresh_precmd' "$reload_dir/hook.zsh" \
+      || fail "could not extract the self-reload hook from the rendered .zshrc"
+    cat >"$reload_dir/drive.zsh" <<'ZSH'
+set -e
+ZDOTDIR="$1"; export ZDOTDIR
+: >"$ZDOTDIR/.zshrc"
+source "$2"
+sleep 30 &
+job_pid=$!
+print -r -- "$job_pid" >"$ZDOTDIR/job.pid"
+# Make the config look rewritten, exactly as `chezmoi apply` would.
+sleep 1
+: >"$ZDOTDIR/.zshrc"
+# If the guard is broken this exec's and the marker below is never written.
+_groundwork_config_refresh_precmd
+print -r -- held >"$ZDOTDIR/outcome"
+kill "$job_pid" 2>/dev/null || true
+ZSH
+    reload_home="$reload_dir/home"
+    mkdir -p "$reload_home"
+    rm -f "$reload_home/outcome" "$reload_home/job.pid"
+    zsh -f "$reload_dir/drive.zsh" "$reload_home" "$reload_dir/hook.zsh" \
+      </dev/null >"$reload_dir/drive.out" 2>&1 || true
+    [[ -f "$reload_home/outcome" ]] \
+      || fail "the self-reload hook exec'd while a background job was running, replacing the shell out from under it"
+    grep -qxF held "$reload_home/outcome" \
+      || fail "the self-reload hook did not hold off while a background job was running"
+    # ...and with no jobs it must still actually reload, or the guard is just off.
+    cat >"$reload_dir/drive-clean.zsh" <<'ZSH'
+set -e
+ZDOTDIR="$1"; export ZDOTDIR
+: >"$ZDOTDIR/.zshrc"
+source "$2"
+sleep 1
+: >"$ZDOTDIR/.zshrc"
+_groundwork_config_refresh_precmd
+print -r -- "did-not-reload" >"$ZDOTDIR/outcome"
+ZSH
+    reload_clean="$reload_dir/clean"
+    mkdir -p "$reload_clean"
+    SHELL="$(command -v zsh)" zsh -f "$reload_dir/drive-clean.zsh" \
+      "$reload_clean" "$reload_dir/hook.zsh" </dev/null >"$reload_dir/clean.out" 2>&1 || true
+    if [[ -f "$reload_clean/outcome" ]]; then
+      fail "the self-reload hook never reloads, so the job guard is masking a dead feature"
+    fi
+    grep -qF 'shell config updated' "$reload_dir/clean.out" \
+      || fail "the self-reload hook did not announce the reload it performed"
+  fi
+
+  check "update-all migration notice"
+  migration_home="$out_dir/update-all-migration-home"
+  migration_flag="$migration_home/.local/state/groundwork/update-all-migration-pending"
+  mkdir -p "$migration_home"
+  HOME="$migration_home" /bin/bash home/run_once_after_97-package-maintenance-notice.sh \
+    >"$out_dir/package-maintenance-migration-notice"
+  grep -qF 'update-all now includes automatic package-manager maintenance' \
+    "$out_dir/package-maintenance-migration-notice"
+  grep -qF 'Whole pnpm store generations remain' \
+    "$out_dir/package-maintenance-migration-notice"
+  assert_not_contains 'Docker data remain owner-confirmed' \
+    "$out_dir/package-maintenance-migration-notice" \
+    "the package-maintenance notice retained the obsolete Docker contract"
+  HOME="$migration_home" /bin/bash home/run_once_after_98-docker-scratch-maintenance-notice.sh \
+    >"$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'update-all now includes automatic Docker scratch maintenance' \
+    "$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'groundwork-doctor --docker' "$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'groundwork-docker-cache-tidy' "$out_dir/docker-maintenance-migration-notice"
+  grep -qF -- '--rm-after' "$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'scripts/verify-docker-image' "$out_dir/docker-maintenance-migration-notice"
+  cat >"$migration_home/.zshrc" <<'EOF'
+update-all() {
+  echo old
+}
+EOF
+  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
+    >"$out_dir/update-all-migration-notice"
+  grep -qF 'moved update-all from an in-memory shell function' "$out_dir/update-all-migration-notice"
+  grep -qF "Run \`exec zsh\` once" "$out_dir/update-all-migration-notice"
+  test -f "$migration_flag"
+  # The end-of-apply reminder repeats the one required action after Homebrew
+  # output has scrolled the first notice away, then clears the flag so it
+  # never repeats.
+  # A noninteractive apply (piped/CI) cannot deliver the reminder to anyone, so
+  # it must print nothing and leave the flag pending for the next interactive run.
+  HOME="$migration_home" /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-noninteractive"
+  test ! -s "$out_dir/update-all-migration-noninteractive" \
+    || fail "the migration reminder printed to a non-terminal"
+  test -f "$migration_flag" \
+    || fail "a noninteractive apply consumed the migration reminder"
+  # Interactive: shown, then the flag is cleared so it never repeats.
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-reminder"
+  grep -qF 'one step left' "$out_dir/update-all-migration-reminder"
+  grep -qF 'exec zsh' "$out_dir/update-all-migration-reminder"
+  test ! -e "$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-reminder-repeat"
+  test ! -s "$out_dir/update-all-migration-reminder-repeat"
+  # Color keys on the run-wide signal update-all exports, not on a per-stage
+  # TTY probe: with GROUNDWORK_COLOR=1 the reminder emits ANSI even though
+  # stdout is a file here; with it 0 (or NO_COLOR and no signal) it stays plain.
+  reminder_esc="$(printf '\033')"
+  : >"$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=1 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-color-on"
+  grep -qF "${reminder_esc}[1;33m" "$out_dir/update-all-migration-color-on" \
+    || fail "the migration reminder must emit color when GROUNDWORK_COLOR=1, even behind a capture"
+  : >"$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=0 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-color-off"
+  grep -qF 'one step left' "$out_dir/update-all-migration-color-off"
+  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-color-off" \
+    "the migration reminder emitted color although GROUNDWORK_COLOR=0"
+  : >"$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 NO_COLOR=1 GROUNDWORK_COLOR='' \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-no-color"
+  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-no-color" \
+    "the migration reminder emitted color although NO_COLOR was set and no signal decided otherwise"
+  printf '# fresh install has no old function\n' >"$migration_home/.zshrc"
+  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
+    >"$out_dir/update-all-fresh-notice"
+  test ! -s "$out_dir/update-all-fresh-notice"
+  test ! -e "$migration_flag"
+
+  join_update_maintenance_group
+}
+
+validate_update_maintenance_group() {
   check "groundwork-cleanup fixture setup"
   cleanup_fixture="$out_dir/package-maintenance-fixture"
   cleanup_home="$cleanup_fixture/home"
@@ -9853,411 +10354,6 @@ SH
     || fail "a machine without pnpm must exit 0"
   grep -qF 'nothing to tidy' "$pnpm_fixture/no-pnpm-output"
   test ! -s "$pnpm_log"
-
-  check "groundwork-disk-clean: preview, consent, bounded receipt, update-all isolation"
-  # Logging shims on a closed PATH stand in for brew, mise, docker, and
-  # colima; a pseudo-terminal drives every confirmation state.
-  python3 -B scripts/test-disk-clean
-
-  check "groundwork-doctor --storage stays read-only, opt-in, and honest"
-  storage_fixture="$out_dir/doctor-storage-fixture"
-  storage_home="$storage_fixture/home"
-  storage_bin="$storage_fixture/bin"
-  mkdir -p "$storage_bin" "$storage_home/.nvm/versions" "$storage_home/.npm/_cacache"
-  dd if=/dev/urandom of="$storage_home/.nvm/versions/node.blob" bs=1024 count=512 >/dev/null 2>&1
-  storage_brew_cache="$storage_fixture/brew cache"
-  mkdir -p "$storage_brew_cache/downloads"
-  dd if=/dev/urandom of="$storage_brew_cache/downloads/big.blob" bs=1024 count=1024 >/dev/null 2>&1
-  storage_pnpm_root="$storage_fixture/pnpm-store"
-  mkdir -p "$storage_pnpm_root/v10" "$storage_pnpm_root/v11"
-  dd if=/dev/urandom of="$storage_pnpm_root/v11/pkg.blob" bs=1024 count=1024 >/dev/null 2>&1
-  # An alias of the selected store: canonical dedup must report it exactly once.
-  ln -s "$storage_pnpm_root/v11" "$storage_pnpm_root/v-alias"
-  dd if=/dev/urandom of="$storage_home/.npm/_cacache/data.blob" bs=1024 count=1024 >/dev/null 2>&1
-  cat >"$storage_bin/brew" <<SH
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "--cache" ]]; then
-  printf '%s\n' "$storage_brew_cache"
-  exit 0
-fi
-printf 'brew %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
-SH
-  cat >"$storage_bin/pnpm" <<SH
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "store" && "\${2:-}" == "path" ]]; then
-  [[ -z "\${PNPM_ENV_PROBE:-}" ]] \\
-    || printf 'corepack_net=%s\n' "\${COREPACK_ENABLE_NETWORK:-unset}" >"\$PNPM_ENV_PROBE"
-  [[ "\${PNPM_STORE_PATH_FAIL:-0}" == "0" ]] || exit 1
-  printf '%s\n' "$storage_pnpm_root/v11"
-  exit 0
-fi
-printf 'pnpm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
-SH
-  cat >"$storage_bin/npm" <<SH
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "cache" ]]; then
-  [[ "\${NPM_CONFIG_FAIL:-0}" == "0" ]] || exit 1
-  if [[ "\${NPM_CACHE_MISSING:-0}" != "0" ]]; then
-    printf '%s\n' "$storage_home/uncreated-npm-cache"
-    exit 0
-  fi
-  printf '%s\n' "$storage_home/.npm"
-  exit 0
-fi
-printf 'npm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
-SH
-  cat >"$storage_bin/mise" <<'SH'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "which" ]]; then
-  exit "${MISE_WHICH_NPM_STATUS:-1}"
-fi
-if [[ "${1:-}" == "exec" ]]; then
-  shift
-  [[ "${1:-}" == "--" ]] && shift
-  exec "$@"
-fi
-exit 0
-SH
-  # du passthrough that can be told to fail for one path — how else would a
-  # doctor prove that a broken measurement is not reported as healthy?
-  cat >"$storage_bin/du" <<'SH'
-#!/usr/bin/env bash
-if [[ -n "${DU_FAIL_GLOB:-}" ]]; then
-  for arg in "$@"; do
-    [[ "$arg" == *"$DU_FAIL_GLOB"* ]] && exit 1
-  done
-fi
-exec /usr/bin/du "$@"
-SH
-  chmod +x "$storage_bin/brew" "$storage_bin/pnpm" "$storage_bin/npm" \
-    "$storage_bin/mise" "$storage_bin/du"
-  storage_log="$storage_fixture/commands.log"
-  # One list for every doctor invocation in this fixture. Unset host PNPM_HOME
-  # and every current XDG_* name, then pin the five fixture directories.
-  # GNU env applies -u only while it is still an option, so every -u precedes
-  # the assignments. The nopnpm run replaces PATH after this list.
-  storage_xdg_clear=()
-  while IFS= read -r storage_xdg_name; do
-    case "$storage_xdg_name" in
-      XDG_*) storage_xdg_clear+=(-u "$storage_xdg_name") ;;
-    esac
-  done < <(compgen -v)
-  storage_env=(
-    ${storage_xdg_clear[@]+"${storage_xdg_clear[@]}"}
-    -u PNPM_HOME
-    HOME="$storage_home"
-    XDG_CONFIG_HOME="$storage_home/.config"
-    XDG_CACHE_HOME="$storage_home/.cache"
-    XDG_DATA_HOME="$storage_home/.local/share"
-    XDG_STATE_HOME="$storage_home/.local/state"
-    XDG_RUNTIME_DIR="$storage_home/xdg-runtime"
-    PATH="$storage_bin:/usr/bin:/bin"
-    GROUNDWORK_TEST_LOG="$storage_log"
-  )
-  run_storage_doctor() {
-    local output="$1"
-    shift
-    : >"$storage_log"
-    env "${storage_env[@]}" "$@" \
-      /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
-      >"$output" 2>&1
-  }
-
-  run_storage_doctor "$storage_fixture/output" PNPM_ENV_PROBE="$storage_fixture/env-probe" \
-    || fail "groundwork-doctor --storage must succeed"
-  # Read-only is the contract: every brew/pnpm/npm call other than the size
-  # queries would have been logged.
-  test ! -s "$storage_log" \
-    || fail "doctor --storage invoked a non-query command: $(cat "$storage_log")"
-  grep -qF 'read-only report' "$storage_fixture/output"
-  grep -qF 'not a full disk scan' "$storage_fixture/output" \
-    || fail "the storage report must say it is curated, not exhaustive"
-  grep -qxF 'corepack_net=0' "$storage_fixture/env-probe" \
-    || fail "the doctor's pnpm query must disable Corepack networking"
-  grep -qE 'Homebrew cache: [0-9.]+ MiB' "$storage_fixture/output" \
-    || fail "the storage report must size the Homebrew cache"
-  grep -qF 'pnpm store v10 (other generation)' "$storage_fixture/output" \
-    || fail "other pnpm store generations must not be called inactive — Corepack selects per repository"
-  grep -qF 'pnpm store v11 (selected here)' "$storage_fixture/output" \
-    || fail "the storage report must mark the store selected by the current directory"
-  grep -qE 'working directory .* selects: ' "$storage_fixture/output" \
-    || fail "the storage report must say which directory the selection followed"
-  grep -qF 'legacy runtime manager: ~/.nvm' "$storage_fixture/output" \
-    || fail "a legacy nvm install must be reported"
-  grep -qF "Groundwork's intended Node owner: mise" "$storage_fixture/output" \
-    || fail "the nvm finding must state intent, not assert the live Node owner"
-  grep -qF -- '--node-toolchain' "$storage_fixture/output" \
-    || fail "the nvm finding must point at the section that verifies the live owner"
-  assert_not_contains 'v-alias' "$storage_fixture/output" \
-    "an alias of the selected pnpm store was counted as a second generation"
-  # npm resolves exactly as update-all resolves it, and the report names the
-  # provider that answered — here mise owns no npm, so the PATH npm answers.
-  grep -qE 'npm cache via PATH npm \([^)]*\) \(.*\.npm\): [0-9.]+ MiB' "$storage_fixture/output" \
-    || fail "the storage report must size npm's configured cache and name the provider"
-  run_storage_doctor "$storage_fixture/mise-npm-output" MISE_WHICH_NPM_STATUS=0 \
-    || fail "doctor --storage must succeed with a mise-owned npm"
-  grep -qF 'npm cache via mise-managed npm' "$storage_fixture/mise-npm-output" \
-    || fail "a mise-owned npm must be reported as the provider update-all uses"
-  # A failed cache-path query stays unknown: ~/.npm is mentioned but never
-  # relabeled as the configured cache.
-  run_storage_doctor "$storage_fixture/npm-fail-output" NPM_CONFIG_FAIL=1 \
-    || fail "doctor --storage must survive a failed npm config get cache"
-  grep -qF 'npm cache path unavailable' "$storage_fixture/npm-fail-output" \
-    || fail "a failed npm cache query must be reported as unavailable"
-  grep -qF 'NOT verified as the active cache' "$storage_fixture/npm-fail-output" \
-    || fail "an unverified ~/.npm must be labeled unverified, not configured"
-  grep -qF 'groundwork-cleanup' "$storage_fixture/output" \
-    || fail "the storage report must point at the automatic maintenance report"
-  # Absent areas stay silent rather than being invented: no Xcode or Parallels
-  # directories exist in this fixture HOME.
-  assert_not_contains 'Parallels' "$storage_fixture/output" \
-    "the storage report invented a Parallels area that does not exist"
-  assert_not_contains 'DeviceSupport' "$storage_fixture/output" \
-    "the storage report invented an Xcode area that does not exist"
-
-  # Thresholds are policy with boundaries: forced to 0 GiB, the same data warns.
-  run_storage_doctor "$storage_fixture/warn-output" \
-    GROUNDWORK_STORAGE_BREW_WARN_GIB=0 GROUNDWORK_STORAGE_PNPM_WARN_GIB=0 \
-    GROUNDWORK_STORAGE_NPM_WARN_GIB=0 \
-    || fail "doctor --storage must succeed at a zero threshold"
-  grep -qE 'warn.*Homebrew cache.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
-    || fail "a Homebrew cache above threshold must warn and name the threshold"
-  grep -qE 'warn.*pnpm stores total.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
-    || fail "a pnpm store total above threshold must warn and name the threshold"
-  grep -qE 'warn.*npm cache via.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
-    || fail "an npm cache above threshold must warn and name the threshold"
-
-  # A FAILED measurement is never healthy: broken du on the Homebrew cache must
-  # not produce ok, and a partial pnpm total must not be judged at all.
-  run_storage_doctor "$storage_fixture/du-fail-output" DU_FAIL_GLOB="brew cache" \
-    || fail "doctor --storage must survive a failed du"
-  grep -qF 'Homebrew cache: size unavailable' "$storage_fixture/du-fail-output" \
-    || fail "a failed Homebrew measurement must be reported as unavailable"
-  assert_not_contains 'ok    Homebrew cache' "$storage_fixture/du-fail-output" \
-    "a failed Homebrew measurement was reported as healthy"
-  run_storage_doctor "$storage_fixture/partial-output" DU_FAIL_GLOB="v10" \
-    || fail "doctor --storage must survive a partial pnpm measurement"
-  grep -qF 'pnpm store total incomplete' "$storage_fixture/partial-output" \
-    || fail "a partial pnpm total must be reported incomplete, threshold unevaluated"
-  assert_not_contains 'ok    pnpm stores total' "$storage_fixture/partial-output" \
-    "a partial pnpm total was reported as complete and healthy"
-
-  # A configured npm cache path that does not exist yet is a valid zero-state,
-  # distinct from a failed query.
-  run_storage_doctor "$storage_fixture/npm-uncreated-output" NPM_CACHE_MISSING=1 \
-    || fail "doctor --storage must survive an uncreated npm cache path"
-  grep -qE 'npm cache via PATH npm .*uncreated-npm-cache\): not created yet' \
-    "$storage_fixture/npm-uncreated-output" \
-    || fail "a configured-but-uncreated npm cache must be reported, not dropped"
-
-  # Discovery does not depend on the launcher: with the selected pnpm
-  # unavailable offline, the known store roots are still found and sized.
-  mkdir -p "$storage_home/Library/pnpm/store/v7"
-  dd if=/dev/urandom of="$storage_home/Library/pnpm/store/v7/pkg.blob" bs=1024 count=512 >/dev/null 2>&1
-  run_storage_doctor "$storage_fixture/offline-output" PNPM_STORE_PATH_FAIL=1 \
-    || fail "doctor --storage must survive an offline-unavailable pnpm"
-  grep -qF 'selected-for-this-directory store: unavailable' "$storage_fixture/offline-output" \
-    || fail "an offline-unavailable selection must be named, not silently absent"
-  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/offline-output" \
-    || fail "known store roots must be sized even when pnpm cannot answer"
-
-  # pnpm removed entirely, stores left behind: still found and sized.
-  # A host PNPM_HOME store must stay out of that report. The decoy is exported
-  # in this shell; storage_env has to unset it. This run has its own PATH so
-  # the fixture pnpm is absent while the other tools stay.
-  storage_nopnpm_bin="$storage_fixture/nopnpm-bin"
-  mkdir -p "$storage_nopnpm_bin"
-  for storage_tool in brew npm mise du; do
-    ln -s "$storage_bin/$storage_tool" "$storage_nopnpm_bin/$storage_tool"
-  done
-  host_pnpm_home="$storage_fixture/host-pnpm-home"
-  mkdir -p "$host_pnpm_home/store/v98"
-  dd if=/dev/urandom of="$host_pnpm_home/store/v98/pkg.blob" bs=1024 count=64 >/dev/null 2>&1
-  storage_saved_pnpm_home="${PNPM_HOME-}"
-  storage_had_pnpm_home="${PNPM_HOME+x}"
-  export PNPM_HOME="$host_pnpm_home"
-  : >"$storage_log"
-  env "${storage_env[@]}" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
-    /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
-    >"$storage_fixture/nopnpm-output" 2>&1 \
-    || fail "doctor --storage must succeed with pnpm removed"
-  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/nopnpm-output"; then
-    fail "a host PNPM_HOME store changed the nopnpm storage report"
-  fi
-  assert_not_contains 'pnpm store v98' "$storage_fixture/nopnpm-output" \
-    "a host PNPM_HOME generation was sized as if it belonged to the fixture"
-  grep -qF 'pnpm not installed; known store roots are still sized' "$storage_fixture/nopnpm-output" \
-    || fail "a removed pnpm must not hide the stores it left behind"
-  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/nopnpm-output" \
-    || fail "stores that outlived pnpm must still be sized"
-
-  # Storage never runs in the default doctor: du over VM bundles and simulator
-  # trees can take minutes, and the routine health check must stay quick.
-  : >"$storage_log"
-  env "${storage_env[@]}" \
-    /bin/bash home/dot_local/bin/executable_groundwork-doctor \
-    >"$storage_fixture/default-output" 2>&1 \
-    || fail "the default doctor run must succeed"
-  if [[ -n "$storage_had_pnpm_home" ]]; then
-    export PNPM_HOME="$storage_saved_pnpm_home"
-  else
-    unset PNPM_HOME
-  fi
-  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/default-output"; then
-    fail "a host PNPM_HOME changed the default doctor report"
-  fi
-  assert_not_contains '== Storage ==' "$storage_fixture/default-output" \
-    "the default doctor ran the storage section"
-  grep -qF -- '--storage for the (slower)' "$storage_fixture/default-output" \
-    || fail "the default doctor must point at the opt-in storage report"
-
-  check "shell self-reload preserves background jobs"
-  # BEHAVIORAL, not a source grep. The guard used "$(jobs)", which forks — and a
-  # forked child has no job table, so the test was ALWAYS true and every reload
-  # exec'd straight through running background jobs. Source matching cannot
-  # catch that class of bug; only running the real hook with a real job can.
-  # The function under test is EXTRACTED FROM THE RENDERED TEMPLATE, so this
-  # exercises the shipped implementation rather than a copy of it.
-  if ! command -v zsh >/dev/null 2>&1; then
-    skip_current_check zsh-missing "zsh is required to run the self-reload hook"
-  else
-    reload_dir="$out_dir/shell-reload"
-    mkdir -p "$reload_dir"
-    render darwin false arm64 home/dot_zshrc.tmpl "$reload_dir/rendered-zshrc"
-    # The hook plus its module gate; nothing else from the rendered file runs.
-    sed -n '/^zmodload -F zsh\/stat b:zstat/,/^fi$/p' "$reload_dir/rendered-zshrc" \
-      >"$reload_dir/hook.zsh"
-    grep -qF '_groundwork_config_refresh_precmd' "$reload_dir/hook.zsh" \
-      || fail "could not extract the self-reload hook from the rendered .zshrc"
-    cat >"$reload_dir/drive.zsh" <<'ZSH'
-set -e
-ZDOTDIR="$1"; export ZDOTDIR
-: >"$ZDOTDIR/.zshrc"
-source "$2"
-sleep 30 &
-job_pid=$!
-print -r -- "$job_pid" >"$ZDOTDIR/job.pid"
-# Make the config look rewritten, exactly as `chezmoi apply` would.
-sleep 1
-: >"$ZDOTDIR/.zshrc"
-# If the guard is broken this exec's and the marker below is never written.
-_groundwork_config_refresh_precmd
-print -r -- held >"$ZDOTDIR/outcome"
-kill "$job_pid" 2>/dev/null || true
-ZSH
-    reload_home="$reload_dir/home"
-    mkdir -p "$reload_home"
-    rm -f "$reload_home/outcome" "$reload_home/job.pid"
-    zsh -f "$reload_dir/drive.zsh" "$reload_home" "$reload_dir/hook.zsh" \
-      </dev/null >"$reload_dir/drive.out" 2>&1 || true
-    [[ -f "$reload_home/outcome" ]] \
-      || fail "the self-reload hook exec'd while a background job was running, replacing the shell out from under it"
-    grep -qxF held "$reload_home/outcome" \
-      || fail "the self-reload hook did not hold off while a background job was running"
-    # ...and with no jobs it must still actually reload, or the guard is just off.
-    cat >"$reload_dir/drive-clean.zsh" <<'ZSH'
-set -e
-ZDOTDIR="$1"; export ZDOTDIR
-: >"$ZDOTDIR/.zshrc"
-source "$2"
-sleep 1
-: >"$ZDOTDIR/.zshrc"
-_groundwork_config_refresh_precmd
-print -r -- "did-not-reload" >"$ZDOTDIR/outcome"
-ZSH
-    reload_clean="$reload_dir/clean"
-    mkdir -p "$reload_clean"
-    SHELL="$(command -v zsh)" zsh -f "$reload_dir/drive-clean.zsh" \
-      "$reload_clean" "$reload_dir/hook.zsh" </dev/null >"$reload_dir/clean.out" 2>&1 || true
-    if [[ -f "$reload_clean/outcome" ]]; then
-      fail "the self-reload hook never reloads, so the job guard is masking a dead feature"
-    fi
-    grep -qF 'shell config updated' "$reload_dir/clean.out" \
-      || fail "the self-reload hook did not announce the reload it performed"
-  fi
-
-  check "update-all migration notice"
-  migration_home="$out_dir/update-all-migration-home"
-  migration_flag="$migration_home/.local/state/groundwork/update-all-migration-pending"
-  mkdir -p "$migration_home"
-  HOME="$migration_home" /bin/bash home/run_once_after_97-package-maintenance-notice.sh \
-    >"$out_dir/package-maintenance-migration-notice"
-  grep -qF 'update-all now includes automatic package-manager maintenance' \
-    "$out_dir/package-maintenance-migration-notice"
-  grep -qF 'Whole pnpm store generations remain' \
-    "$out_dir/package-maintenance-migration-notice"
-  assert_not_contains 'Docker data remain owner-confirmed' \
-    "$out_dir/package-maintenance-migration-notice" \
-    "the package-maintenance notice retained the obsolete Docker contract"
-  HOME="$migration_home" /bin/bash home/run_once_after_98-docker-scratch-maintenance-notice.sh \
-    >"$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'update-all now includes automatic Docker scratch maintenance' \
-    "$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'groundwork-doctor --docker' "$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'groundwork-docker-cache-tidy' "$out_dir/docker-maintenance-migration-notice"
-  grep -qF -- '--rm-after' "$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'scripts/verify-docker-image' "$out_dir/docker-maintenance-migration-notice"
-  cat >"$migration_home/.zshrc" <<'EOF'
-update-all() {
-  echo old
-}
-EOF
-  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
-    >"$out_dir/update-all-migration-notice"
-  grep -qF 'moved update-all from an in-memory shell function' "$out_dir/update-all-migration-notice"
-  grep -qF "Run \`exec zsh\` once" "$out_dir/update-all-migration-notice"
-  test -f "$migration_flag"
-  # The end-of-apply reminder repeats the one required action after Homebrew
-  # output has scrolled the first notice away, then clears the flag so it
-  # never repeats.
-  # A noninteractive apply (piped/CI) cannot deliver the reminder to anyone, so
-  # it must print nothing and leave the flag pending for the next interactive run.
-  HOME="$migration_home" /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-noninteractive"
-  test ! -s "$out_dir/update-all-migration-noninteractive" \
-    || fail "the migration reminder printed to a non-terminal"
-  test -f "$migration_flag" \
-    || fail "a noninteractive apply consumed the migration reminder"
-  # Interactive: shown, then the flag is cleared so it never repeats.
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-reminder"
-  grep -qF 'one step left' "$out_dir/update-all-migration-reminder"
-  grep -qF 'exec zsh' "$out_dir/update-all-migration-reminder"
-  test ! -e "$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-reminder-repeat"
-  test ! -s "$out_dir/update-all-migration-reminder-repeat"
-  # Color keys on the run-wide signal update-all exports, not on a per-stage
-  # TTY probe: with GROUNDWORK_COLOR=1 the reminder emits ANSI even though
-  # stdout is a file here; with it 0 (or NO_COLOR and no signal) it stays plain.
-  reminder_esc="$(printf '\033')"
-  : >"$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=1 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-color-on"
-  grep -qF "${reminder_esc}[1;33m" "$out_dir/update-all-migration-color-on" \
-    || fail "the migration reminder must emit color when GROUNDWORK_COLOR=1, even behind a capture"
-  : >"$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=0 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-color-off"
-  grep -qF 'one step left' "$out_dir/update-all-migration-color-off"
-  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-color-off" \
-    "the migration reminder emitted color although GROUNDWORK_COLOR=0"
-  : >"$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 NO_COLOR=1 GROUNDWORK_COLOR='' \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-no-color"
-  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-no-color" \
-    "the migration reminder emitted color although NO_COLOR was set and no signal decided otherwise"
-  printf '# fresh install has no old function\n' >"$migration_home/.zshrc"
-  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
-    >"$out_dir/update-all-fresh-notice"
-  test ! -s "$out_dir/update-all-fresh-notice"
-  test ! -e "$migration_flag"
-
 }
 
 validate_static_configuration() {
@@ -19569,6 +19665,7 @@ validate_platform_macos() {
   validate_external_tool_contracts
 }
 
+# shellcheck disable=SC2031 # The update maintenance subshell redirects its own timing_rows; Full never sees it.
 validate_full() {
   # Full composes the public focused entry points concurrently in fresh Bash
   # processes. Each focused invocation owns a separate temporary state root, so
