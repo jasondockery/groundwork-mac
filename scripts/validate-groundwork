@@ -1150,6 +1150,7 @@ validate_static_foundation() {
   check "common developer setup and Docker configuration merge"
   python3 -B scripts/test-common-setup
   python3 -B scripts/test-remote-desktop
+  python3 -B scripts/test-brave-default
   python3 -B tests/test_imessage_gateway.py
   python3 -B tests/test_local_inference.py
 
@@ -17956,6 +17957,8 @@ PY
     else
       grep -qxF 'cask "google-chrome"' "$out_dir/$case_name/Brewfile.browser" \
         || fail "$case_name must include Chrome stable"
+      grep -qE '^cask "brave-browser"' "$out_dir/$case_name/Brewfile" \
+        || fail "$case_name must install Brave"
       assert_not_contains 'google-chrome@beta' "$out_dir/$case_name/Brewfile.browser" \
         "$case_name selected Chrome Beta"
     fi

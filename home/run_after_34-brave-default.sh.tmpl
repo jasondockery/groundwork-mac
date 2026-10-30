@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+# bash 3.2+ (macOS). Brave policies and the one-time default-browser switch.
+# Policies and the Bitwarden offer come from core/browser/brave.json
+# (the pinned groundwork-core submodule), rendered into this script by chezmoi. This script
+# uninstalls no browser and deletes no profile data.
+# Fixture seams, not user settings: GROUNDWORK_BRAVE_APP,
+# GROUNDWORK_DEFAULTBROWSER_BIN, GROUNDWORK_BRAVE_LAUNCH_TIMEOUT.
+set -euo pipefail
+{{- if and (eq .chezmoi.os "darwin") (not .headless) }}
+{{- $specPath := joinPath .chezmoi.sourceDir ".." "core" "browser" "brave.json" }}
+{{- if not (stat $specPath) }}
+
+echo "Groundwork: Brave policies and the default-browser switch are skipped because core/browser/brave.json is missing. Run: git -C \"\$(chezmoi source-path)/..\" submodule update --init"
+{{- else }}
+{{- $spec := include $specPath | fromJson }}
+{{- if ne (int (get $spec "schemaVersion")) 1 }}{{ fail "core/browser/brave.json: unsupported schemaVersion" }}{{ end }}
+{{- $bundle := index (get (get $spec "default") "desktopIds") "macos" }}
+{{- $manager := "" }}{{ if hasKey . "password_manager" }}{{ $manager = .password_manager }}{{ end }}
+{{- $bitwarden := eq $manager "bitwarden" }}
+{{- $xml := "" }}
+{{- range $policy := get $spec "policies" }}
+{{- $applies := true }}
+{{- if hasKey $policy "when" }}
+{{- if eq (get $policy "when") "Bitwarden is the password manager." }}{{ $applies = $bitwarden }}{{ else }}{{ fail (printf "core/browser/brave.json: unknown policy condition %q" (get $policy "when")) }}{{ end }}
+{{- end }}
+{{- if $applies }}
+{{- $value := get $policy "value" }}
+{{- $name := get $policy "name" }}
+{{- if kindIs "bool" $value }}{{ $xml = printf "%s\t\t\t<key>%s</key>\n\t\t\t<%t/>\n" $xml ($name | html) $value }}
+{{- else if kindIs "string" $value }}{{ $xml = printf "%s\t\t\t<key>%s</key>\n\t\t\t<string>%s</string>\n" $xml ($name | html) ($value | html) }}
+{{- else if kindIs "float64" $value }}{{ $xml = printf "%s\t\t\t<key>%s</key>\n\t\t\t<integer>%d</integer>\n" $xml ($name | html) (int $value) }}
+{{- else }}{{ fail (printf "core/browser/brave.json: policy %s has an unsupported value type" $name) }}{{ end }}
+{{- end }}
+{{- end }}
+{{- $bitwardenId := "" }}
+{{- range $extension := get $spec "extensions" }}{{ if eq (get $extension "name") "Bitwarden" }}{{ $bitwardenId = get $extension "id" }}{{ end }}{{ end }}
+
+bundle_id={{ $bundle | quote }}
+bitwarden_id={{ if $bitwarden }}{{ $bitwardenId | quote }}{{ else }}""{{ end }}
+app="${GROUNDWORK_BRAVE_APP:-/Applications/Brave Browser.app}"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/groundwork"
+state_file="$state_dir/brave.state"
+profile_path="$HOME/Library/Application Support/Groundwork/Brave-Policies.mobileconfig"
+launch_timeout="${GROUNDWORK_BRAVE_LAUNCH_TIMEOUT:-30}"
+
+note() { printf 'Groundwork: %s\n' "$*"; }
+
+state_get() { # key
+  [[ -f "$state_file" ]] || return 0
+  sed -n "s/^$1=//p" "$state_file" | tail -n 1
+}
+
+state_set() { # key value
+  local tmp
+  mkdir -p "$state_dir"
+  tmp="$(mktemp "$state_dir/brave.state.XXXXXX")"
+  if [[ -f "$state_file" ]]; then
+    grep -v "^$1=" "$state_file" >"$tmp" || true
+  fi
+  printf '%s=%s\n' "$1" "$2" >>"$tmp"
+  mv "$tmp" "$state_file"
+}
+
+sha256_of() { # file
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
+}
+
+# The profile is the macOS delivery path for browser policy: the person approves
+# it in System Settings. Groundwork writes the file and says so once per change.
+write_policy_profile() {
+  local dir tmp sum
+  dir="$(dirname "$profile_path")"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.Brave-Policies.XXXXXX")"
+  cat >"$tmp" <<'PROFILE'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadType</key>
+			<string>{{ $bundle }}</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>PayloadIdentifier</key>
+			<string>dev.groundwork.brave-policies.settings</string>
+			<key>PayloadUUID</key>
+			<string>6F1B5E52-0C2D-4A39-9D55-3B7A1C0E8A01</string>
+			<key>PayloadDisplayName</key>
+			<string>Brave policies</string>
+{{ $xml }}		</dict>
+	</array>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+	<key>PayloadScope</key>
+	<string>User</string>
+	<key>PayloadIdentifier</key>
+	<string>dev.groundwork.brave-policies</string>
+	<key>PayloadUUID</key>
+	<string>9C4D2A77-5E18-4B6F-A0C3-72D9E4B1F602</string>
+	<key>PayloadDisplayName</key>
+	<string>Groundwork Brave policies</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+</dict>
+</plist>
+PROFILE
+  chmod 644 "$tmp"
+  mv "$tmp" "$profile_path"
+  sum="$(sha256_of "$profile_path")"
+  if [[ "$(state_get policies)" != "$sum" ]]; then
+    state_set policies "$sum"
+    note "Brave policies are ready. To apply them, open $profile_path and approve the profile in System Settings > Privacy & Security > Profiles."
+  fi
+}
+
+offer_bitwarden() {
+  [[ -n "$bitwarden_id" && -z "$(state_get bitwarden_offered)" ]] || return 0
+  state_set bitwarden_offered 1
+  note "To use Bitwarden in Brave, add it from https://chromewebstore.google.com/detail/$bitwarden_id (optional; nothing is installed for you)."
+}
+
+# Launch check: run Brave's own binary in headless mode against a throwaway
+# profile and require it to render a page and exit 0 before the deadline. That
+# proves the app is intact, signed well enough to start, and that its libraries
+# load, without a window, without touching the real profile, and without
+# colliding with a running Brave.
+brave_launches() {
+  local exe_name exe scratch out pid waited=0 limit
+  exe_name="$(defaults read "$app/Contents/Info" CFBundleExecutable 2>/dev/null)" || return 1
+  exe="$app/Contents/MacOS/$exe_name"
+  [[ -x "$exe" ]] || return 1
+  scratch="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-brave.XXXXXX")"
+  out="$scratch/dom.html"
+  limit=$((launch_timeout * 10))
+  "$exe" --headless --disable-gpu --no-first-run --no-default-browser-check \
+    --user-data-dir="$scratch/profile" --dump-dom about:blank >"$out" 2>/dev/null </dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if ((waited >= limit)); then
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+      kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -rf "$scratch"
+      return 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if wait "$pid" && grep -q '<html' "$out"; then
+    rm -rf "$scratch"
+    return 0
+  fi
+  rm -rf "$scratch"
+  return 1
+}
+
+find_defaultbrowser() {
+  local candidate
+  for candidate in "${GROUNDWORK_DEFAULTBROWSER_BIN:-}" /opt/homebrew/bin/defaultbrowser /usr/local/bin/defaultbrowser; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+switch_default() {
+  local tool listing handler current
+  case "$(state_get default)" in
+    switched | declined | offered) return 0 ;;
+  esac
+  if [[ ! -d "$app" ]]; then
+    note "Brave is not installed yet, so the default browser is unchanged. Rerun update-all after it installs."
+    return 0
+  fi
+  if [[ "$(defaults read "$app/Contents/Info" CFBundleIdentifier 2>/dev/null || true)" != "$bundle_id" ]]; then
+    note "$app is not $bundle_id, so the default browser is unchanged."
+    return 0
+  fi
+  # Aqua is the logged-in desktop session. SSH, cron, and a headless image are not.
+  if [[ -n "${SSH_CONNECTION:-}" || "$(launchctl managername 2>/dev/null || true)" != Aqua ]]; then
+    note "No desktop session, so Brave becomes the default browser on the next desktop run."
+    return 0
+  fi
+  if ! tool="$(find_defaultbrowser)"; then
+    note "defaultbrowser is not installed yet, so the default browser is unchanged. Rerun update-all."
+    return 0
+  fi
+  if ! listing="$("$tool" 2>/dev/null)"; then
+    note "defaultbrowser could not list browsers, so the default browser is unchanged."
+    return 0
+  fi
+  # defaultbrowser names a browser by the last part of its bundle id, lowercase,
+  # and marks the current default with a leading asterisk.
+  handler="$(printf '%s' "${bundle_id##*.}" | tr '[:upper:]' '[:lower:]')"
+  if ! printf '%s\n' "$listing" | sed 's/^[* ]*//' | grep -qxF -- "$handler"; then
+    note "defaultbrowser does not list Brave yet; the switch waits for the next run."
+    return 0
+  fi
+  current="$(printf '%s\n' "$listing" | sed -n 's/^\* *//p' | head -n 1)"
+  if [[ -z "$current" ]]; then
+    note "defaultbrowser did not report the current default, so the default browser is unchanged."
+    return 0
+  fi
+  if [[ "$current" == "$handler" ]]; then
+    state_set default switched
+    return 0
+  fi
+  case "$current" in
+    safari | chrome) ;;
+    *)
+      state_set default offered
+      note "Your default browser is $current, so Groundwork leaves it. To use Brave, run: $tool $handler"
+      return 0
+      ;;
+  esac
+  if ! brave_launches; then
+    note "Brave did not start within ${launch_timeout}s, so the default browser is unchanged. Groundwork tries again next run."
+    return 0
+  fi
+  # macOS shows its own confirmation. Recording now means a "Keep" click is a
+  # respected no, and the switch never repeats.
+  state_set default switched
+  if "$tool" "$handler" >/dev/null 2>&1; then
+    note "Brave is now the default browser once you confirm macOS's prompt. To go back: $tool $current"
+  else
+    state_set default ""
+    note "defaultbrowser could not set Brave, so the default browser is unchanged. Groundwork tries again next run."
+  fi
+}
+
+write_policy_profile
+offer_bitwarden
+switch_default
+{{- end }}
+{{- end }}

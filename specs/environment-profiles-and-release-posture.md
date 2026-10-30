@@ -177,8 +177,10 @@ and it is never a workaround or an integrity bypass.
 
 The settings editor confirms **concrete products**, not an abstract switch. On
 a desktop Mac the managed browser is Google Chrome stable for every release
-posture. Groundwork never changes the operating system's default-browser
-association, and organization or device policy remains authoritative. Chrome
+posture. Groundwork also installs Brave and, once, runs `defaultbrowser` so Brave
+becomes the default browser (macOS asks the person to confirm; a later choice
+is never overridden, and a saved decline is respected). Chrome stays installed
+and organization or device policy remains authoritative. Chrome
 Beta is not installed or configured. A copy already on the machine stays until
 the owner removes it.
 

@@ -170,6 +170,7 @@ clone_or_update_groundwork() {
     fi
     git -C "$groundwork_dir" fetch origin
     git -C "$groundwork_dir" pull --ff-only
+    git -C "$groundwork_dir" submodule update --init
     return
   fi
 
@@ -178,7 +179,7 @@ clone_or_update_groundwork() {
   fi
 
   mkdir -p "$(dirname "$groundwork_dir")"
-  git clone "$repo_url" "$groundwork_dir"
+  git clone --recurse-submodules "$repo_url" "$groundwork_dir"
 }
 
 if [[ "$(uname -s)" != "Darwin" ]]; then

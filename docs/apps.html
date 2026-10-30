@@ -142,7 +142,7 @@
       <table class="keytable">
         <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, Google Chrome stable, the one Chrome password-manager setting described below, browser/Raycast extension checklists, and Obsidian vault/plugin seed files.</td></tr>
         <tr><td><strong>Use app sync/export</strong></td><td>Raycast aliases, hotkeys, snippets, Quicklinks, and extensions belong in Raycast Cloud Sync if available on your plan, or Raycast export/import. Anybox links, folders, tags, Smart Lists, Quick Links, snippets, and Anydock profiles sync through iCloud. Chrome Sync is optional and owned by your Google account.</td></tr>
-        <tr><td><strong>Manual by design</strong></td><td>App Store purchases, sign-in, password-manager unlock, API keys, SSH-agent approval, default-browser confirmation, macOS privacy prompts, display presets, and app-level hotkeys that depend on your hands, monitors, and existing shortcuts.</td></tr>
+        <tr><td><strong>Manual by design</strong></td><td>App Store purchases, sign-in, password-manager unlock, API keys, SSH-agent approval, the macOS default-browser confirmation and Brave profile approval, macOS privacy prompts, display presets, and app-level hotkeys that depend on your hands, monitors, and existing shortcuts.</td></tr>
       </table>
       <div class="callout note">
         <span class="label">Why not write app databases?</span>
@@ -164,11 +164,12 @@
 
       <h2 id="browsers"><span class="hash" aria-hidden="true">#</span>Browsers</h2>
       <table class="keytable">
-        <tr><td><strong>Chrome stable</strong></td><td>The managed browser on every desktop Mac posture: current, preview, Xcode, and work-managed. Headless profiles install no GUI browser. Release posture does not change this choice.</td></tr>
+        <tr><td><strong>Brave</strong></td><td>The default browser on every desktop Mac posture: current, preview, Xcode, and work-managed. Installed with the Homebrew cask <code>brave-browser</code>. Headless profiles install no GUI browser.</td></tr>
+        <tr><td><strong>Chrome stable</strong></td><td>Stays installed on every desktop Mac posture. Release posture does not change this choice.</td></tr>
       </table>
       <div class="callout note">
-        <span class="label">Installed is not the same as default</span>
-        <p>Groundwork installs Google Chrome stable. It never changes the macOS default-browser association: that confirmation remains your decision. Organization and device policy outrank the profile on managed machines.</p>
+        <span class="label">Brave becomes the default once</span>
+        <p>The first time Brave is installed and starts in a desktop session, Groundwork runs <code>defaultbrowser browser</code> once. macOS shows its own confirmation and you click it. Groundwork never repeats the switch, never overrides a default you choose later, and leaves a default other than Safari or Chrome alone, printing the command instead. Over SSH or on a headless machine it waits for the next desktop run. To opt out first, run <code>mkdir -p ~/.local/state/groundwork &amp;&amp; echo default=declined &gt;&gt; ~/.local/state/groundwork/brave.state</code>. Chrome stays installed and no profile data is deleted. Brave's policies are written to <code>~/Library/Application Support/Groundwork/Brave-Policies.mobileconfig</code>; you approve that profile in System Settings. Organization and device policy outrank it on managed machines.</p>
       </div>
       <div class="callout note">
         <span class="label">Chrome Beta is no longer managed</span>
@@ -377,7 +378,7 @@ font-family = JetBrainsMono Nerd Font</code></pre>
         <div class="num">2</div>
         <div class="body">
           <h3>Confirm the managed browser</h3>
-          <p>Run <code>groundwork-profile show</code>. Every desktop Mac posture reports Google Chrome stable. If you want to change the macOS default browser, run <code>defaultbrowser</code> and make that separate choice yourself. An older Chrome Beta install stays in place; remove it with <code>brew uninstall --cask google-chrome@beta</code> when you want it gone.</p>
+          <p>Run <code>groundwork-profile show</code>. Every desktop Mac posture reports Google Chrome stable. Brave is the default after the one-time switch; to change the macOS default browser later, run <code>defaultbrowser</code> and make that choice yourself, and Groundwork will not undo it. An older Chrome Beta install stays in place; remove it with <code>brew uninstall --cask google-chrome@beta</code> when you want it gone.</p>
         </div>
       </div>
       <div class="drill">

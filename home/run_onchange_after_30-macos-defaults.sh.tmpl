@@ -96,7 +96,8 @@ defaults write com.google.Chrome PasswordManagerEnabled -bool false
 # Personal preference — uncomment if you want it:
 # defaults write com.apple.dock autohide -bool true
 
-# Groundwork installs Chrome but never changes the macOS default-browser
-# association. Run `defaultbrowser` yourself if you want to inspect or change it;
-# macOS requires a confirmation that automation must not bypass.
+# Groundwork changes the macOS default-browser association once, to Brave, from
+# run_after_34-brave-default.sh. That script runs `defaultbrowser`, macOS asks
+# the person to confirm, and a later choice is never overridden. Chrome stays
+# installed. This file does not touch the association.
 {{- end }}

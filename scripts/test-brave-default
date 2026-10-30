@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Prove the Brave policy profile and one-time default switch with private stubs.
+
+The template is rendered with chezmoi for each target, then the rendered script
+runs against fake macOS tools. Nothing here proves macOS behavior itself.
+"""
+import json
+import os
+from pathlib import Path
+import plistlib
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+TEMPLATE = REPO / "home/run_after_34-brave-default.sh.tmpl"
+SPEC = REPO / "core/browser/brave.json"
+
+
+def render(os_name, headless, password_manager="bitwarden"):
+    data = {
+        "headless": headless,
+        "password_manager": password_manager,
+        "chezmoi": {"os": os_name, "arch": "arm64"},
+    }
+    return subprocess.run(
+        ["chezmoi", "--source", str(REPO), "--override-data", json.dumps(data), "execute-template"],
+        input=TEMPLATE.read_text(), text=True, capture_output=True, timeout=60, check=True,
+    ).stdout
+
+
+class RenderTests(unittest.TestCase):
+    def test_only_a_macos_desktop_gets_any_logic(self):
+        for os_name, headless in (("linux", False), ("linux", True), ("darwin", True)):
+            script = render(os_name, headless)
+            self.assertNotIn("defaultbrowser", script.replace("GROUNDWORK_DEFAULTBROWSER_BIN", ""), (os_name, headless))
+            self.assertNotIn("Brave-Policies", script)
+            self.assertNotIn("PasswordManagerEnabled", script)
+        self.assertIn("bundle_id=\"com.brave.Browser\"", render("darwin", False))
+
+    def policies(self, password_manager):
+        script = render("darwin", False, password_manager)
+        body = script.split("<<'PROFILE'\n", 1)[1].split("\nPROFILE\n", 1)[0]
+        content = plistlib.loads(body.encode())["PayloadContent"][0]
+        return {k: v for k, v in content.items() if not k.startswith("Payload")}, content
+
+    def test_policies_come_from_the_core_spec(self):
+        spec = json.loads(SPEC.read_text())
+        unconditional = {p["name"]: p["value"] for p in spec["policies"] if "when" not in p}
+        for manager, expect_password in (("bitwarden", True), ("1password", False), ("none", False)):
+            rendered, content = self.policies(manager)
+            self.assertEqual(content["PayloadType"], "com.brave.Browser")
+            self.assertEqual(
+                {k: v for k, v in rendered.items() if k != "PasswordManagerEnabled"}, unconditional)
+            self.assertEqual("PasswordManagerEnabled" in rendered, expect_password, manager)
+            if expect_password:
+                self.assertIs(rendered["PasswordManagerEnabled"], False)
+        self.assertIn(spec["extensions"][0]["id"], render("darwin", False, "bitwarden"))
+        self.assertNotIn(spec["extensions"][0]["id"], render("darwin", False, "none"))
+
+
+class SwitchTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="groundwork-brave-")
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        for name in ("awk", "sed", "grep", "tr", "head", "tail", "mkdir", "mktemp", "mv", "rm", "chmod",
+                     "cat", "dirname", "sleep", "kill", "sha256sum", "printf", "env", "bash"):
+            found = shutil.which(name)
+            if found:
+                (self.bin / name).symlink_to(found)
+        self.app = self.root / "Brave Browser.app"
+        (self.app / "Contents/MacOS").mkdir(parents=True)
+        self.calls = self.root / "calls"
+        self.calls.write_text("")
+        self.listing = "  chrome\n* safari\n  firefox\n  browser\n"
+        self.session = "Aqua"
+        self.exe_output = "<html><head></head><body></body></html>"
+        self.exe_status = 0
+        self.bundle = "com.brave.Browser"
+        self.script = render("darwin", False)
+
+    def stub(self, name, body):
+        path = self.bin / name
+        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.chmod(0o755)
+        return path
+
+    def run_script(self, installed=True, ssh=False):
+        self.stub("defaults", f'''case "$3" in
+  CFBundleExecutable) echo brave ;;
+  CFBundleIdentifier) echo {self.bundle} ;;
+esac''')
+        self.stub("launchctl", f"echo {self.session}")
+        listing = self.root / "listing"
+        listing.write_text(self.listing)
+        tool = self.stub("defaultbrowser", f'''if [ "$#" -eq 0 ]; then cat "{listing}"; else echo "$@" >>"{self.calls}"; fi''')
+        exe = self.app / "Contents/MacOS/brave"
+        exe.write_text(f'#!/bin/sh\necho "$@" >>"{self.calls}.launch"\nprintf %s "{self.exe_output}"\nexit {self.exe_status}\n')
+        exe.chmod(0o755)
+        env = {
+            "PATH": str(self.bin), "HOME": str(self.home), "TMPDIR": str(self.root),
+            "GROUNDWORK_BRAVE_APP": str(self.app if installed else self.root / "missing.app"),
+            "GROUNDWORK_DEFAULTBROWSER_BIN": str(tool),
+            "GROUNDWORK_BRAVE_LAUNCH_TIMEOUT": "5",
+        }
+        if ssh:
+            env["SSH_CONNECTION"] = "1 2 3 4"
+        script = self.root / "run.sh"
+        script.write_text(self.script)
+        done = subprocess.run([str(self.bin / "bash"), str(script)], env=env, text=True,
+                              capture_output=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def state(self):
+        path = self.home / ".local/state/groundwork/brave.state"
+        return path.read_text() if path.exists() else ""
+
+    def switches(self):
+        return self.calls.read_text().splitlines()
+
+    def test_first_run_switches_once_and_never_repeats(self):
+        out = self.run_script()
+        self.assertEqual(self.switches(), ["browser"])
+        self.assertIn("default=switched", self.state())
+        self.assertIn("go back: " + str(self.bin / "defaultbrowser") + " safari", out)
+        self.assertTrue((self.home / "Library/Application Support/Groundwork/Brave-Policies.mobileconfig").is_file())
+        self.assertIn("--headless", (self.root / "calls.launch").read_text())
+        self.listing = "  chrome\n  safari\n  firefox\n* browser\n"
+        self.run_script()
+        self.assertEqual(self.switches(), ["browser"])
+
+    def test_chrome_is_a_stock_default_too(self):
+        self.listing = "* chrome\n  safari\n  browser\n"
+        self.run_script()
+        self.assertEqual(self.switches(), ["browser"])
+
+    def test_policy_note_prints_once_per_change(self):
+        first = self.run_script(ssh=True)
+        second = self.run_script(ssh=True)
+        self.assertIn("Brave policies are ready", first)
+        self.assertNotIn("Brave policies are ready", second)
+        self.assertEqual(first.count("Bitwarden"), 1)
+        self.assertNotIn("Bitwarden", second)
+
+    def test_no_desktop_session_defers_with_no_state(self):
+        for ssh, session in ((True, "Aqua"), (False, "Background")):
+            self.session = session
+            out = self.run_script(ssh=ssh)
+            self.assertEqual(self.switches(), [])
+            self.assertNotIn("default=", self.state())
+            self.assertIn("next desktop run", out)
+
+    def test_a_later_choice_and_a_saved_no_are_respected(self):
+        self.listing = "  chrome\n  safari\n* firefox\n  browser\n"
+        out = self.run_script()
+        self.assertEqual(self.switches(), [])
+        self.assertIn("default=offered", self.state())
+        self.assertIn("defaultbrowser", out)
+        self.assertIn("browser", out)
+        (self.home / ".local/state/groundwork/brave.state").write_text("default=declined\n")
+        self.listing = "  chrome\n* safari\n  browser\n"
+        self.run_script()
+        self.assertEqual(self.switches(), [])
+
+    def test_already_default_records_without_a_dialog(self):
+        self.listing = "  chrome\n  safari\n* browser\n"
+        self.run_script()
+        self.assertEqual(self.switches(), [])
+        self.assertIn("default=switched", self.state())
+
+    def test_failed_launch_changes_nothing_and_retries_later(self):
+        self.exe_output = ""
+        self.exe_status = 1
+        out = self.run_script()
+        self.assertEqual(self.switches(), [])
+        self.assertNotIn("default=", self.state())
+        self.assertIn("did not start", out)
+
+    def test_missing_app_wrong_bundle_or_unlisted_handler_wait(self):
+        self.run_script(installed=False)
+        self.bundle = "com.example.Other"
+        self.run_script()
+        self.bundle = "com.brave.Browser"
+        self.listing = "  chrome\n* safari\n"
+        self.run_script()
+        self.assertEqual(self.switches(), [])
+        self.assertNotIn("default=", self.state())
+
+
+if __name__ == "__main__":
+    unittest.main()
