@@ -1,7 +1,7 @@
 {{- /* One canonical browser selection used by the installed browser manifest
 and rendered validation. Every desktop Mac posture installs Brave.
 Release posture does not change the browser, and headless profiles select
-none. Policies come from groundwork-core v0.8.0, not a second copy. */ -}}
+none. Policies come from groundwork-core, not a second copy. */ -}}
 {{- $headless := false -}}
 {{- if hasKey . "headless" }}{{- $headless = .headless -}}{{- end -}}
 {{- if and (eq .chezmoi.os "darwin") (not $headless) }}

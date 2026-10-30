@@ -140,7 +140,7 @@
       <h2 id="configuration-boundary"><span class="hash" aria-hidden="true">#</span>What Groundwork can configure</h2>
       <p>Groundwork should only automate settings that live in stable files, templates, or documented macOS defaults. Many Mac apps keep their real state in app databases, account sync, Keychain, iCloud, or per-device stores; those should stay in the app that owns them.</p>
       <table class="keytable">
-        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, Brave on desktop Macs, the Brave policy profile rendered from groundwork-core v0.8.0, the Bitwarden extension offer, and Obsidian vault/plugin seed files.</td></tr>
+        <tr><td><strong>Managed by Groundwork</strong></td><td>Shell, Git, tmux, Neovim, Ghostty, Karabiner merge config, selected macOS defaults, Brave on desktop Macs, the Brave policy profile rendered from groundwork-core, the Bitwarden extension offer, and Obsidian vault/plugin seed files.</td></tr>
         <tr><td><strong>Use app sync/export</strong></td><td>Raycast aliases, hotkeys, snippets, Quicklinks, and extensions belong in Raycast Cloud Sync if available on your plan, or Raycast export/import. Anybox links, folders, tags, Smart Lists, Quick Links, snippets, and Anydock profiles sync through iCloud. Brave Sync is optional and owned by the account you sign into.</td></tr>
         <tr><td><strong>Manual by design</strong></td><td>App Store purchases, sign-in, password-manager unlock, API keys, SSH-agent approval, default-browser confirmation, macOS privacy prompts, display presets, and app-level hotkeys that depend on your hands, monitors, and existing shortcuts.</td></tr>
       </table>
@@ -171,8 +171,8 @@
         <p>Groundwork installs Brave and makes it the default browser once, automatically, the first time it passes a code-signature check in a desktop session. It runs <code>defaultbrowser browser</code> only when the default is still Safari or unset; macOS shows its own confirmation and Groundwork does not bypass it. The next run reads the real default: Brave means done, and a Keep Safari answer is saved as a decline and never asked again. Any other default, such as Chrome, only gets the usual prompt, which defaults to no. Over SSH or with no desktop session the switch waits for the next desktop run. To decline ahead of time, run <code>mkdir -p ~/.local/state/groundwork/brave && echo declined > ~/.local/state/groundwork/brave/default-browser</code>. A default you choose later is never overridden. Organization and device policy outrank the profile on any Mac.</p>
       </div>
       <div class="callout note">
-        <span class="label">Policies come from groundwork-core v0.8.0</span>
-        <p>The only policy list is <a href="https://github.com/jasondockery/groundwork-core/blob/v0.8.0/docs/browser.md">groundwork-core's browser contract</a>. <code>groundwork-brave-browser --apply</code> renders that spec into a <code>com.brave.Browser</code> configuration profile and offers to open it. System Settings asks you to approve it. Groundwork does not install the profile for you. Organization and device policy outrank the profile on any Mac. Confirm the installed values at <code>brave://policy</code>. <code>groundwork-brave-browser --doctor</code> only reports.</p>
+        <span class="label">Policies come from groundwork-core</span>
+        <p>The only policy list is <a href="https://github.com/jasondockery/groundwork-core/blob/main/docs/browser.md">groundwork-core's browser contract</a>. <code>groundwork-brave-browser --apply</code> renders that spec into a <code>com.brave.Browser</code> configuration profile and offers to open it. System Settings asks you to approve it. Groundwork does not install the profile for you. Organization and device policy outrank the profile on any Mac. Confirm the installed values at <code>brave://policy</code>. <code>groundwork-brave-browser --doctor</code> only reports.</p>
       </div>
       <div class="callout note">
         <span class="label">Chrome is no longer managed</span>
@@ -183,7 +183,7 @@
         <p>Use Brave without signing in, or sign in if you want Brave to sync bookmarks, history, saved passwords, settings, and open tabs. Groundwork does not sign in, enable sync, or put account data into dotfiles.</p>
       </div>
       <h3>Browser extensions</h3>
-      <p>Bitwarden is the only extension Groundwork offers. The id and update URL come from groundwork-core v0.8.0, not from a second catalog. An interactive apply asks before writing the external-extension file, and Brave asks again before enabling it. Run <code>browser-extensions</code> to list it, or <code>browser-extensions --open</code> to open the store page in Brave.</p>
+      <p>Bitwarden is the only extension Groundwork offers. The id and update URL come from groundwork-core, not from a second catalog. An interactive apply asks before writing the external-extension file, and Brave asks again before enabling it. Run <code>browser-extensions</code> to list it, or <code>browser-extensions --open</code> to open the store page in Brave.</p>
       <div class="terminal small"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">browser extension helper</span></div><pre><code><span class="prompt">$ </span>browser-extensions
 <span class="prompt">$ </span>browser-extensions --open</code></pre></div>
 

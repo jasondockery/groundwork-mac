@@ -16325,8 +16325,15 @@ shared = next(surface for surface in inventory["surfaces"] if surface["id"] == "
 if shared.get("classification") != "built-in" or shared.get("manager") != "renovate-config":
     raise SystemExit("the versioned shared preset must remain assigned to Renovate")
 renovate_config = json.loads((root / "renovate.json").read_text(encoding="utf-8"))
-if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.1.1"]:
-    raise SystemExit("extends must stay on preset 1.1.0")
+if renovate_config.get("extends") != [
+    "github>jasondockery/renovate-config#1.2.0",
+    "github>jasondockery/renovate-config:groundwork-core#1.2.0",
+]:
+    raise SystemExit("extends must stay on preset 1.2.0 plus its groundwork-core named preset")
+if "git-submodules" in renovate_config or any(
+    "git-submodules" in rule.get("matchManagers", []) for rule in renovate_config.get("packageRules", [])
+):
+    raise SystemExit("the core submodule rules live in the groundwork-core preset, not this repo")
 if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml"]:
     raise SystemExit("Renovate must ignore derived Node mirrors and read the managed mise config")
 if "minimumReleaseAge" in renovate_config:
@@ -16419,7 +16426,7 @@ if python_versioning_rules != [{
 }]:
     raise SystemExit("the Python request must stay on semver-partial so mise can float patches inside the line")
 if python_pin_rules != [{
-    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.13\", \"3.12\"] must stay pinned. Renovate's mise manager (44.23.0) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
+    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.13\", \"3.12\"] must stay pinned. Renovate's mise manager (44.173.1) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
     "matchManagers": ["mise"],
     "matchDepNames": ["python"],
     "matchFileNames": ["home/dot_config/mise/config.toml"],
@@ -16428,7 +16435,7 @@ if python_pin_rules != [{
 }]:
     raise SystemExit("the Python 3.12 pin rule must stay exact and must not add local line-bump approval")
 if any("dependencyDashboardApproval" in rule for rule in python_rules):
-    raise SystemExit("Python line-bump approval belongs to preset 1.1.0, not this repo")
+    raise SystemExit("Python line-bump approval belongs to the shared preset, not this repo")
 gitleaks_age_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
@@ -16473,6 +16480,7 @@ non_major_rules = [
 if len(non_major_rules) != 1 or non_major_rules[0] != {
     "groupName": "non-major dependencies",
     "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+    "matchDepNames": ["!core"],
 }:
     raise SystemExit("ordinary minor, patch, digest, and pin maintenance must remain enabled and grouped")
 if "vulnerabilityAlerts" in renovate_config:
@@ -17890,7 +17898,8 @@ PY
   done
   # Renovate owns dependency updates (renovate.json) through the shared preset; a
   # dependabot.yml would create duplicate PRs, so its absence is the guarded state.
-  grep -q '"github>jasondockery/renovate-config#1.1.1"' renovate.json
+  grep -q '"github>jasondockery/renovate-config#1.2.0"' renovate.json
+  grep -q '"github>jasondockery/renovate-config:groundwork-core#1.2.0"' renovate.json
   grep -Fq 'evaluates routine updates for branch and PR creation on every daily run after the applicable five-day maturity floor' renovate.json
   grep -Fq 'GHCR does not expose a Renovate releaseTimestamp for the Gitleaks tags' renovate.json
   grep -Fq 'Groundwork&apos;s Gitleaks container uses an exact local age-check exception' docs/dependencies.html
