@@ -100,12 +100,17 @@ class GitFilterRepoTests(unittest.TestCase):
     def calls(self):
         return self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
 
+    def assertDisabled(self, text):
+        # A shebang and set line keep shellcheck and chezmoi happy; no install code renders.
+        self.assertEqual(text.strip().splitlines(), ["#!/usr/bin/env bash", "set -euo pipefail"])
+        self.assertNotIn("pipx", text)
+
     def test_default_run_renders_nothing_and_installs_nothing(self):
         for data in ({}, {"git_filter_repo": False}, {"git_filter_repo": "yes"}):
             with self.subTest(data=data):
-                self.assertEqual(self.render(SCRIPT, **data).strip(), "")
+                self.assertDisabled(self.render(SCRIPT, **data))
         linux = dict(os="linux", arch="amd64", osRelease={"ID": "ubuntu"})
-        self.assertEqual(self.render(SCRIPT, git_filter_repo=True, chezmoi=linux).strip(), "")
+        self.assertDisabled(self.render(SCRIPT, git_filter_repo=True, chezmoi=linux))
         for brewfile in ("Brewfile.optional.tmpl", "Brewfile.tmpl"):
             text = self.render(f"home/dot_config/homebrew/{brewfile}")
             self.assertNotIn("pipx", text.replace("# pipx", ""))

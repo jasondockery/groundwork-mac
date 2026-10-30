@@ -1,12 +1,11 @@
-{{- /* Opt-in, per-user git-filter-repo for history purges. Renders empty (and chezmoi skips it) unless macOS and git_filter_repo is the boolean true. groundwork-core docs/history-purge.md owns the contract: per-user install, no root, proof is `git filter-repo -h` listing --sensitive-data-removal. This script never runs a history rewrite, force-push, or tag change. */ -}}
+{{- /* Opt-in, per-user git-filter-repo for history purges. Renders only a shebang and set line (a no-op) unless macOS and git_filter_repo is the boolean true. groundwork-core docs/history-purge.md owns the contract: per-user install, no root, proof is `git filter-repo -h` listing --sensitive-data-removal. This script never runs a history rewrite, force-push, or tag change. */ -}}
 {{- $enabled := false -}}
 {{- if and (eq .chezmoi.os "darwin") (hasKey . "git_filter_repo") (kindIs "bool" .git_filter_repo) -}}
 {{- $enabled = .git_filter_repo -}}
 {{- end -}}
-{{- if $enabled -}}
 #!/usr/bin/env bash
 set -euo pipefail
-
+{{ if $enabled }}
 # Per-user locations first, then Homebrew's pipx (installed from Brewfile.optional).
 # GROUNDWORK_TEST_BREW_BIN_DIRS lets the tests keep a host Homebrew pipx out of reach.
 brew_dirs="${GROUNDWORK_TEST_BREW_BIN_DIRS-/opt/homebrew/bin:/usr/local/bin}"
@@ -44,4 +43,4 @@ else
   echo "git-filter-repo is not usable: 'git filter-repo -h' does not list --sensitive-data-removal. Will retry on next chezmoi apply." >&2
 fi
 exit 0
-{{- end -}}
+{{ end -}}
