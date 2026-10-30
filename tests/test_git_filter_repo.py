@@ -78,17 +78,18 @@ class GitFilterRepoTests(unittest.TestCase):
         path.write_text(body, encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
-    def run_script(self, text, with_pipx=True, help_text="usage: git filter-repo --sensitive-data-removal"):
+    def run_script(self, text, with_pipx=True, help_text="usage: git filter-repo --sensitive-data-removal", with_gtimeout=True, brew_dirs=""):
         script = self.root / "run.sh"
         script.write_text(text, encoding="utf-8")
         self.install_fake("git", FAKE_GIT)
-        self.install_fake("gtimeout", 'echo "gtimeout $*" >> "$FAKE_LOG"\nshift 2\nexec "$@"\n'.join(["#!/usr/bin/env bash\n", ""]))
+        if with_gtimeout:
+            self.install_fake("gtimeout", 'echo "gtimeout $*" >> "$FAKE_LOG"\nshift 2\nexec "$@"\n'.join(["#!/usr/bin/env bash\n", ""]))
         if with_pipx:
             self.install_fake("pipx", FAKE_PIPX)
         env = {
             "HOME": str(self.home),
             "PATH": str(self.bin),
-            "GROUNDWORK_TEST_BREW_BIN_DIRS": "",
+            "GROUNDWORK_TEST_BREW_BIN_DIRS": brew_dirs,
             "FAKE_LOG": str(self.log),
             "FAKE_STATE": str(self.state),
             "FAKE_HELP": help_text,
@@ -144,6 +145,33 @@ class GitFilterRepoTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("pipx is not installed", result.stderr)
         self.assertFalse(self.state.exists())
+
+    def test_missing_gtimeout_warns_and_calls_no_pipx(self):
+        text = self.render(SCRIPT, git_filter_repo=True)
+        result = self.run_script(text, with_gtimeout=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("GNU timeout is required", result.stderr)
+        self.assertFalse([c for c in self.calls() if "pipx" in c])
+        self.assertFalse(self.state.exists())
+
+    def test_a_pipx_in_a_brew_dir_is_unreachable_unless_the_override_names_it(self):
+        text = self.render(SCRIPT, git_filter_repo=True)
+        brew = self.root / "brew-bin"
+        brew.mkdir()
+        fake = brew / "pipx"
+        fake.write_text(FAKE_PIPX, encoding="utf-8")
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        # Sealed: the override is empty, so the "brew" pipx never runs.
+        result = self.run_script(text, with_pipx=False, brew_dirs="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pipx is not installed", result.stderr)
+        self.assertFalse([c for c in self.calls() if c.startswith("pipx")])
+        self.assertFalse(self.state.exists())
+        # Control: naming that dir makes the same script reach it, so the seal is the override.
+        self.log.unlink(missing_ok=True)
+        result = self.run_script(text, with_pipx=False, brew_dirs=str(brew))
+        self.assertIn("pipx install git-filter-repo", self.calls())
+        self.assertTrue(self.state.exists())
 
     def test_no_history_rewrite_command_is_ever_run(self):
         self.run_script(self.render(SCRIPT, git_filter_repo=True))
