@@ -18783,7 +18783,8 @@ SH
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
     'google-chrome')"
-  grep -qF 'device policy outrank this selection' <<<"$browser_doctor_out"
+  assert_not_contains 'device policy outrank this selection' <(printf '%s\n' "$browser_doctor_out") \
+    "a retired managed role must not get a special doctor note"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out"
   browser_doctor_out="$(run_browser_doctor \
     '{"headless":false,"release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
