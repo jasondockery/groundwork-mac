@@ -393,12 +393,13 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual(self.log("defaultbrowser").count("set browser\n"), 1)
 
-    def test_unset_default_is_switched_and_update_all_may_do_it(self):
+    def test_unset_default_is_switched_and_update_all_prints_the_line(self):
         self._write_defaultbrowser("  chrome\n  safari\n  browser\n", 0)
         environment = self.auto_env(GROUNDWORK_UPDATE_SCOPE="maintenance")
         result = self.run_brave("--apply", env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stdout.count("\n"), 1, result.stdout)
+        self.assertIn("To go back: defaultbrowser safari", result.stdout)
         self.assertIn("set browser\n", self.log("defaultbrowser"))
         self.assertEqual(self.choice("default-browser"), "requested")
 
@@ -442,9 +443,77 @@ class BraveBrowserTests(unittest.TestCase):
             self._write_session_tools()
             extra = {"SSH_CONNECTION": "1 2 3 4"} if ssh else {}
             result = self.run_brave("--apply", env=self.auto_env(**extra))
-            self.assertIn("next desktop run", result.stdout)
+            self.assertIn("No desktop session", result.stdout)
             self.assertNotIn("set browser", self.log("defaultbrowser"))
             self.assertIsNone(self.choice("default-browser"))
+
+    def test_other_default_without_a_desktop_session_is_not_asked(self):
+        self._write_defaultbrowser("* chrome\n  safari\n  browser\n", 0)
+        self.session = "Background"
+        self._write_session_tools()
+        for seeded in (None, "pending"):
+            if seeded:
+                self.seed("default-browser", seeded)
+            result = self.run_brave("--apply", env=self.auto_env(), answers="y\n")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("No desktop session", result.stdout)
+            self.assertNotIn("set browser", self.log("defaultbrowser"))
+            self.assertNotEqual(self.choice("default-browser"), "declined")
+        ssh = self.run_brave("--offer-default", env=self.auto_env(SSH_CONNECTION="1 2 3 4"), answers="y\n")
+        self.assertIn("No desktop session", ssh.stdout)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+
+    def test_pending_state_with_another_default_asks_instead_of_running(self):
+        self._write_defaultbrowser("* chrome\n  safari\n  browser\n", 0)
+        self.seed("default-browser", "pending")
+        environment = self.auto_env()
+        declined = self.run_brave("--apply", env=environment, answers="n\n")
+        self.assertEqual(declined.returncode, 0, declined.stderr)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertEqual(self.choice("default-browser"), "declined")
+        self.seed("default-browser", "pending")
+        accepted = self.run_brave("--apply", env=environment, answers="y\n")
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(self.log("defaultbrowser").count("set browser\n"), 1)
+        self.assertEqual(self.choice("default-browser"), "requested")
+
+    def test_auto_default_never_prompts_and_leaves_other_defaults_alone(self):
+        self._write_defaultbrowser("* chrome\n  safari\n  browser\n", 0)
+        result = self.run_brave("--auto-default", env=self.auto_env(), answers="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertIsNone(self.choice("default-browser"))
+
+    def test_a_deferred_switch_happens_on_a_later_update_run(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        environment = self.auto_env(GROUNDWORK_UPDATE_SCOPE="maintenance")
+        self.session = "Background"
+        self._write_session_tools()
+        first = self.run_brave("--auto-default", env=environment)
+        self.assertIn("No desktop session", first.stdout)
+        self.assertIsNone(self.choice("default-browser"))
+        self.session = "Aqua"
+        self.codesign_status = 1
+        self._write_session_tools()
+        second = self.run_brave("--auto-default", env=environment)
+        self.assertIn("code-signature check", second.stdout)
+        self.assertIsNone(self.choice("default-browser"))
+        self.codesign_status = 0
+        self._write_session_tools()
+        third = self.run_brave("--auto-default", env=environment)
+        self.assertIn("To go back", third.stdout)
+        self.assertEqual(self.choice("default-browser"), "requested")
+        self._write_defaultbrowser("  chrome\n  safari\n* browser\n", 0)
+        self.run_brave("--auto-default", env=environment)
+        self.assertEqual(self.choice("default-browser"), "accepted")
+        self.assertEqual(self.log("defaultbrowser").count("set browser\n"), 1)
+
+    def test_update_runner_calls_auto_default_before_the_notice(self):
+        runner = (REPO / "home/dot_local/bin/executable_groundwork-update-run.tmpl").read_text(encoding="utf-8")
+        self.assertEqual(runner.count("groundwork-brave-browser\" --auto-default"), 2)
+        for block in runner.split("groundwork-brave-browser\" --auto-default")[1:]:
+            self.assertIn("--notice", block[:80])
 
     def test_failed_signature_check_changes_nothing(self):
         self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)

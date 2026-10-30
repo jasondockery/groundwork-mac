@@ -20,6 +20,9 @@ Modes:
   --notice          Print at most one line per unmet condition. Never prompt,
                     write a file, or change the default browser.
   --offer-default   Ask only whether to make Brave the default browser.
+  --auto-default    Never prompt. Resolve a requested switch, and make the
+                    one-time switch from Safari or an unset default. update-all
+                    runs this before --notice, so a deferred switch is retried.
   --doctor          Read-only status for groundwork-doctor --browser.
   -h, --help        Show this help
 
@@ -272,6 +275,11 @@ prompt_choice() {
     return 1
   fi
   return 0
+}
+
+# One-line results of the default-browser switch print even under update-all.
+announce() {
+  printf '%s\n' "$*"
 }
 
 say() {
@@ -624,27 +632,31 @@ resolve_request() { # current current_rc
     return 0
   fi
   choice_set default-browser declined
-  say "You kept ${current:-your browser} as the default browser, so Groundwork will not ask again. To use Brave later, run: defaultbrowser $handler"
+  announce "You kept ${current:-your browser} as the default browser, so Groundwork will not ask again. To use Brave later, run: defaultbrowser $handler"
 }
 
 # The one-time switch. Only a default the person did not choose (Safari, or
 # none) is switched, and only from a desktop session once Brave passes the check.
 switch_default() { # previous
   if ! gui_session; then
-    say "No desktop session, so Brave becomes the default browser on the next desktop run."
+    announce "No desktop session, so Brave becomes the default browser on the next desktop update-all or groundwork-brave-browser --apply."
     return 0
   fi
   if ! brave_intact; then
-    say "Brave failed its code-signature check, so the default browser is unchanged. Groundwork tries again next run."
+    announce "Brave failed its code-signature check, so the default browser is unchanged. The next update-all tries again."
     return 0
   fi
   try_set_default_browser
   if [[ "$(choice_get default-browser || true)" == "requested" ]]; then
-    say "Brave becomes the default browser once you confirm macOS's prompt. To go back: defaultbrowser ${1:-safari}"
+    announce "Brave becomes the default browser once you confirm macOS's prompt. To go back: defaultbrowser ${1:-safari}"
   fi
 }
 
-offer_default() {
+# auto: the non-prompting caller (update-all). It resolves a request and makes
+# the one-time switch from Safari or an unset default, and leaves every other
+# case to the notice and to an interactive run.
+offer_default() { # [auto]
+  local auto="${1:-}"
   brave_installed || return 0
   load_handler || die "could not read the Brave default-browser handler"
   local current="" current_rc=0 rc=0 existing=""
@@ -665,16 +677,17 @@ offer_default() {
     switch_default "$current"
     return 0
   fi
+  [[ -z "$auto" ]] || return 0
+  # Another browser is the default. Only a person at a desktop is asked, and a
+  # stale pending state never runs defaultbrowser without asking again.
+  if ! gui_session; then
+    announce "No desktop session, so Groundwork does not ask about the default browser now. To use Brave, run: defaultbrowser $handler"
+    return 0
+  fi
+  [[ "$existing" != "pending" ]] || choice_clear default-browser
   prompt_choice default-browser "Make Brave the default browser? macOS will ask you to confirm. [y/N]" || rc=$?
   case "$rc" in
     0) try_set_default_browser ;;
-    11)
-      if prompts_allowed; then
-        try_set_default_browser
-      else
-        default_notice
-      fi
-      ;;
     12) default_notice ;;
     1 | 10) ;;
     *) return "$rc" ;;
@@ -690,6 +703,11 @@ notice_default() {
   fi
   current="$(current_handler)" || current_rc=$?
   if [[ "$current_rc" -eq 0 && "$current" == "$handler" ]]; then
+    return 0
+  fi
+  # Safari or an unset default is the one-time switch's case; --auto-default
+  # prints its own result line.
+  if [[ "$current_rc" -eq 1 || ("$current_rc" -eq 0 && "$current" == "safari") ]]; then
     return 0
   fi
   default_notice
@@ -749,6 +767,14 @@ cmd_notice() {
   fi
   notice_default || printf 'groundwork-brave-browser: could not read the Brave default-browser handler.\n' >&2
   exit 0
+}
+
+cmd_auto_default() {
+  quiet="false"
+  load_profile
+  desktop_target || exit 0
+  require_spec || exit 0
+  offer_default auto
 }
 
 cmd_offer_default() {
@@ -837,6 +863,7 @@ case "$1" in
   --apply) mode="apply" ;;
   --notice) mode="notice" ;;
   --offer-default) mode="offer-default" ;;
+  --auto-default) mode="auto-default" ;;
   --doctor) mode="doctor" ;;
   *)
     usage >&2
@@ -852,6 +879,7 @@ case "$mode" in
   apply) cmd_apply ;;
   notice) cmd_notice ;;
   offer-default) cmd_offer_default ;;
+  auto-default) cmd_auto_default ;;
   doctor) cmd_doctor ;;
   *)
     usage >&2

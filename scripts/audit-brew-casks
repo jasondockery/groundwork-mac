@@ -9,7 +9,7 @@ set -euo pipefail
 # unverified artifact on every new machine.
 #
 # Browser selection: every desktop Mac posture (current, preview, xcode, and
-# work-managed) renders brave-browser and not Google Chrome. Headless renders
+# a retired managed role) renders brave-browser and not Google Chrome. Headless renders
 # no GUI browser. Brave is checksummed, so it lives in the main Brewfile.
 # Sparkle owns later updates; this audit does not add an upgrade lane.
 #
@@ -104,7 +104,7 @@ xcode_browser="$(render_browser_profile current personal false true)" \
   }
 managed_browser="$(render_browser_profile current managed false false)" \
   || {
-    echo "FAIL: work-managed browser profile did not render." >&2
+    echo "FAIL: retired managed role browser profile did not render." >&2
     exit 1
   }
 headless_browser="$(render_browser_profile current personal true false)" \
@@ -115,7 +115,7 @@ headless_browser="$(render_browser_profile current personal true false)" \
 expect_brave "current" "$current_browser"
 expect_brave "preview" "$preview_browser"
 expect_brave "xcode" "$xcode_browser"
-expect_brave "work-managed" "$managed_browser"
+expect_brave "retired-managed-role" "$managed_browser"
 [[ -z "$headless_browser" ]] || {
   printf 'FAIL: headless selected a GUI browser:\n%s\n' "$headless_browser" >&2
   exit 1
