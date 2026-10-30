@@ -1362,7 +1362,7 @@ ai_tools_section() {
 
 commit_identity_section() {
   heading "Commit identity"
-  local gw="${XDG_CONFIG_HOME:-$HOME/.config}/groundwork" hooks guard current
+  local gw="${XDG_CONFIG_HOME:-$HOME/.config}/groundwork" hooks guard
   hooks="$gw/git-hooks"
   guard="$hooks/commit-identity-guard.sh"
   if [[ -e "$gw/commit-guard-off" ]]; then
@@ -1372,15 +1372,27 @@ commit_identity_section() {
     warn "commit identity guard is not installed at $guard; run groundwork-update."
     return 0
   fi
+  local xdg_git="${XDG_CONFIG_HOME:-$HOME/.config}/git/config" current includes repo code_dir
   current="$(cd "$HOME" && git config --get core.hooksPath 2>/dev/null || true)"
-  if [[ "$current" == "$hooks" ]]; then
-    ok "core.hooksPath points at the Groundwork hooks"
-  elif [[ -n "$current" ]]; then
-    warn "core.hooksPath is $current, so the guard hooks are not active; chain $hooks/commit-msg and $hooks/pre-push from it."
+  includes="$(git config --file "$xdg_git" --get-regexp '^includeif\..*\.path$' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -n "$current" ]]; then
+    warn "core.hooksPath is $current for every repository, so the guard hooks are not scoped or active; chain $hooks/commit-msg and $hooks/pre-push from it."
+  elif [[ "${includes:-0}" -ge 3 && -f "$gw/commit-guard.gitconfig" ]]; then
+    ok "hooks apply to repositories with a github.com remote owned by this user; other repositories are untouched"
   else
-    warn "core.hooksPath is unset; run groundwork-update to install the guard hooks."
+    warn "the owned-repository hook scope is not set up (needs git 2.36 or newer); run groundwork-update."
   fi
-  note "repositories that set their own core.hooksPath bypass the global hooks."
+  note "not guarded: a push straight to an owned URL from a repository with no owned remote, and owned repositories with their own core.hooksPath (husky, lefthook)."
+  code_dir="${GROUNDWORK_CODE_DIR:-$HOME/code}"
+  if [[ -d "$code_dir" ]]; then
+    while IFS= read -r repo; do
+      repo="$(dirname "$repo")"
+      if git -C "$repo" config --local --get core.hooksPath >/dev/null 2>&1 \
+        && git -C "$repo" config --local --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE 'github\.com[:/]jasondockery/'; then
+        warn "guard bypassed by its own core.hooksPath: $repo"
+      fi
+    done < <(find "$code_dir" -maxdepth 3 -name .git -prune 2>/dev/null | head -200)
+  fi
   "$guard" doctor 2>&1 | sed 's/^/  /' || true
 }
 
