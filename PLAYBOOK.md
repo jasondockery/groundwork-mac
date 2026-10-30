@@ -40,7 +40,7 @@ What Renovate manages here:
   that file is extracted and then disabled, so it does not become a numbered
   release. `.nvmrc` and the repository `mise.toml` stay ignored because
   `tools/sync-toolchain.mjs` rewrites them from `.node-version`. With
-  `executionMode: "branch"`, Renovate 44.173.1 runs
+  `executionMode: "branch"`, Renovate (verified on 44.23.0; a 44.173.1 lookup run does not execute post-upgrade tasks) runs
   `node tools/sync-toolchain.mjs` once on any branch that changes a package
   file, including `home/dot_config/mise/config.toml`. `fileFilters` is only
   the allowlist of files committed after the command runs. The command reads
