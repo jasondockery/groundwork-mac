@@ -32,7 +32,6 @@ ADOPTION_NOTICE = (
     "Brave Browser.app is installed but Homebrew does not own it. "
     "Review interactively: groundwork-app-adopt brave-browser"
 )
-MANAGED_NOTICE = "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
 
 
 class BraveBrowserTests(unittest.TestCase):
@@ -115,7 +114,6 @@ class BraveBrowserTests(unittest.TestCase):
                 "INSTALLED_CASKS": extra.pop("INSTALLED_CASKS", ""),
                 "GROUNDWORK_BRAVE_PLATFORM": "Darwin",
                 "GROUNDWORK_BRAVE_HEADLESS": "false",
-                "GROUNDWORK_BRAVE_ROLE": "personal",
                 "GROUNDWORK_BRAVE_PASSWORD_MANAGER": "bitwarden",
                 "GROUNDWORK_BRAVE_SPEC": str(SPEC),
                 "GROUNDWORK_STATE_DIR": str(self.state),
@@ -570,15 +568,6 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertFalse(self.ext.exists())
         self.assertEqual(self.choice("extension-offer"), "declined")
 
-    def test_work_managed_does_not_write_a_profile(self):
-        self.seed("extension-offer", "declined")
-        self.seed("default-browser", "declined")
-        environment = self.env(GROUNDWORK_BRAVE_ROLE="managed", INSTALLED_CASKS="brave-browser")
-        result = self.run_brave("--apply", env=environment, answers="y\n")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MANAGED_NOTICE, result.stdout)
-        self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
-
     def test_replaced_profile_is_offered_again(self):
         self.write_installed_profile({})
         self.share.mkdir()
@@ -1029,7 +1018,6 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIn("Brave spec hash:", desktop)
         self.assertIn("export GROUNDWORK_BRAVE_SPEC=", desktop)
         self.assertIn("export GROUNDWORK_BRAVE_PASSWORD_MANAGER=", desktop)
-        self.assertIn("export GROUNDWORK_BRAVE_ROLE=", desktop)
         self.assertIn("export GROUNDWORK_BRAVE_HEADLESS=false", desktop)
         self.assertIn("checkout-core.sh", desktop)
         self.assertIn("submodule update --init -- core", (REPO / "home/dot_local/share/groundwork/lib/checkout-core.sh").read_text(encoding="utf-8"))
@@ -1124,8 +1112,8 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIn("exit 0", darwin_headless_missing.stdout)
         self.assertNotIn("brave.json", darwin_headless_missing.stderr)
         self.assertNotIn("checkout-core.sh", darwin_headless_missing.stdout)
-        # The container config has password_manager and headless, and no
-        # environment_role. Headless apply must still succeed.
+        # The container config has password_manager and headless only.
+        # Headless apply must still succeed.
         linux_container = render_missing("linux", True, include_role=False)
         self.assertEqual(linux_container.returncode, 0, linux_container.stderr)
         self.assertIn("exit 0", linux_container.stdout)
@@ -1246,7 +1234,6 @@ class BraveBrowserTests(unittest.TestCase):
     def _env_without_profile(self) -> dict[str, str]:
         environment = self.env(INSTALLED_CASKS="brave-browser", GROUNDWORK_BRAVE_NONINTERACTIVE="1")
         for key in (
-            "GROUNDWORK_BRAVE_ROLE",
             "GROUNDWORK_BRAVE_PASSWORD_MANAGER",
             "GROUNDWORK_BRAVE_HEADLESS",
         ):
@@ -1263,7 +1250,7 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIn("profile data is missing", result.stderr)
         self.assertFalse((self.share / "Brave-Browser.mobileconfig").exists())
 
-        self._chezmoi_data('{"environment_role":"personal","headless":false}')
+        self._chezmoi_data('{"headless":false}')
         incomplete = self.run_brave("--apply", env=self._env_without_profile())
         self.assertEqual(incomplete.returncode, 1, incomplete.stderr)
         self.assertIn("profile data is incomplete", incomplete.stderr)
@@ -1276,7 +1263,7 @@ class BraveBrowserTests(unittest.TestCase):
 
     def test_direct_run_reads_a_complete_profile_without_defaults(self):
         self._chezmoi_data(
-            '{"environment_role":"personal","password_manager":"bitwarden","headless":false}'
+            '{"password_manager":"bitwarden","headless":false}'
         )
         result = self.run_brave("--apply", env=self._env_without_profile())
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1284,7 +1271,7 @@ class BraveBrowserTests(unittest.TestCase):
         self.assertIn("PasswordManagerEnabled", profile)
 
         self._chezmoi_data(
-            '{"environment_role":"personal","password_manager":"bitwarden","headless":true}'
+            '{"password_manager":"bitwarden","headless":true}'
         )
         profile_path = self.share / "Brave-Browser.mobileconfig"
         profile_path.unlink()

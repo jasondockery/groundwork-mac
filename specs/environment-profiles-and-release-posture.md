@@ -7,7 +7,7 @@ Status: partially implemented (2026-08-09, local review tranche). Shipped on
 - selective editing of the `profile_preset` seed via `groundwork-configure`
   (`937ae11`);
 - the browser vertical slice: every desktop Mac posture (current, preview,
-  Xcode, and work-managed) installs Brave from the checksummed `brave-browser`
+  and Xcode) installs Brave from the checksummed `brave-browser`
   cask; headless profiles select no GUI browser. Policies are rendered from
   groundwork-core v0.8.0 (`core/browser/brave.json`) into a configuration
   profile the user approves. Chrome is not selected. An existing Chrome
@@ -84,7 +84,7 @@ variant: Brave. Release posture does not change it.
 schema_version: 1
 
 environment:
-  role: personal              # personal | managed | disposable
+  role: personal              # personal | disposable
   release_posture: preview    # current | preview; seeds defaults, does not name a channel
 
 tools:
@@ -117,9 +117,20 @@ does.
 
 | Role | Environment |
 | ---- | ----------- |
-| `personal` | The user's own machine; full posture freedom |
-| `managed` | Work machine; organization policy outranks posture |
+| `personal` | The common setup for every Mac, including a machine an organization manages |
 | `disposable` | Rebuildable container or VM; aggressive variants are cheap |
+
+There is no `managed` role and no Work Managed profile. A stored
+`environment_role` of `managed`, a stored `profile_preset` of `work-managed`,
+or a stored `work=true` flag is ignored. Regeneration rewrites the retired role
+to `personal` and the retired preset to `personal-current`, and keeps an independent
+`release_posture`. Regeneration writes one comment into the config:
+`Retired work-managed setting ignored; this Mac uses the common setup.`
+`groundwork-profile show` and `groundwork-configure` print that same line while
+a retired role or preset is still stored. Nothing fails. Organization and device policy
+still outrank Groundwork on any Mac. That is the MDM ownership guard used by
+`groundwork-app-remove`, `groundwork-app-adopt`, and `update-all`, not a
+setup profile.
 
 `disposable` is in the v1 schema because the thesis already names containers as
 a target and the owner has stated the requirement. Modelling the role is cheap;
@@ -138,14 +149,23 @@ browser stays Brave either way.
 `home/.chezmoitemplates/developer-settings` is the compatibility resolver for
 `docker_backend` (`colima`, `docker-desktop`, `none`), `git_identity` (`personal`,
 `work`), `personal_apps`, and `work_extensions`. The shared developer tools and
-AI CLIs are available for every role. macOS defaults to Colima plus Docker CLI,
+AI CLIs are installed for every Mac. macOS defaults to Colima plus Docker CLI,
 including headless Macs. Device policy still takes precedence.
 
 `groundwork-configure` edits these preferences independently. Explicit stored
-values win. Legacy `work` seeds only the missing Git identity and optional app
-and extension preferences; it no longer gates AI tools or selects Docker.
-Existing role, posture, identity data, and valid interview answers survive
-reinitialization. A fresh setup has no work/personal install question.
+values win. The retired `work` flag does not choose personal apps or
+infrastructure extensions. When a retired marker is present
+(`work=true`, `environment_role=managed`, or `profile_preset=work-managed`)
+and the stored pair is still the old seed (personal apps off, infrastructure
+extensions on), that pair is rewritten to the common defaults: personal apps
+on, infrastructure extensions off. Any other stored pair is kept. An explicit
+Git identity is kept. When `work=true` is stored and `git_identity` was never
+stored, regeneration writes `git_identity=work`. That is the identity the work
+flag used to select, so the Git email stays the work email when one is saved
+and the personal email when the work email is blank or the `email_work` key
+is missing. A missing key does not fail the render. A managed role or
+`work-managed` preset does not by itself choose a Git identity. A fresh setup
+has no work/personal install question.
 Docker Desktop removal and data migration are explicit owner operations:
 [the single migration guide](../docs/docker-desktop-to-colima.md).
 
@@ -153,9 +173,8 @@ Docker Desktop removal and data migration are explicit owner operations:
 
 | Preset | role | posture | |
 | ------ | ---- | ------- | --- |
-| **Personal Current** | personal | current | **recommended default** |
+| **Personal Current** | personal | current | **the common Mac setup** |
 | **Personal Preview** | personal | preview | |
-| **Work Managed** | managed | current | legacy seed when stored `work` is true |
 | **Disposable Experimental** | disposable | preview | |
 
 **Personal Current is the shipped default, and that is not a cautious choice.**
@@ -196,14 +215,14 @@ When rules disagree, the higher line wins:
 
 ```text
 organization / device policy
-→ environment-role constraints
 → Groundwork integrity policy (checksums, audit registry)
 → selected tool variant
 → repository version pins   (always authoritative for project runtimes)
 ```
 
-A managed machine may therefore run behind — but never because Groundwork
-imposed a delay.
+An organization-managed Mac may therefore run behind when device policy blocks
+an update. Groundwork reports that block and does not work around it. Groundwork
+itself imposes no delay and no separate work setup.
 
 ### Persistence
 
@@ -317,9 +336,8 @@ the password manager." An unknown condition fails closed and writes nothing.
 
 The rendered file is a user-scoped `.mobileconfig`. Groundwork offers to open
 it. System Settings asks the user to approve it. Groundwork does not run
-`profiles install`. A work-managed Mac (`environment_role=managed`) does not
-get the file, because the organization owns browser policy. Brave is still
-installed there.
+`profiles install`. Every Mac gets the file; organization or device policy
+outranks it where one exists.
 
 When the password manager is Bitwarden, the spec includes
 `PasswordManagerEnabled=false`. When it is `1password` or `none`, that key is
@@ -517,8 +535,9 @@ Enforced by `scripts/validate-groundwork`:
 
 1. Every selected channel resolves to a catalog entry.
 2. **At most one** primary variant per logical role. Roles declare whether zero
-   is allowed — a headless container has no GUI browser, and a managed machine
-   may use an externally supplied editor. Secondary and fallback variants are
+   is allowed — a headless container has no GUI browser. Device policy, not a
+   Groundwork role, decides whether an organization-supplied editor stays.
+   Secondary and fallback variants are
    permitted only where the catalog proves coexistence.
 3. Conflicting casks cannot be selected together unless coexistence is proven.
 4. Every rendered path belongs to the selected variant.

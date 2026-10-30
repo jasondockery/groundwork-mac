@@ -49,9 +49,6 @@ policy values. The profile identifier stays the same when an older payload
 is still installed, so that identifier alone is not acceptance. If the
 installed values do not match, the next interactive apply asks again. A
 saved decline is kept.
-
-Work-managed Macs still install Brave. Organization device management owns
-browser policy, so this command does not write a profile there.
 EOF
 }
 
@@ -68,7 +65,6 @@ profile_identifier="com.groundwork.brave.browser"
 mobileconfig_path="$share_dir/Brave-Browser.mobileconfig"
 
 spec=""
-role=""
 password_manager=""
 headless=""
 platform=""
@@ -123,14 +119,13 @@ resolve_spec() {
 }
 
 load_profile() {
-  role="${GROUNDWORK_BRAVE_ROLE:-}"
   password_manager="${GROUNDWORK_BRAVE_PASSWORD_MANAGER:-}"
   headless="${GROUNDWORK_BRAVE_HEADLESS:-}"
   platform="${GROUNDWORK_BRAVE_PLATFORM:-}"
   if [[ -z "$platform" ]]; then
     platform="$(uname -s 2>/dev/null || printf '%s' unknown)"
   fi
-  if [[ -n "$role" && -n "$password_manager" && -n "$headless" ]]; then
+  if [[ -n "$password_manager" && -n "$headless" ]]; then
     return 0
   fi
   local data="" data_ok=0
@@ -149,16 +144,10 @@ load_profile() {
   if [[ -z "$password_manager" ]]; then
     password_manager="$(printf '%s' "$data" | jq -r '.password_manager // empty')"
   fi
-  if [[ -z "$role" ]]; then
-    role="$(printf '%s' "$data" | jq -r '.environment_role // empty')"
-  fi
-  if [[ -z "$role" ]]; then
-    role="$(printf '%s' "$data" | jq -r 'if .work == true then "managed" else empty end')"
-  fi
   if [[ -z "$headless" ]]; then
     headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" elif .headless == false then "false" else empty end')"
   fi
-  if [[ -z "$role" || -z "$password_manager" || -z "$headless" ]]; then
+  if [[ -z "$password_manager" || -z "$headless" ]]; then
     die "Groundwork profile data is incomplete, so Brave was not changed."
   fi
 }
@@ -429,10 +418,6 @@ adoption_notice() {
 }
 
 policy_notice() {
-  if [[ "$role" == "managed" ]]; then
-    say "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
-    return 0
-  fi
   if [[ -f "$mobileconfig_path" ]]; then
     say "Approve the Brave policy profile in System Settings: open \"$mobileconfig_path\""
   else
@@ -472,10 +457,6 @@ offer_adoption() {
 }
 
 offer_policy() {
-  if [[ "$role" == "managed" ]]; then
-    policy_notice
-    return 0
-  fi
   write_policy || die "could not render the Brave policy profile"
   local digest="" installed=0 stamp=""
   digest="$(policy_digest)" || die "could not identify the Brave policy profile"
@@ -743,28 +724,24 @@ cmd_notice() {
       adoption_notice
     fi
   fi
-  if [[ "$role" == "managed" ]]; then
-    policy_notice
-  else
-    local digest="" stamp="" installed=0 decision=""
-    if [[ -f "$mobileconfig_path" ]]; then
-      digest="$(policy_digest)"
-    fi
-    if ! stamp="$(render_stamp_get)"; then
-      stamp=""
-    fi
-    decision="$(choice_get policy-open || true)"
-    if [[ "$decision" != "declined" ]]; then
-      profile_state || installed=$?
-      if [[ "$installed" -eq 0 ]]; then
-        :
-      elif [[ -n "$digest" && "$installed" -eq 3 ]]; then
-        say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
-      elif [[ -n "$stamp" && -n "$digest" && "$stamp" != "$digest" ]]; then
-        say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
-      elif [[ "$installed" -ne 0 ]]; then
-        policy_notice
-      fi
+  local digest="" stamp="" installed=0 decision=""
+  if [[ -f "$mobileconfig_path" ]]; then
+    digest="$(policy_digest)"
+  fi
+  if ! stamp="$(render_stamp_get)"; then
+    stamp=""
+  fi
+  decision="$(choice_get policy-open || true)"
+  if [[ "$decision" != "declined" ]]; then
+    profile_state || installed=$?
+    if [[ "$installed" -eq 0 ]]; then
+      :
+    elif [[ -n "$digest" && "$installed" -eq 3 ]]; then
+      say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
+    elif [[ -n "$stamp" && -n "$digest" && "$stamp" != "$digest" ]]; then
+      say "The Brave policy profile changed. Approve the update in System Settings: open \"$mobileconfig_path\""
+    elif [[ "$installed" -ne 0 ]]; then
+      policy_notice
     fi
   fi
   if ! choice_get extension-offer >/dev/null; then
@@ -819,25 +796,21 @@ cmd_doctor() {
   else
     printf '  note  %s\n' "Default browser: unknown (the Brave spec could not be read)"
   fi
-  if [[ "$role" == "managed" ]]; then
-    printf '  note  %s\n' "This Mac is work-managed, so Groundwork did not write a Brave policy profile."
+  local installed=0 decision=""
+  profile_state || installed=$?
+  decision="$(choice_get policy-open || true)"
+  if [[ "$installed" -eq 0 ]]; then
+    printf '  ok    %s\n' "Brave policy profile is installed"
+  elif [[ "$installed" -eq 3 && "$decision" == "declined" ]]; then
+    printf '  note  %s\n' "Brave policy profile is installed. The current spec was declined, so System Settings may still have an older profile."
+  elif [[ "$installed" -eq 3 ]]; then
+    printf '  note  %s\n' "Brave policy profile is installed, but it does not match the current Groundwork spec. An interactive apply can open the updated profile for approval in System Settings."
+  elif [[ "$installed" -eq 1 ]]; then
+    printf '  note  %s\n' "Brave policy profile is not installed. The next interactive apply will offer it again."
+  elif [[ "$installed" -eq 4 ]]; then
+    printf '  note  %s\n' "Brave policy profile: unknown (profiles returned nothing)."
   else
-    local installed=0 decision=""
-    profile_state || installed=$?
-    decision="$(choice_get policy-open || true)"
-    if [[ "$installed" -eq 0 ]]; then
-      printf '  ok    %s\n' "Brave policy profile is installed"
-    elif [[ "$installed" -eq 3 && "$decision" == "declined" ]]; then
-      printf '  note  %s\n' "Brave policy profile is installed. The current spec was declined, so System Settings may still have an older profile."
-    elif [[ "$installed" -eq 3 ]]; then
-      printf '  note  %s\n' "Brave policy profile is installed, but it does not match the current Groundwork spec. An interactive apply can open the updated profile for approval in System Settings."
-    elif [[ "$installed" -eq 1 ]]; then
-      printf '  note  %s\n' "Brave policy profile is not installed. The next interactive apply will offer it again."
-    elif [[ "$installed" -eq 4 ]]; then
-      printf '  note  %s\n' "Brave policy profile: unknown (profiles returned nothing)."
-    else
-      printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available or its output could not be read)."
-    fi
+    printf '  note  %s\n' "Brave policy profile: unknown (profiles is not available or its output could not be read)."
   fi
   if chrome_stable_present; then
     printf '  note  %s\n' "Chrome is still installed and is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome"

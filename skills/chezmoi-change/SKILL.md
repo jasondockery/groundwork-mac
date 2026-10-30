@@ -45,9 +45,9 @@ Behavior that governs the interview (from chezmoi's source and reference):
   when values exist — but it does NOT seed the current stored value as the
   default. Each prompt shows the TEMPLATE's default, which may differ from the
   saved answer, so pressing Enter through the interview can reset choices (an
-  existing `personal-preview` back to `personal-current`, `work` back to
-  `false`). Describe it as "replays the full interview using template defaults;
-  review every question and inspect the diff before applying" — never as a safe
+  existing `personal-preview` back to `personal-current`). Describe it as
+  "replays the full interview using template defaults; review every question
+  and inspect the diff before applying" — never as a safe
   one-key reconfirm. `--promptDefaults` and the `--promptString`/
   `--promptChoice`/`--promptBool` pairs are for testing or controlled
   automation, not a casual reconfigure path. Manual `chezmoi.toml` editing is an

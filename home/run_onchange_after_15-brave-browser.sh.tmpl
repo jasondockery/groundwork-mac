@@ -20,7 +20,6 @@ set -euo pipefail
 # one process, so this checkout has to live here as well as in the runner.
 export GROUNDWORK_BRAVE_SPEC={{ $specPath | quote }}
 export GROUNDWORK_BRAVE_PASSWORD_MANAGER={{ .password_manager | quote }}
-export GROUNDWORK_BRAVE_ROLE={{ .environment_role | quote }}
 export GROUNDWORK_BRAVE_HEADLESS=false
 if [[ -f {{ $checkout | quote }} ]]; then
   bash {{ $checkout | quote }} {{ .chezmoi.workingTree | quote }}

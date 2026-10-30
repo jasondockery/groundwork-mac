@@ -34,6 +34,11 @@ of the history replacement.
 | History | The public repository started in a new GitHub container with a reviewed clean root. Anonymous recursive HTTPS cloning passed. The owner deleted the former private backup container after publication. |
 | Machine acceptance | Physical shortcuts, provider authentication, and two-way Tailscale connections remain local acceptance steps. No installer or chezmoi apply was run on the reference machine during this review. |
 
+On 2026-10-29 the owner removed the work-managed environment profile. Every
+Groundwork Mac uses the same setup. A stored `work=true` value or
+`environment_role=managed` is ignored and migrated to that setup. MDM ownership
+checks in app adoption, app removal, and `update-all` stay in place.
+
 The future container/resource-lifecycle tranche may add read-only inventory and
 exact-object cleanup only after its formal Compass authority handoff. It is not
 part of PR #19, and `update-all` remains non-destructive toward unrelated
