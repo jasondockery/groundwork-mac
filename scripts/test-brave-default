@@ -128,18 +128,38 @@ esac''')
     def test_first_run_switches_once_and_never_repeats(self):
         out = self.run_script()
         self.assertEqual(self.switches(), ["browser"])
-        self.assertIn("default=switched", self.state())
+        self.assertIn("default=requested", self.state())
         self.assertIn("go back: " + str(self.bin / "defaultbrowser") + " safari", out)
         self.assertTrue((self.home / "Library/Application Support/Groundwork/Brave-Policies.mobileconfig").is_file())
         self.assertIn("--headless", (self.root / "calls.launch").read_text())
+
+    def test_accepted_dialog_is_recorded_on_the_next_run(self):
+        self.run_script()
         self.listing = "  chrome\n  safari\n  firefox\n* browser\n"
+        self.run_script()
+        self.assertIn("default=switched", self.state())
         self.run_script()
         self.assertEqual(self.switches(), ["browser"])
 
-    def test_chrome_is_a_stock_default_too(self):
-        self.listing = "* chrome\n  safari\n  browser\n"
+    def test_keep_safari_in_the_dialog_is_a_decline_never_asked_again(self):
+        self.run_script()
+        out = self.run_script()
+        self.assertIn("default=declined", self.state())
+        self.assertIn("will not ask again", out)
         self.run_script()
         self.assertEqual(self.switches(), ["browser"])
+
+    def test_an_unset_default_is_switched(self):
+        self.listing = "  chrome\n  safari\n  browser\n"
+        self.run_script()
+        self.assertEqual(self.switches(), ["browser"])
+
+    def test_chrome_default_is_only_offered(self):
+        self.listing = "* chrome\n  safari\n  browser\n"
+        out = self.run_script()
+        self.assertEqual(self.switches(), [])
+        self.assertIn("default=offered", self.state())
+        self.assertIn("defaultbrowser browser", out)
 
     def test_policy_note_prints_once_per_change(self):
         first = self.run_script(ssh=True)

@@ -175,6 +175,22 @@ find_defaultbrowser() {
   return 1
 }
 
+# defaultbrowser returns before the person answers macOS's dialog, so the
+# request is only recorded here and the real default is read on a later run.
+# Brave as the default means done. Anything else means the person kept their
+# browser, which is a decline that is never asked again.
+resolve_request() { # tool handler
+  local current
+  current="$("$1" 2>/dev/null | sed -n 's/^\* *//p' | head -n 1)" || current=""
+  [[ -n "$current" ]] || return 0
+  if [[ "$current" == "$2" ]]; then
+    state_set default switched
+  else
+    state_set default declined
+    note "You kept $current as the default browser, so Groundwork will not ask again. To use Brave later, run: $1 $2"
+  fi
+}
+
 switch_default() {
   local tool listing handler current
   case "$(state_get default)" in
@@ -209,16 +225,17 @@ switch_default() {
     return 0
   fi
   current="$(printf '%s\n' "$listing" | sed -n 's/^\* *//p' | head -n 1)"
-  if [[ -z "$current" ]]; then
-    note "defaultbrowser did not report the current default, so the default browser is unchanged."
+  if [[ "$(state_get default)" == requested ]]; then
+    resolve_request "$tool" "$handler"
     return 0
   fi
   if [[ "$current" == "$handler" ]]; then
     state_set default switched
     return 0
   fi
+  # Only a default the person did not choose is switched: Safari, or none.
   case "$current" in
-    safari | chrome) ;;
+    safari | "") ;;
     *)
       state_set default offered
       note "Your default browser is $current, so Groundwork leaves it. To use Brave, run: $tool $handler"
@@ -229,11 +246,11 @@ switch_default() {
     note "Brave did not start within ${launch_timeout}s, so the default browser is unchanged. Groundwork tries again next run."
     return 0
   fi
-  # macOS shows its own confirmation. Recording now means a "Keep" click is a
-  # respected no, and the switch never repeats.
-  state_set default switched
+  # macOS shows its own confirmation. Record the request first so it never
+  # repeats; the next run reads the real default (see resolve_request).
+  state_set default requested
   if "$tool" "$handler" >/dev/null 2>&1; then
-    note "Brave is now the default browser once you confirm macOS's prompt. To go back: $tool $current"
+    note "Brave becomes the default browser once you confirm macOS's prompt. To go back: $tool ${current:-safari}"
   else
     state_set default ""
     note "defaultbrowser could not set Brave, so the default browser is unchanged. Groundwork tries again next run."
