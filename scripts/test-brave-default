@@ -80,8 +80,7 @@ class SwitchTests(unittest.TestCase):
         self.calls.write_text("")
         self.listing = "  chrome\n* safari\n  firefox\n  browser\n"
         self.session = "Aqua"
-        self.exe_output = "<html><head></head><body></body></html>"
-        self.exe_status = 0
+        self.codesign_status = 0
         self.bundle = "com.brave.Browser"
         self.script = render("darwin", False)
 
@@ -95,19 +94,18 @@ class SwitchTests(unittest.TestCase):
         self.stub("defaults", f'''case "$3" in
   CFBundleExecutable) echo brave ;;
   CFBundleIdentifier) echo {self.bundle} ;;
+  CFBundleShortVersionString) echo 1.98.62 ;;
 esac''')
         self.stub("launchctl", f"echo {self.session}")
         listing = self.root / "listing"
         listing.write_text(self.listing)
         tool = self.stub("defaultbrowser", f'''if [ "$#" -eq 0 ]; then cat "{listing}"; else echo "$@" >>"{self.calls}"; fi''')
-        exe = self.app / "Contents/MacOS/brave"
-        exe.write_text(f'#!/bin/sh\necho "$@" >>"{self.calls}.launch"\nprintf %s "{self.exe_output}"\nexit {self.exe_status}\n')
-        exe.chmod(0o755)
+        self.stub("codesign", f'echo "$@" >>"{self.calls}.codesign"; exit {self.codesign_status}')
         env = {
             "PATH": str(self.bin), "HOME": str(self.home), "TMPDIR": str(self.root),
             "GROUNDWORK_BRAVE_APP": str(self.app if installed else self.root / "missing.app"),
             "GROUNDWORK_DEFAULTBROWSER_BIN": str(tool),
-            "GROUNDWORK_BRAVE_LAUNCH_TIMEOUT": "5",
+            "GROUNDWORK_BRAVE_CHECK_TIMEOUT": getattr(self, "timeout_env", "5"),
         }
         if ssh:
             env["SSH_CONNECTION"] = "1 2 3 4"
@@ -131,7 +129,7 @@ esac''')
         self.assertIn("default=requested", self.state())
         self.assertIn("go back: " + str(self.bin / "defaultbrowser") + " safari", out)
         self.assertTrue((self.home / "Library/Application Support/Groundwork/Brave-Policies.mobileconfig").is_file())
-        self.assertIn("--headless", (self.root / "calls.launch").read_text())
+        self.assertIn("--verify --deep --strict", (self.root / "calls.codesign").read_text())
 
     def test_accepted_dialog_is_recorded_on_the_next_run(self):
         self.run_script()
@@ -195,13 +193,21 @@ esac''')
         self.assertEqual(self.switches(), [])
         self.assertIn("default=switched", self.state())
 
-    def test_failed_launch_changes_nothing_and_retries_later(self):
-        self.exe_output = ""
-        self.exe_status = 1
+    def test_failed_signature_check_changes_nothing_and_retries_later(self):
+        self.codesign_status = 1
         out = self.run_script()
         self.assertEqual(self.switches(), [])
         self.assertNotIn("default=", self.state())
-        self.assertIn("did not start", out)
+        self.assertIn("code-signature check", out)
+
+    def test_a_hung_signature_check_is_bounded(self):
+        self.codesign_status = 0
+        self.stub("codesign_hang", "sleep 30")
+        self.script = self.script.replace("codesign --verify", "codesign_hang --verify")
+        self.timeout_env = "1"
+        out = self.run_script()
+        self.assertEqual(self.switches(), [])
+        self.assertIn("code-signature check", out)
 
     def test_missing_app_wrong_bundle_or_unlisted_handler_wait(self):
         self.run_script(installed=False)

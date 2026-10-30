@@ -4,7 +4,7 @@
 # (the pinned groundwork-core submodule), rendered into this script by chezmoi. This script
 # uninstalls no browser and deletes no profile data.
 # Fixture seams, not user settings: GROUNDWORK_BRAVE_APP,
-# GROUNDWORK_DEFAULTBROWSER_BIN, GROUNDWORK_BRAVE_LAUNCH_TIMEOUT.
+# GROUNDWORK_DEFAULTBROWSER_BIN, GROUNDWORK_BRAVE_CHECK_TIMEOUT.
 set -euo pipefail
 {{- if and (eq .chezmoi.os "darwin") (not .headless) }}
 {{- $specPath := joinPath .chezmoi.sourceDir ".." "core" "browser" "brave.json" }}
@@ -41,7 +41,7 @@ app="${GROUNDWORK_BRAVE_APP:-/Applications/Brave Browser.app}"
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/groundwork"
 state_file="$state_dir/brave.state"
 profile_path="$HOME/Library/Application Support/Groundwork/Brave-Policies.mobileconfig"
-launch_timeout="${GROUNDWORK_BRAVE_LAUNCH_TIMEOUT:-30}"
+check_timeout="${GROUNDWORK_BRAVE_CHECK_TIMEOUT:-30}"
 
 note() { printf 'Groundwork: %s\n' "$*"; }
 
@@ -128,40 +128,28 @@ offer_bitwarden() {
   note "To use Bitwarden in Brave, add it from https://chromewebstore.google.com/detail/$bitwarden_id (optional; nothing is installed for you)."
 }
 
-# Launch check: run Brave's own binary in headless mode against a throwaway
-# profile and require it to render a page and exit 0 before the deadline. That
-# proves the app is intact, signed well enough to start, and that its libraries
-# load, without a window, without touching the real profile, and without
-# colliding with a running Brave.
-brave_launches() {
-  local exe_name exe scratch out pid waited=0 limit
-  exe_name="$(defaults read "$app/Contents/Info" CFBundleExecutable 2>/dev/null)" || return 1
-  exe="$app/Contents/MacOS/$exe_name"
-  [[ -x "$exe" ]] || return 1
-  scratch="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-brave.XXXXXX")"
-  out="$scratch/dom.html"
-  limit=$((launch_timeout * 10))
-  "$exe" --headless --disable-gpu --no-first-run --no-default-browser-check \
-    --user-data-dir="$scratch/profile" --dump-dom about:blank >"$out" 2>/dev/null </dev/null &
+# Integrity check, not a launch. Brave 1.98 in headless mode never exits when
+# it is given --user-data-dir with --dump-dom, so a headless launch cannot be
+# bounded reliably. Instead require a version string and a valid, deep, strict
+# code signature, which is what Gatekeeper needs before the app can start.
+# codesign runs under the same deadline as any finite operation.
+brave_intact() {
+  local version pid waited=0 limit
+  version="$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null)" || return 1
+  [[ -n "$version" ]] || return 1
+  limit=$((check_timeout * 10))
+  codesign --verify --deep --strict "$app" >/dev/null 2>&1 &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     if ((waited >= limit)); then
       kill "$pid" 2>/dev/null || true
-      sleep 1
-      kill -9 "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
-      rm -rf "$scratch"
       return 1
     fi
     sleep 0.1
     waited=$((waited + 1))
   done
-  if wait "$pid" && grep -q '<html' "$out"; then
-    rm -rf "$scratch"
-    return 0
-  fi
-  rm -rf "$scratch"
-  return 1
+  wait "$pid"
 }
 
 find_defaultbrowser() {
@@ -242,8 +230,8 @@ switch_default() {
       return 0
       ;;
   esac
-  if ! brave_launches; then
-    note "Brave did not start within ${launch_timeout}s, so the default browser is unchanged. Groundwork tries again next run."
+  if ! brave_intact; then
+    note "Brave failed its code-signature check (within ${check_timeout}s), so the default browser is unchanged. Groundwork tries again next run."
     return 0
   fi
   # macOS shows its own confirmation. Record the request first so it never

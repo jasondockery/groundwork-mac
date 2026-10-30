@@ -308,7 +308,7 @@ browser_section() {
     switched) note "Brave is the default browser. Groundwork switched it once and will not repeat it. Change it any time in System Settings > Desktop & Dock, or with: defaultbrowser <name>" ;;
     declined) note "You kept your browser; Groundwork will not ask again ($brave_state)." ;;
     offered) note "Your default browser is another browser. Groundwork left it; make Brave the default with: defaultbrowser browser" ;;
-    *) note "Brave becomes the default browser once, the next desktop run after it installs and starts." ;;
+    *) note "Brave becomes the default browser once, the next desktop run after it installs and passes a code-signature check." ;;
   esac
 }
 
