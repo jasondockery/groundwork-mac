@@ -10,8 +10,11 @@
 {{- fail "Groundwork supports WSL2, not WSL1: WSL1 filesystem and syscall behavior differ from real Linux. From PowerShell, check with `wsl --list --verbose` and convert with `wsl --set-version <DistributionName> 2`, then rerun setup." -}}
 {{- end -}}
 {{- end -}}
-{{- /* The work flag is a retired setup switch. Keep a stored bool so an old
-config still renders, and do not let it choose apps, role, or preset. */ -}}
+{{- /* The work flag is a retired setup switch. Read a stored bool so an old
+config still renders and migrates once, but never choose apps, role, or preset
+from it. The render below always writes work = false: developer-settings has
+already captured git_identity, so the migration is finished and later choices
+(and the migration comment) are not reverted or repeated. */ -}}
 {{- $work := and (hasKey . "work") .work -}}
 {{- $headless := false -}}
 {{- if eq .chezmoi.os "darwin" -}}
@@ -215,7 +218,7 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
 {{- end }}
 
 [data]
-    work = {{ $work }}
+    work = false
     docker_backend = {{ get $developer "docker_backend" | quote }}
     git_identity = {{ get $developer "git_identity" | quote }}
     personal_apps = {{ get $developer "personal_apps" }}

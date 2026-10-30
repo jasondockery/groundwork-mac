@@ -237,7 +237,7 @@ browser_section() {
     return 0
   fi
 
-  local data headless posture role xcode beta
+  local data headless posture xcode beta
   if ! data="$(chezmoi data --format=json 2>/dev/null)" \
     || ! printf '%s' "$data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     warn "Groundwork could not read the chezmoi profile; browser status is unknown."
@@ -245,7 +245,6 @@ browser_section() {
   fi
   headless="$(printf '%s' "$data" | jq -r '.headless // false')"
   posture="$(printf '%s' "$data" | jq -r '.release_posture // "current"')"
-  role="$(printf '%s' "$data" | jq -r '.environment_role // (if .work then "managed" else "personal" end)')"
   xcode="$(printf '%s' "$data" | jq -r '.xcode // false')"
   beta="$(printf '%s' "$data" | jq -r '.beta // false')"
 
@@ -291,9 +290,6 @@ browser_section() {
   fi
   if brew list --cask google-chrome@beta >/dev/null 2>&1; then
     note "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
-  fi
-  if [[ "$role" == "managed" ]]; then
-    note "organization and device policy outrank this selection; Groundwork never bypasses them."
   fi
   note "Groundwork installs Google Chrome stable but does not change the macOS default-browser association."
 }
