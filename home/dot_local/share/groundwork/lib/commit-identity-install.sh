@@ -9,7 +9,9 @@
 # symlink; nothing is copied. core.hooksPath is NOT set globally. It is set in
 # ~/.config/groundwork/commit-guard.gitconfig, which the XDG git config
 # (~/.config/git/config) includes through includeIf "hasconfig:remote.*.url:"
-# for the owner's GitHub URL forms (git 2.36+). Work repositories are untouched.
+# for the owner's GitHub URL forms and any scp-style host alias such as
+# git@github-personal:owner/repo (git 2.36+). URLs with userinfo
+# (https://user@github.com/...) are not matched. Work repositories are untouched.
 # If the user already sets core.hooksPath anywhere, nothing is written.
 # Gaps: a push straight to an owned URL from a repo with no owned remote, and
 # owned repos with their own local core.hooksPath (husky, lefthook), are not guarded.
@@ -167,7 +169,7 @@ else
     changed=1
   fi
   mkdir -p "$(dirname "$xdg_git")"
-  for url in "https://github.com/$owner_glob/**" "git@github.com:$owner_glob/**" "ssh://git@github.com/$owner_glob/**"; do
+  for url in "https://github.com/$owner_glob/**" "git@github.com:$owner_glob/**" "ssh://git@github.com/$owner_glob/**" "*:$owner_glob/**"; do
     key="includeIf.hasconfig:remote.*.url:$url.path"
     if [[ "$(git config --file "$xdg_git" --get "$key" 2>/dev/null || true)" != "$include_file" ]]; then
       git config --file "$xdg_git" "$key" "$include_file"

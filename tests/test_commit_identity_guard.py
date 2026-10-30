@@ -23,8 +23,15 @@ OWNED = {
     "https": "https://github.com/jasondockery/fixture.git",
     "ssh-url": "ssh://git@github.com/jasondockery/fixture.git",
     "mixed-case": "https://github.com/JasonDockery/fixture.git",
+    "alias": "git@github-personal:jasondockery/x.git",
+    "alias-mixed-case": "git@github-personal:JasonDockery/x.git",
 }
 EMPLOYER = "git@github.com:example-employer/fixture.git"
+NOT_OWNED = {
+    "alias-employer": "git@github-personal:EmployerCorp/x.git",
+    "alias-longer-owner": "git@github-personal:jasondockery2/x",
+    "https-longer-owner": "https://github.com/jasondockery2/x.git",
+}
 BAD_MESSAGE = "m\n\nCo-authored-by: A <a@example.com>"
 
 
@@ -92,7 +99,7 @@ class CommitIdentityInstallTests(unittest.TestCase):
         self.assertIn(str(self.hooks), include)
         includes = self.git("config", "--file", str(self.home / ".config/git/config"),
                             "--get-regexp", r"^includeif\..*\.path$").stdout.splitlines()
-        self.assertEqual(len(includes), 3)
+        self.assertEqual(len(includes), 4)
         self.assertFalse((self.home / ".gitconfig").exists())
         self.assertEqual((self.gw / "commit-denylist").read_text(), "")
         self.assertEqual(json.loads(self.settings.read_text()), {"attribution": {"commit": "", "pr": ""}})
@@ -249,11 +256,17 @@ class CommitIdentityInstallTests(unittest.TestCase):
 
     def test_employer_remote_and_other_repos_are_untouched(self):
         self.run_install()
-        for name, remote in (("employer", EMPLOYER), ("no-remote", None)):
+        cases = [("employer", EMPLOYER), ("no-remote", None)] + list(NOT_OWNED.items())
+        for name, remote in cases:
             repo = self.make_repo(remote=remote, name=name)
             result = self.git("commit", "-q", "-m", BAD_MESSAGE, cwd=repo)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(self.git("config", "--get", "core.hooksPath", cwd=repo).stdout.strip(), "")
+
+    def test_userinfo_urls_are_not_matched(self):
+        self.run_install()
+        repo = self.make_repo(remote="https://user@github.com/jasondockery/x.git")
+        self.assertEqual(self.git("commit", "-q", "-m", BAD_MESSAGE, cwd=repo).returncode, 0)
 
     def test_no_remote_commit_allowed_but_pre_push_catches_it_once_owned(self):
         self.run_install()
