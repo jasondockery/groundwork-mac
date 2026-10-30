@@ -41,6 +41,34 @@ RUN mkdir -p /home/$USER/.config/chezmoi
 ENV PATH=/home/$USER/.local/bin:/home/$USER/.cargo/bin:/home/$USER/.local/share/mise/shims:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
 
 RUN sh -c "$(curl -fsSL https://get.chezmoi.io)" -- -b /home/$USER/.local/bin
+# Homebrew install plus `brew bundle` is nearly all of the ~300s `chezmoi apply`
+# below, and apply reruns whenever anything under home/ changes. Install the
+# packages in their own layer keyed only on the Brewfile and the templates it
+# includes, so an unrelated home/ edit reuses the cached (already compressed)
+# package layer and only the small config layer is rebuilt and exported.
+# chezmoi apply stays the authority: it still runs the same run_before and
+# run_onchange hooks and finds the packages installed. A bundle failure here is
+# deliberately not fatal for that reason.
+COPY docker/chezmoi.headless.toml /tmp/chezmoi.headless.toml
+COPY home/.chezmoitemplates /opt/groundwork/home/.chezmoitemplates
+COPY home/dot_config/homebrew /opt/groundwork/home/dot_config/homebrew
+RUN <<'PREWARM'
+set -eux
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends build-essential procps curl file git
+sudo rm -rf /var/lib/apt/lists/*
+NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+chezmoi --config /tmp/chezmoi.headless.toml --source /opt/groundwork/home execute-template \
+  < /opt/groundwork/home/dot_config/homebrew/Brewfile.tmpl >/tmp/Brewfile
+export HOMEBREW_NO_ASK=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_CURL_RETRIES=3 HOMEBREW_CASK_OPTS=--require-sha
+for attempt in 1 2 3; do
+  if brew bundle install --no-upgrade --file=/tmp/Brewfile; then break; fi
+  echo "prewarm brew bundle attempt $attempt failed; chezmoi apply will finish any remainder" >&2
+done
+rm -f /tmp/Brewfile
+sudo rm -f /tmp/chezmoi.headless.toml
+PREWARM
 # chezmoi --source /opt/groundwork reads .chezmoiroot and then home/. Copy only
 # that source. A docs, script, or workflow change must not rebuild the apply
 # layer: on main's 2026-10-28 docker-build (run 40700178469) `COPY .` missed
