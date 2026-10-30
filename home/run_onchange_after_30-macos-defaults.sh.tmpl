@@ -88,8 +88,8 @@ killall SystemUIServer 2>/dev/null || true
 
 # Brave policy is the configuration profile groundwork-brave-browser writes
 # for you to approve in System Settings. This hook does not write
-# com.brave.Browser or com.google.Chrome defaults. The default-browser offer
-# is that same Brave command, and macOS still asks you to confirm.
+# com.brave.Browser or com.google.Chrome defaults. The one-time default-browser
+# switch is that same Brave command, and macOS still asks you to confirm.
 # The first-run backup still records the old Chrome password-manager key so
 # an older backup can restore it. Safari and iOS stay manual.
 {{- end }}

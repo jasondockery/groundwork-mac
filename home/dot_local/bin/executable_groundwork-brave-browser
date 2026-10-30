@@ -10,7 +10,7 @@ Usage: groundwork-brave-browser <mode>
 
 Offer Brave Browser on a desktop Mac. Groundwork installs the brave-browser
 cask from the checksum-verified Brewfile. Policies are rendered from
-groundwork-core's browser/brave.json (v0.7.0). This command does not keep a
+groundwork-core's browser/brave.json (v0.8.0). This command does not keep a
 second copy, and it does not install the profile itself.
 
 Modes:
@@ -23,6 +23,15 @@ Modes:
   --doctor          Read-only status for groundwork-doctor --browser.
   -h, --help        Show this help
 
+Default browser: the first time Brave is installed and passes a code-signature
+check in a desktop session, this runs defaultbrowser once, but only when the
+default is Safari or unset. macOS shows its own confirmation. The next run
+reads the real default: Brave means done, anything else (Keep Safari) is saved
+as a decline. A different default only gets an offer. Over SSH or with no
+desktop session the switch waits for the next desktop run. To decline ahead of
+time: mkdir -p ~/.local/state/groundwork/brave &&
+echo declined > ~/.local/state/groundwork/brave/default-browser
+
 A decline is saved under ~/.local/state/groundwork/brave/ and later runs do
 not ask again. Deleting that file asks again. A noninteractive run, including
 update-all, prints a notice and does not save a decline. Replacing the
@@ -30,8 +39,8 @@ on-disk profile with a different render asks for approval again; an older
 installed identifier is not treated as the current spec.
 
 defaultbrowser returns before macOS shows its confirmation dialog. Groundwork
-records the offer once that command returns and does not bypass the dialog.
-Cancelling the macOS dialog does not repeat the Groundwork prompt; delete
+records a request when that command returns and does not bypass the dialog.
+Cancelling the dialog is saved as a decline on the next run; delete
 ~/.local/state/groundwork/brave/default-browser to ask again.
 
 Opening the policy profile returns before System Settings installs it.
@@ -203,7 +212,7 @@ choice_get() {
   [[ -f "$file" ]] || return 1
   value="$(tr -d '[:space:]' <"$file")"
   case "$value" in
-    accepted | declined | pending)
+    accepted | declined | pending | requested)
       printf '%s' "$value"
       ;;
     *) return 1 ;;
@@ -213,7 +222,7 @@ choice_get() {
 choice_set() {
   local key="$1" value="$2" tmp=""
   case "$value" in
-    accepted | declined | pending) ;;
+    accepted | declined | pending | requested) ;;
     *) return 1 ;;
   esac
   mkdir -p "$state_dir"
@@ -579,19 +588,100 @@ try_set_default_browser() {
     return 0
   fi
   if "$defaultbrowser_bin" "$handler"; then
-    choice_set default-browser accepted
+    # defaultbrowser returns before the person answers macOS's dialog. Record
+    # the request only; a later run reads the real default (resolve_request).
+    choice_set default-browser requested
     return 0
   fi
   choice_set default-browser pending
   say "defaultbrowser did not set Brave. The macOS command is: defaultbrowser $handler"
 }
 
+# Aqua is the logged-in desktop session. SSH, cron, and a headless image are not.
+gui_session() {
+  [[ -z "${SSH_CONNECTION:-}" ]] || return 1
+  [[ "$(launchctl managername 2>/dev/null || true)" == "Aqua" ]]
+}
+
+# Integrity check, not a launch: Brave's version string and a valid, deep,
+# strict code signature, under a deadline. A headless launch cannot be bounded
+# reliably (Brave 1.98 headless with --dump-dom and --user-data-dir was
+# observed not to exit in a scrubbed Linux environment), so this does not
+# depend on launch behavior.
+brave_intact() {
+  local app="$applications_dir/Brave Browser.app" pid="" waited=0 limit=0
+  local timeout="${GROUNDWORK_BRAVE_CHECK_TIMEOUT:-30}"
+  python3 - "$app/Contents/Info.plist" <<'PY' || return 1
+import plistlib, sys
+with open(sys.argv[1], "rb") as handle:
+    version = plistlib.load(handle).get("CFBundleShortVersionString")
+sys.exit(0 if isinstance(version, str) and version else 1)
+PY
+  limit=$((timeout * 10))
+  codesign --verify --deep --strict "$app" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if ((waited >= limit)); then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
+# Runs one pass after a request. Brave as the default means done. Anything else
+# means the person kept their browser, which is a decline that is never asked
+# again. A missing defaultbrowser leaves the request open.
+resolve_request() { # current current_rc
+  local current="$1" current_rc="$2"
+  [[ "$current_rc" -ne 2 ]] || return 0
+  if [[ "$current_rc" -eq 0 && "$current" == "$handler" ]]; then
+    choice_set default-browser accepted
+    return 0
+  fi
+  choice_set default-browser declined
+  say "You kept ${current:-your browser} as the default browser, so Groundwork will not ask again. To use Brave later, run: defaultbrowser $handler"
+}
+
+# The one-time switch. Only a default the person did not choose (Safari, or
+# none) is switched, and only from a desktop session once Brave passes the check.
+switch_default() { # previous
+  if ! gui_session; then
+    say "No desktop session, so Brave becomes the default browser on the next desktop run."
+    return 0
+  fi
+  if ! brave_intact; then
+    say "Brave failed its code-signature check, so the default browser is unchanged. Groundwork tries again next run."
+    return 0
+  fi
+  try_set_default_browser
+  if [[ "$(choice_get default-browser || true)" == "requested" ]]; then
+    say "Brave becomes the default browser once you confirm macOS's prompt. To go back: defaultbrowser ${1:-safari}"
+  fi
+}
+
 offer_default() {
   brave_installed || return 0
   load_handler || die "could not read the Brave default-browser handler"
-  local current="" current_rc=0 rc=0
+  local current="" current_rc=0 rc=0 existing=""
   current="$(current_handler)" || current_rc=$?
+  existing="$(choice_get default-browser || true)"
+  case "$existing" in
+    accepted | declined) return 0 ;;
+    requested)
+      resolve_request "$current" "$current_rc"
+      return 0
+      ;;
+  esac
   if [[ "$current_rc" -eq 0 && "$current" == "$handler" ]]; then
+    choice_set default-browser accepted
+    return 0
+  fi
+  if [[ "$current_rc" -eq 1 || ( "$current_rc" -eq 0 && "$current" == "safari" ) ]]; then
+    switch_default "$current"
     return 0
   fi
   prompt_choice default-browser "Make Brave the default browser? macOS will ask you to confirm. [y/N]" || rc=$?
@@ -604,13 +694,7 @@ offer_default() {
         default_notice
       fi
       ;;
-    12)
-      if [[ "$current_rc" -eq 0 && "$current" != "$handler" ]]; then
-        default_notice
-      elif [[ "$current_rc" -ne 0 ]]; then
-        default_notice
-      fi
-      ;;
+    12) default_notice ;;
     1 | 10) ;;
     *) return "$rc" ;;
   esac

@@ -9,7 +9,7 @@ Status: partially implemented (2026-08-09, local review tranche). Shipped on
 - the browser vertical slice: every desktop Mac posture (current, preview,
   Xcode, and work-managed) installs Brave from the checksummed `brave-browser`
   cask; headless profiles select no GUI browser. Policies are rendered from
-  groundwork-core v0.7.0 (`core/browser/brave.json`) into a configuration
+  groundwork-core v0.8.0 (`core/browser/brave.json`) into a configuration
   profile the user approves. Chrome is not selected. An existing Chrome
   install is left in place; removal is manual. The old no-checksum exception
   lane is retired.
@@ -179,8 +179,10 @@ and it is never a workaround or an integrity bypass.
 
 The settings editor confirms **concrete products**, not an abstract switch. On
 a desktop Mac the managed browser is Brave for every release
-posture. Groundwork asks before it runs `defaultbrowser browser`, macOS still
-asks you to confirm, and organization or device policy remains authoritative.
+posture. Groundwork runs `defaultbrowser browser` once, automatically, only when the
+default is Safari or unset; macOS asks you to confirm, the next run records
+Brave as accepted or a Keep Safari answer as a decline, and organization or
+device policy remains authoritative.
 Chrome is not installed or configured. A copy already on the machine stays until
 the owner removes it.
 
@@ -252,7 +254,7 @@ configuration_owner  who owns its settings  (groundwork | user | vendor-sync)
 
 Brave is the current example: Homebrew installs the checksummed cask, Sparkle
 owns updates, and Groundwork offers a configuration profile rendered from
-groundwork-core v0.7.0. One field cannot say that.
+groundwork-core v0.8.0. One field cannot say that.
 
 ### Each GUI variant eventually needs
 
@@ -269,7 +271,7 @@ platform requirements
 
 The universal catalog field is a **native settings location**. Brave's is the
 `com.brave.Browser` configuration profile rendered from groundwork-core
-v0.7.0. The editor path stays rendered files.
+v0.8.0. The editor path stays rendered files.
 
 `brave-browser` installs `Brave Browser.app`. The cask is checksummed and
 declares `auto_updates: true`, so it lives in the main Brewfile and Sparkle
@@ -307,7 +309,7 @@ The editor path stays rendered files.
 
 ## Settings: overrides that differ from upstream
 
-Groundwork renders the policies in groundwork-core v0.7.0
+Groundwork renders the policies in groundwork-core v0.8.0
 (`core/browser/brave.json`) and does not keep a second copy. An entry applies
 only when its `when` is met. The only understood condition is "Bitwarden is
 the password manager." An unknown condition fails closed and writes nothing.
@@ -542,7 +544,7 @@ Enforced by `scripts/validate-groundwork`:
    `groundwork-profile` reporting command (`f46e3a7`); the numbered-menu
    interview writes the fields (`4bb48df`). No channel depends on it yet.
 4. **Browser slice done** — Brave on every desktop Mac posture, checksummed
-   Brewfile install, policy profile rendered from groundwork-core v0.7.0, and
+   Brewfile install, policy profile rendered from groundwork-core v0.8.0, and
    preserved legacy `install_chrome` input. The Chrome exception lane is
    retired. Chrome is not selected and is not uninstalled when already
    present. A general machine-readable catalog for other families remains;

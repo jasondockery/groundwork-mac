@@ -53,6 +53,9 @@ class BraveBrowserTests(unittest.TestCase):
         self._write_brew("")
         self._write_defaultbrowser("* chrome\n", 0)
         self._write_adopt(0)
+        self.session = "Aqua"
+        self.codesign_status = 0
+        self._write_session_tools()
         self.spec = json.loads(SPEC.read_text(encoding="utf-8"))
 
     def tearDown(self):
@@ -85,6 +88,15 @@ class BraveBrowserTests(unittest.TestCase):
             f"exit {set_status}\n"
         )
         script.chmod(0o755)
+
+    def _write_session_tools(self) -> None:
+        for name, body in (
+            ("launchctl", f"printf '%s\\n' {self.session}"),
+            ("codesign", f"printf '%s\\n' \"$*\" >> {self.logs / 'codesign'}\nexit {self.codesign_status}"),
+        ):
+            script = self.bin / name
+            script.write_text("#!/bin/sh\n" + body + "\n")
+            script.chmod(0o755)
 
     def _write_adopt(self, status: int) -> None:
         script = self.bin / "groundwork-app-adopt"
@@ -122,6 +134,7 @@ class BraveBrowserTests(unittest.TestCase):
             "GROUNDWORK_UPDATE_SCOPE",
             "GROUNDWORK_BRAVE_NONINTERACTIVE",
             "GROUNDWORK_BRAVE_ANSWERS",
+            "SSH_CONNECTION",
         ):
             base.pop(key, None)
         base.update(extra)
@@ -250,7 +263,7 @@ class BraveBrowserTests(unittest.TestCase):
     def test_help_and_bad_args_create_nothing(self):
         help_run = self.run_brave("--help")
         self.assertEqual(help_run.returncode, 0, help_run.stderr)
-        self.assertIn("v0.7.0", help_run.stdout)
+        self.assertIn("v0.8.0", help_run.stdout)
         self.assertFalse((self.state / "brave").exists())
         self.assertFalse(self.share.exists())
         bad = self.run_brave("--apply", "--notice")
@@ -356,8 +369,102 @@ class BraveBrowserTests(unittest.TestCase):
         result = self.run_brave("--apply", env=environment, answers="y\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("set browser\n", self.log("defaultbrowser"))
-        self.assertEqual(self.choice("default-browser"), "accepted")
+        self.assertEqual(self.choice("default-browser"), "requested")
         self.assertNotIn("uninstall", self.log("brew"))
+
+    def auto_env(self, **extra: str) -> dict[str, str]:
+        contents = self.apps / "Brave Browser.app" / "Contents"
+        contents.mkdir(parents=True, exist_ok=True)
+        (contents / "Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleShortVersionString": "1.98.62"})
+        )
+        self.write_matching_profiles()
+        self.seed("extension-offer", "declined")
+        return self.env(INSTALLED_CASKS="brave-browser", **extra)
+
+    def test_safari_default_is_switched_once_automatically(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        environment = self.auto_env()
+        result = self.run_brave("--apply", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log("defaultbrowser").count("set browser\n"), 1)
+        self.assertEqual(self.choice("default-browser"), "requested")
+        self.assertIn("--verify --deep --strict", self.log("codesign"))
+        self.assertIn("defaultbrowser safari", result.stdout)
+        again = self.run_brave("--apply", env=environment)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(self.log("defaultbrowser").count("set browser\n"), 1)
+
+    def test_unset_default_is_switched_and_update_all_may_do_it(self):
+        self._write_defaultbrowser("  chrome\n  safari\n  browser\n", 0)
+        environment = self.auto_env(GROUNDWORK_UPDATE_SCOPE="maintenance")
+        result = self.run_brave("--apply", env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("set browser\n", self.log("defaultbrowser"))
+        self.assertEqual(self.choice("default-browser"), "requested")
+
+    def test_accepted_dialog_is_recorded_on_the_next_run(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        environment = self.auto_env()
+        self.run_brave("--apply", env=environment)
+        self._write_defaultbrowser("  chrome\n  safari\n* browser\n", 0)
+        self.run_brave("--apply", env=environment)
+        self.assertEqual(self.choice("default-browser"), "accepted")
+
+    def test_keep_safari_is_a_decline_never_asked_again(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        environment = self.auto_env()
+        self.run_brave("--apply", env=environment)
+        result = self.run_brave("--apply", env=environment)
+        self.assertIn("will not ask again", result.stdout)
+        self.assertEqual(self.choice("default-browser"), "declined")
+        self.run_brave("--apply", env=environment)
+        self.assertEqual(self.log("defaultbrowser").count("set browser\n"), 1)
+
+    def test_decline_ahead_of_time_is_respected(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        environment = self.auto_env()
+        self.seed("default-browser", "declined")
+        self.run_brave("--apply", env=environment)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+
+    def test_other_default_only_gets_the_offer(self):
+        self._write_defaultbrowser("* chrome\n  safari\n  browser\n", 0)
+        environment = self.auto_env()
+        declined = self.run_brave("--apply", env=environment, answers="n\n")
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertEqual(self.choice("default-browser"), "declined")
+        self.assertEqual(declined.returncode, 0, declined.stderr)
+
+    def test_no_desktop_session_defers_without_state(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        for ssh, session in ((True, "Aqua"), (False, "Background")):
+            self.session = session
+            self._write_session_tools()
+            extra = {"SSH_CONNECTION": "1 2 3 4"} if ssh else {}
+            result = self.run_brave("--apply", env=self.auto_env(**extra))
+            self.assertIn("next desktop run", result.stdout)
+            self.assertNotIn("set browser", self.log("defaultbrowser"))
+            self.assertIsNone(self.choice("default-browser"))
+
+    def test_failed_signature_check_changes_nothing(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        self.codesign_status = 1
+        self._write_session_tools()
+        result = self.run_brave("--apply", env=self.auto_env())
+        self.assertIn("code-signature check", result.stdout)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
+        self.assertIsNone(self.choice("default-browser"))
+
+    def test_hung_signature_check_is_bounded(self):
+        self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
+        script = self.bin / "codesign"
+        script.write_text("#!/bin/sh\nsleep 30\n")
+        script.chmod(0o755)
+        result = self.run_brave("--apply", env=self.auto_env(GROUNDWORK_BRAVE_CHECK_TIMEOUT="1"))
+        self.assertIn("code-signature check", result.stdout)
+        self.assertNotIn("set browser", self.log("defaultbrowser"))
 
     def test_decline_is_sticky(self):
         self.write_matching_profiles()

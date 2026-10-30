@@ -18,8 +18,8 @@
       "lastmod": "2026-08-13"
     },
     "apps.html": {
-      "sha256": "2984c30ea186f176a3c19e589d2118cc67cd71122253576d807f3bed7af8f6f6",
-      "lastmod": "2026-10-29"
+      "sha256": "c5a42805de73f84b035863987734c49f1d650cf1e4613bf8fac9f3cd54d27e34",
+      "lastmod": "2026-10-30"
     },
     "cheatsheet.html": {
       "sha256": "21ac2236c9eefd95d72bdfadcce23fa4bcc0df0f34fd9ce62c78740e2c41a915",
@@ -38,8 +38,8 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "88225343a8b03861328a27c2b2a0c7be7db631c46e00753d5aea8a5d4dd095b6",
-      "lastmod": "2026-10-29"
+      "sha256": "d7ca90b2e0256e2fd2241c80f3b6cd5b7935c30d1f1daabfb9d7dc978d38e3f0",
+      "lastmod": "2026-10-30"
     },
     "customizing.html": {
       "sha256": "b26182c6b8b85a57ff4008086ff53a9b0973e1996b2dc620a37c9392f450a688",
@@ -114,8 +114,8 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "ceb7dd268eb259de63b85f79ff38ed211cb2f899dd136fc1e6bd62029ca43109",
-      "lastmod": "2026-10-29"
+      "sha256": "3111df9872060ebfd28f207e86929f79852ebe802e713145b5986fce24612d43",
+      "lastmod": "2026-10-30"
     },
     "keyboard.html": {
       "sha256": "de050cec0c5b72215e75f9dea81f4301cef219c5788df609af0aed75e1b60d42",
@@ -130,8 +130,8 @@
       "lastmod": "2026-10-18"
     },
     "macos.html": {
-      "sha256": "9d616bb5d3ac3baa1d8e4fc2e8b5569b8dd51d166a57ea1fa5f17151d156146d",
-      "lastmod": "2026-10-29"
+      "sha256": "299eba45b31dd9e9dfed0ca1ee43bb909d664ccb4783113ca7ac0d576e0fc535",
+      "lastmod": "2026-10-30"
     },
     "neovim.html": {
       "sha256": "d9f8147723522dae0593d3f6b5abc8195d48339449031f35001f1f2bd880257f",
