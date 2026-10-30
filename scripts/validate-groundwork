@@ -18761,8 +18761,13 @@ case " ${INSTALLED_CASKS:-} " in
 esac
 SH
   chmod +x "$browser_doctor/bin/uname" "$browser_doctor/bin/chezmoi" "$browser_doctor/bin/brew"
+  # Seal the host: the doctor also detects apps under GROUNDWORK_APPLICATIONS_DIR
+  # (default /Applications), where the hosted macOS runner preinstalls Chrome.
+  browser_doctor_apps="$browser_doctor/Applications"
+  mkdir -p "$browser_doctor_apps"
   run_browser_doctor() {
     env PATH="$browser_doctor/bin:$PATH" DOCTOR_BROWSER_DATA="$1" INSTALLED_CASKS="$2" \
+      GROUNDWORK_APPLICATIONS_DIR="${3:-$browser_doctor_apps}" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --browser
   }
   browser_doctor_out="$(run_browser_doctor \
@@ -18813,6 +18818,17 @@ SH
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'headless profile selects no GUI browser' <<<"$browser_doctor_out"
   grep -qF -- '--browser' < <(/bin/bash home/dot_local/bin/executable_groundwork-doctor --help)
+  # The applications dir is the only non-brew Chrome probe: a fake Chrome app
+  # there must be detected (proves the fixture seam is live), and only there.
+  browser_doctor_fake_apps="$browser_doctor/FakeApplications"
+  mkdir -p "$browser_doctor_fake_apps/Google Chrome.app" "$browser_doctor_fake_apps/Google Chrome Beta.app"
+  browser_doctor_out="$(run_browser_doctor \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    'brave-browser' "$browser_doctor_fake_apps")"
+  grep -qF 'Chrome is still installed and is no longer Groundwork-managed' <<<"$browser_doctor_out" \
+    || fail "doctor must detect Chrome through GROUNDWORK_APPLICATIONS_DIR"
+  grep -qF 'Chrome Beta is still installed' <<<"$browser_doctor_out" \
+    || fail "doctor must detect Chrome Beta through GROUNDWORK_APPLICATIONS_DIR"
 
   check "doctor: a version-alias symlink is one owner, not two"
   # Real-machine regression, 2026-07-27. mise exposes installs/node/lts as a
