@@ -124,6 +124,34 @@ github_repo_slug() {
   printf '%s\n' "$slug"
 }
 
+# Print a URL that is safe to show. Userinfo (user[:pass]@) is replaced with
+# "***@" (a bare "git@" SSH user is kept); it is cut at the last "@" anywhere
+# in the string, before the query and fragment are dropped, so an unencoded
+# "/", "?" or "#" in a password cannot leak. GitHub-token-shaped segments
+# (gh[pousr]_ + 36 or more characters, github_pat_ + 22 or more) are masked
+# anywhere.
+redact_url() {
+  local url="$1" scheme="" rest userinfo
+  url="$(printf '%s' "$url" | sed -E 's/gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}/***/g')"
+  if [[ "$url" =~ ^([A-Za-z][A-Za-z0-9+.-]*://)(.*)$ ]]; then
+    scheme="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+  else
+    rest="$url"
+  fi
+  if [[ "$rest" == *@* ]]; then
+    userinfo="${rest%@*}"
+    rest="${rest##*@}"
+    if [[ "$userinfo" == git ]]; then
+      rest="git@${rest}"
+    else
+      rest="***@${rest}"
+    fi
+  fi
+  rest="${rest%%[?#]*}"
+  printf '%s%s\n' "$scheme" "$rest"
+}
+
 origin_matches_repo_url() {
   local origin_url="$1" expected_url="$2" origin_slug expected_slug
   [[ "$origin_url" == "$expected_url" ]] && return 0
@@ -135,10 +163,12 @@ origin_matches_repo_url() {
 }
 
 ensure_repo_access() {
+  local shown_url
+  shown_url="$(redact_url "$repo_url")"
   info "Checking Groundwork repo access"
 
   if can_read_repo; then
-    info "Repo is readable: ${repo_url}"
+    info "Repo is readable: ${shown_url}"
     return
   fi
 
@@ -146,13 +176,13 @@ ensure_repo_access() {
     https://github.com/*)
       warn "Repo is not readable anonymously; trying GitHub authentication."
       ensure_github_auth
-      can_read_repo || die "Could not read ${repo_url}. Confirm the URL is correct and the active GitHub account can access ${repo_owner}/${repo_name}."
+      can_read_repo || die "Could not read ${shown_url}. Confirm the URL is correct and the active GitHub account can access ${repo_owner}/${repo_name}."
       ;;
     git@github.com:* | ssh://git@github.com/*)
-      die "Could not read ${repo_url} over SSH. Confirm this Mac has the right SSH key loaded and that key is added to the GitHub account with repo access."
+      die "Could not read ${shown_url} over SSH. Confirm this Mac has the right SSH key loaded and that key is added to the GitHub account with repo access."
       ;;
     *)
-      die "Could not read ${repo_url}. Confirm the repo URL and network access, then re-run this script."
+      die "Could not read ${shown_url}. Confirm the repo URL and network access, then re-run this script."
       ;;
   esac
 }
@@ -166,7 +196,7 @@ clone_or_update_groundwork() {
     origin_url="$(git -C "$groundwork_dir" remote get-url origin 2>/dev/null || true)"
     [[ -n "$origin_url" ]] || die "$groundwork_dir has no origin remote. Set GROUNDWORK_DIR to another path or fix the checkout."
     if ! origin_matches_repo_url "$origin_url" "$repo_url"; then
-      die "$groundwork_dir points at '$origin_url', not '$repo_url'. Move it aside, set GROUNDWORK_DIR, or set GROUNDWORK_REPO_URL to the existing checkout intentionally."
+      die "$groundwork_dir points at '$(redact_url "$origin_url")', not '$(redact_url "$repo_url")'. Move it aside, set GROUNDWORK_DIR, or set GROUNDWORK_REPO_URL to the existing checkout intentionally."
     fi
     git -C "$groundwork_dir" fetch origin
     git -C "$groundwork_dir" pull --ff-only
@@ -180,6 +210,13 @@ clone_or_update_groundwork() {
   mkdir -p "$(dirname "$groundwork_dir")"
   git clone "$repo_url" "$groundwork_dir"
 }
+
+# Test seam: run the repo-access and checkout steps alone.
+if [[ "${GROUNDWORK_BOOTSTRAP_SELFTEST:-}" == "repo" ]]; then
+  ensure_repo_access
+  clone_or_update_groundwork
+  exit 0
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   die "This bootstrap is for macOS."
