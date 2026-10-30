@@ -10587,8 +10587,18 @@ PYTHON
     || fail "a stored work flag must not enable the old infrastructure-extension seed"
   grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' <<<"$preset_out" \
     || fail "a stored work flag must record the one-line retirement notice"
-  grep -qF 'work = true' <<<"$preset_out" \
-    || fail "a stored work flag must be kept so the old config still renders"
+  grep -qF 'work = false' <<<"$preset_out" \
+    || fail "a stored work flag must be written back as false once migrated"
+  ! grep -qF 'work = true' <<<"$preset_out" \
+    || fail "a migrated config must not keep work = true"
+  preset_out="$(_profile_render '{"work":false,"personal_apps":false,"work_extensions":true,"git_identity":"work","chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
+    || fail "a migrated config must still render"
+  grep -qF 'personal_apps = false' <<<"$preset_out" \
+    || fail "a migrated config must keep an explicit personal_apps choice"
+  grep -qF 'work_extensions = true' <<<"$preset_out" \
+    || fail "a migrated config must keep an explicit work_extensions choice"
+  ! grep -qF 'Retired work-managed setting ignored' <<<"$preset_out" \
+    || fail "a migrated config must not repeat the retirement notice"
   preset_out="$(_profile_render '{"work":false,"profile_preset":"personal-preview","release_posture":"preview","xcode":true,"beta":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
     || fail "stored preview preferences did not render"
   grep -qF 'profile_preset = "personal-preview"' <<<"$preset_out" \
