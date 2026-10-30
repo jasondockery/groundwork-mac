@@ -1,0 +1,39 @@
+{{- /* Opt-in, per-user git-filter-repo for history purges. Renders empty (and chezmoi skips it) unless macOS and git_filter_repo is the boolean true. groundwork-core docs/history-purge.md owns the contract: per-user install, no root, proof is `git filter-repo -h` listing --sensitive-data-removal. This script never runs a history rewrite, force-push, or tag change. */ -}}
+{{- $enabled := false -}}
+{{- if and (eq .chezmoi.os "darwin") (hasKey . "git_filter_repo") (kindIs "bool" .git_filter_repo) -}}
+{{- $enabled = .git_filter_repo -}}
+{{- end -}}
+{{- if $enabled -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Per-user locations first, then Homebrew's pipx (installed from Brewfile.optional).
+export PATH="$HOME/.local/bin:$PATH:/opt/homebrew/bin:/usr/local/bin"
+
+has_proof() {
+  git filter-repo -h 2>&1 | grep -q -- '--sensitive-data-removal'
+}
+
+# Idempotent: a copy that already shows the flag is left alone.
+if has_proof; then
+  exit 0
+fi
+
+if ! command -v pipx >/dev/null 2>&1; then
+  echo "git-filter-repo is enabled but pipx is not installed yet; will retry on next chezmoi apply." >&2
+  exit 0
+fi
+
+if pipx list --short 2>/dev/null | grep -q '^git-filter-repo '; then
+  pipx upgrade git-filter-repo || true
+else
+  pipx install git-filter-repo || true
+fi
+
+if has_proof; then
+  echo "git-filter-repo installed for this user (proof: git filter-repo -h lists --sensitive-data-removal)."
+else
+  echo "git-filter-repo is not usable: 'git filter-repo -h' does not list --sensitive-data-removal. Will retry on next chezmoi apply." >&2
+fi
+exit 0
+{{- end -}}

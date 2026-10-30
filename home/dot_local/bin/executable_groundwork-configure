@@ -140,10 +140,10 @@ config_digest_open="$(cksum <"$config_path")"
 # key                  label                 kind    clearable
 # Every mutable field is offered here even when bootstrap deliberately does not
 # ask it. home/.chezmoi.toml.tmpl preserves stored values on every platform.
-fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode local_inference obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway)
-fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Local inference" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway")
-fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool bool string string identity bool bool bool)
-fields_clear=(no no no no no no no no no no yes no no no yes yes no no no no)
+fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode local_inference git_filter_repo obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway)
+fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Local inference" "git-filter-repo" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway")
+fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool bool bool string string identity bool bool bool)
+fields_clear=(no no no no no no no no no no yes no no no no yes yes no no no no)
 
 posture_values=(current preview)
 posture_labels=("Stable channels (managed browser: Brave)" "Preview channels (managed browser stays Brave)")
@@ -315,6 +315,9 @@ edit_field() { # index
   fi
   if [[ "$key" == "local_inference" ]]; then
     echo "  This installs the Homebrew ollama formula only on an Apple Silicon Mac. It does not download model weights, start a server, or change Claude, Codex, ChatGPT, or other cloud sign-in. Intel Macs, Linux, and WSL keep the saved answer and do not install it."
+  fi
+  if [[ "$key" == "git_filter_repo" ]]; then
+    echo "  This installs git-filter-repo for your user only, with pipx, never with administrator permission. It never runs a history rewrite. Answering no leaves an installed copy alone; remove it with: pipx uninstall git-filter-repo"
   fi
   case "$kind" in
     bool)

@@ -209,6 +209,17 @@ it only on darwin arm64. */ -}}
 {{- end -}}
 {{- end -}}
 
+{{- /* git-filter-repo is an opt-in, per-user history-purge tool. groundwork-configure
+owns the change, so bootstrap never asks. Default false, which is also what an
+existing machine gets before the key exists. A stored bool is copied through on
+every platform; the install script honors it only on macOS. */ -}}
+{{- $gitFilterRepo := false -}}
+{{- if hasKey . "git_filter_repo" -}}
+{{- if kindIs "bool" .git_filter_repo -}}
+{{- $gitFilterRepo = .git_filter_repo -}}
+{{- end -}}
+{{- end -}}
+
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 
 sourceDir = {{ .chezmoi.workingTree | quote }}
@@ -243,6 +254,7 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     beta = {{ $beta }}
     imessage_gateway = {{ $imessageGateway }}
     local_inference = {{ $localInference }}
+    git_filter_repo = {{ $gitFilterRepo }}
 
 [edit]
     command = "nvim"
