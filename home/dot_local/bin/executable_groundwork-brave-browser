@@ -680,7 +680,7 @@ offer_default() {
     choice_set default-browser accepted
     return 0
   fi
-  if [[ "$current_rc" -eq 1 || ( "$current_rc" -eq 0 && "$current" == "safari" ) ]]; then
+  if [[ "$current_rc" -eq 1 || ("$current_rc" -eq 0 && "$current" == "safari") ]]; then
     switch_default "$current"
     return 0
   fi

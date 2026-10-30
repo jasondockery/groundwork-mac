@@ -460,7 +460,7 @@ class BraveBrowserTests(unittest.TestCase):
     def test_hung_signature_check_is_bounded(self):
         self._write_defaultbrowser("  chrome\n* safari\n  browser\n", 0)
         script = self.bin / "codesign"
-        script.write_text("#!/bin/sh\nsleep 30\n")
+        script.write_text("#!/bin/sh\nexec sleep 30\n")
         script.chmod(0o755)
         result = self.run_brave("--apply", env=self.auto_env(GROUNDWORK_BRAVE_CHECK_TIMEOUT="1"))
         self.assertIn("code-signature check", result.stdout)
