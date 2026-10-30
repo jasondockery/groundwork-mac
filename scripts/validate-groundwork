@@ -12212,20 +12212,28 @@ SH
   fi
   grep -qF "github.com/example/wanted.git" "$redact_fixture/access-err" \
     || fail "the repo access message must still name the repo"
-  # An "@" in the path and token-shaped path segments must be masked too.
-  for redact_url_case in "https://example.com/o/r@${redact_secret}-path" \
-    "https://example.com/o/ghp_${redact_secret}/r.git" \
-    "https://example.com/o/github_pat_${redact_secret}/r.git"; do
+  # Unencoded "/" in a password, a token after a path "@", and token-shaped
+  # path segments must be masked; a plain ghp_-prefixed name must survive.
+  redact_tok="$(printf 'gh%s' 'p_')$(printf 'A%.0s' {1..36})$$"
+  redact_pat="$(printf 'github%s' '_pat_')$(printf 'B%.0s' {1..22})$$"
+  for redact_url_case in \
+    "https://u:pa/${redact_secret}x@example.com/o/r.git|example.com/o/r.git" \
+    "u:pa/${redact_secret}x@example.com:o/r.git|example.com:o/r.git" \
+    "https://example.com/o/r@${redact_tok}|https://" \
+    "https://example.com/o/${redact_tok}/r.git|example.com/o/***/r.git" \
+    "https://example.com/o/${redact_pat}/r.git|example.com/o/***/r.git" \
+    "https://example.com/o/ghp_utils.git|example.com/o/ghp_utils.git"; do
     set +e
     env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo \
-      GROUNDWORK_REPO_URL="$redact_url_case" \
+      GROUNDWORK_REPO_URL="${redact_url_case%%|*}" \
       /bin/bash bootstrap-mac.sh >"$redact_fixture/path-out" 2>"$redact_fixture/path-err" </dev/null
     set -e
-    if grep -qF "$redact_secret" "$redact_fixture/path-out" "$redact_fixture/path-err"; then
-      fail "bootstrap printed a secret carried in a URL path"
+    if grep -qF -e "$redact_secret" -e "$redact_tok" -e "$redact_pat" -e "pa/" \
+      "$redact_fixture/path-out" "$redact_fixture/path-err"; then
+      fail "bootstrap printed a secret carried in a URL: ${redact_url_case%%|*}"
     fi
-    grep -qF "example.com/o/" "$redact_fixture/path-err" \
-      || fail "the repo access message must still name the host and owner for a path-secret URL"
+    grep -qF -e "${redact_url_case##*|}" "$redact_fixture/path-err" \
+      || fail "the repo access message lost its useful part for a secret-bearing URL"
   done
 
   # groundwork-brew-repair keeps the same convention around its [y/N] gate.
