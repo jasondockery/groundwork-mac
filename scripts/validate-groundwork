@@ -12212,6 +12212,21 @@ SH
   fi
   grep -qF "github.com/example/wanted.git" "$redact_fixture/access-err" \
     || fail "the repo access message must still name the repo"
+  # An "@" in the path and token-shaped path segments must be masked too.
+  for redact_url_case in "https://example.com/o/r@${redact_secret}-path" \
+    "https://example.com/o/ghp_${redact_secret}/r.git" \
+    "https://example.com/o/github_pat_${redact_secret}/r.git"; do
+    set +e
+    env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo \
+      GROUNDWORK_REPO_URL="$redact_url_case" \
+      /bin/bash bootstrap-mac.sh >"$redact_fixture/path-out" 2>"$redact_fixture/path-err" </dev/null
+    set -e
+    if grep -qF "$redact_secret" "$redact_fixture/path-out" "$redact_fixture/path-err"; then
+      fail "bootstrap printed a secret carried in a URL path"
+    fi
+    grep -qF "example.com/o/" "$redact_fixture/path-err" \
+      || fail "the repo access message must still name the host and owner for a path-secret URL"
+  done
 
   # groundwork-brew-repair keeps the same convention around its [y/N] gate.
   cat >"$prompt_fixture/bin/brew" <<'SH'
