@@ -38,7 +38,10 @@ Sections (all run by default):
                 and a pnpm global-tool directory is bypassing Groundwork's
                 project-local or mise-managed CLI lanes.
   AI tools      effective Claude Code executable, native/manual ownership, and
-                comparison with the selected Homebrew installation.
+                comparison with the selected Homebrew installation. Warns,
+                without failing, when both the native ~/.local/bin/claude and
+                the Homebrew claude-code@latest cask are installed, naming the
+                claude_code_owner choice and how to remove the other copy.
   Commit identity
                 the groundwork-core commit identity guard: whether the user-level
                 hooks are installed and point at the pinned guard, whether a
@@ -113,6 +116,19 @@ gw_doctor_selected_docker_backend() {
   [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] || return 1
   data="$("$chezmoi_bin" data --format=json 2>/dev/null)" || return 1
   printf '%s' "$data" | "$jq_bin" -er '.docker_backend // empty'
+}
+
+# claude_code_owner from the chezmoi profile; homebrew when it cannot be read,
+# matching home/.chezmoi.toml.tmpl for a profile written before the key existed.
+gw_doctor_selected_claude_code_owner() {
+  local data="" chezmoi_bin="" jq_bin="" owner=""
+  chezmoi_bin="$(type -P chezmoi 2>/dev/null || true)"
+  jq_bin="$(type -P jq 2>/dev/null || true)"
+  if [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] \
+    && data="$("$chezmoi_bin" data --format=json 2>/dev/null)"; then
+    owner="$(printf '%s' "$data" | "$jq_bin" -r '.claude_code_owner // empty' 2>/dev/null || true)"
+  fi
+  case "$owner" in native) echo native ;; *) echo homebrew ;; esac
 }
 
 karabiner_section() {
@@ -1358,6 +1374,7 @@ ai_tools_section() {
   # shellcheck source=/dev/null
   . "$ownership_lib"
   gw_claude_ownership_report
+  gw_claude_dual_install_report "$(gw_doctor_selected_claude_code_owner)"
 }
 
 commit_identity_section() {

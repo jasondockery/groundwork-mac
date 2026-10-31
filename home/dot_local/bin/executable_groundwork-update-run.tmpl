@@ -1270,6 +1270,7 @@ if [[ -r "$coding_ownership_lib" ]]; then
   # shellcheck source=/dev/null
   . "$coding_ownership_lib"
   gw_claude_ownership_report
+  gw_claude_dual_install_report {{ get . "claude_code_owner" | default "homebrew" | toString | quote }}
 else
   echo 'Groundwork: coding CLI ownership probe unavailable; effective Claude version is unknown.'
 fi

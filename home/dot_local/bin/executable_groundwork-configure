@@ -131,6 +131,8 @@ with open(path) as handle: data = json.load(handle)
 with open(sys.argv[2]) as handle: defaults = json.load(handle)
 for key, value in defaults.items():
     data.setdefault(key, value)
+# Matches home/.chezmoi.toml.tmpl for a config written before the key existed.
+data.setdefault("claude_code_owner", "homebrew")
 with open(path, "w") as handle: json.dump(data, handle)
 PYTHON
 # Digest at editor-open time; promotion aborts if the config changes under us.
@@ -140,10 +142,10 @@ config_digest_open="$(cksum <"$config_path")"
 # key                  label                 kind    clearable
 # Every mutable field is offered here even when bootstrap deliberately does not
 # ask it. home/.chezmoi.toml.tmpl preserves stored values on every platform.
-fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode local_inference git_filter_repo obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway)
-fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Local inference" "git-filter-repo" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway")
-fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool bool bool string string identity bool bool bool)
-fields_clear=(no no no no no no no no no no yes no no no no yes yes no no no no)
+fields_key=(release_posture environment_role terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode local_inference git_filter_repo claude_code_owner obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway)
+fields_label=("Release posture" "Environment role" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Local inference" "git-filter-repo" "Claude Code owner" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway")
+fields_kind=(posture role multiplexer bool docker pw keyrepeat string string string string bool bool bool bool claudeowner string string identity bool bool bool)
+fields_clear=(no no no no no no no no no no yes no no no no no yes yes no no no no)
 
 posture_values=(current preview)
 posture_labels=("Stable channels (managed browser: Brave)" "Preview channels (managed browser stays Brave)")
@@ -165,6 +167,10 @@ load_choices() { # kind -> populates choice_values / choice_labels
     docker)
       choice_values=(colima docker-desktop none)
       choice_labels=("Colima + Docker CLI (recommended on macOS)" "Docker Desktop (explicit alternative)" "None")
+      ;;
+    claudeowner)
+      choice_values=(homebrew native)
+      choice_labels=("Homebrew claude-code@latest cask (recommended; updated by update-all)" "Native installer in ~/.local/bin (updates itself)")
       ;;
     identity)
       choice_values=(personal work)
@@ -292,7 +298,7 @@ display_of() { # key kind -> human display of the effective value
   v="$(current_value "$1")"
   case "$2" in
     bool) [[ "$v" == "true" ]] && echo "Yes" || echo "No" ;;
-    posture | keyrepeat | multiplexer | docker | identity) choice_display "$2" "$v" ;;
+    posture | keyrepeat | multiplexer | docker | identity | claudeowner) choice_display "$2" "$v" ;;
     *) [[ -z "$v" ]] && echo "(none)" || echo "$v" ;;
   esac
 }
@@ -319,6 +325,9 @@ edit_field() { # index
   if [[ "$key" == "git_filter_repo" ]]; then
     echo "  This installs git-filter-repo for your user only, with pipx, never with administrator permission. It never runs a history rewrite. Answering no leaves an installed copy alone; remove it with: pipx uninstall git-filter-repo"
   fi
+  if [[ "$key" == "claude_code_owner" ]]; then
+    echo "  This names which Claude Code installation owns the claude command. Native leaves the Homebrew claude-code@latest cask out of the Brewfile. Neither choice uninstalls anything; when both copies exist, update-all and groundwork-doctor warn and print how to remove the other one. Point the T3 Code Claude provider Binary path at the same owner."
+  fi
   case "$kind" in
     bool)
       local defword
@@ -342,7 +351,7 @@ edit_field() { # index
         esac
       done
       ;;
-    posture | role | keyrepeat | multiplexer | pw | docker | identity)
+    posture | role | keyrepeat | multiplexer | pw | docker | identity | claudeowner)
       load_choices "$kind"
       for ((j = 0; j < ${#choice_values[@]}; j++)); do printf '  %d. %s\n' "$((j + 1))" "${choice_labels[j]}"; done
       while true; do
@@ -449,7 +458,7 @@ print_receipt() { # structured, from the pending registry — no grepped TOML
 fmt() { # value kind -> display
   case "$2" in
     bool) [[ "$1" == "true" ]] && echo "Yes" || echo "No" ;;
-    posture | role | keyrepeat | multiplexer | docker | identity) choice_display "$2" "$1" ;;
+    posture | role | keyrepeat | multiplexer | docker | identity | claudeowner) choice_display "$2" "$1" ;;
     *) [[ -z "$1" ]] && echo "(none)" || echo "$1" ;;
   esac
 }
