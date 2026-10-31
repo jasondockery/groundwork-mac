@@ -790,9 +790,18 @@ trap 'report_and_cleanup "$?" "$LINENO" "$BASH_COMMAND"' EXIT
 # The hard-deadline supervisor stops the suite with TERM. Bash's default TERM
 # action exits without running the EXIT trap, which would lose the receipt and
 # leave the concurrent maintenance group running; exit through it instead.
-trap 'fail_reason="the suite received TERM during $current_check (hard deadline or cancellation)"
-echo "validate-groundwork: $fail_reason" >&2
-exit 143' TERM
+# A deadline delivers TERM twice (the group signal and the supervisor's
+# forwarded copy). macOS bash 3.2 can run this trap again while the EXIT trap
+# is starting, and a second exit there would abandon the receipt, so only the
+# first TERM acts.
+validation_terminating=0
+trap 'if [[ "$validation_terminating" -eq 0 ]]; then
+  validation_terminating=1
+  trap "" TERM
+  fail_reason="the suite received TERM during $current_check (hard deadline or cancellation)"
+  echo "validate-groundwork: $fail_reason" >&2
+  exit 143
+fi' TERM
 
 # In GitHub Actions, gcc format feeds the shellcheck-gcc problem matcher
 # (.github/problem-matchers/shellcheck-gcc.json) so findings surface as
