@@ -565,7 +565,11 @@ jobs:
           context: .
           platforms: linux/amd64
           push: false
-          load: true
+          # Same load into the local Docker daemon as `load: true`, but without
+          # gzip-compressing the freshly built layers just to decompress them
+          # again in `docker load`. Main run 41177290877 spent 187s of its
+          # 255s image export compressing layers (#17).
+          outputs: type=docker,compression=uncompressed
           tags: groundwork/scratch:ci-${{ github.run_id }}-${{ github.run_attempt }}
           labels: |
             dev.roost.ephemeral=true
