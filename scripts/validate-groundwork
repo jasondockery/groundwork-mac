@@ -2960,6 +2960,8 @@ SH
     "$update_all_home/.local/bin/groundwork-brew-refetch"
   cat >"$update_all_bin/brew" <<'SH'
 #!/usr/bin/env bash
+# Optional exact argument record for cases that pin what is never called.
+[[ -z "${BREW_CALL_LOG:-}" ]] || printf '%s\n' "$*" >>"$BREW_CALL_LOG"
 # Linux's baseline fixture has formulae only; native coding casks get their
 # own exact-token transaction case. macOS retains its desktop inventory.
 fixture_default_casks=""
@@ -5977,6 +5979,51 @@ EOF
     || fail "an ordinary bundle failure skipped the repair helper"
   [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq 2 ]] \
     || fail "an ordinary bundle failure did not retry after a successful repair"
+  rm -f "$update_all_home/.brew-bundle-count"
+
+  check "claude_code_owner native leaves an installed claude-code@latest cask in place"
+  # Removing the other copy is the user's explicit step, named by the
+  # two-copies warning. Neither the Brewfile bundle nor the update runner may
+  # remove the cask, even though the native Brewfile no longer declares it.
+  native_owner_data="{${base_data},\"work\":false,\"docker_backend\":\"colima\",\"xcode\":false,\"beta\":false,\"claude_code_owner\":\"native\""
+  cp "$update_all_home/.config/homebrew/Brewfile" "$update_all_fixture/Brewfile.before-native-owner"
+  chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
+    --override-data "${native_owner_data},\"headless\":false,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+    execute-template <home/dot_config/homebrew/Brewfile.tmpl \
+    >"$update_all_home/.config/homebrew/Brewfile"
+  assert_not_contains '^cask "claude-code@latest"' "$update_all_home/.config/homebrew/Brewfile" \
+    "the native-owner Brewfile still declares the claude-code@latest cask"
+  chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
+    --override-data "${native_owner_data},\"headless\":false,\"chezmoi\":{\"os\":\"linux\",\"arch\":\"amd64\",\"osRelease\":{\"ID\":\"ubuntu\"}}}" \
+    execute-template <home/dot_local/bin/executable_groundwork-update-run.tmpl \
+    >"$update_all_fixture/native-owner-runner"
+  chmod +x "$update_all_fixture/native-owner-runner"
+  grep -qF 'gw_claude_dual_install_report "native"' "$update_all_fixture/native-owner-runner" \
+    || fail "the native-owner runner did not render the stored owner"
+  native_owner_calls="$update_all_fixture/native-owner-brew-calls"
+  : >"$native_owner_calls"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    BREW_CALL_LOG="$native_owner_calls" BREW_CASKS='ghostty claude-code@latest' \
+    "$update_all_fixture/darwin-bundle-hook" \
+    >"$update_all_fixture/native-owner-bundle" 2>&1 \
+    || fail "the native-owner Brewfile bundle failed"
+  grep -qE '^bundle( |$)' "$native_owner_calls" \
+    || fail "the native-owner bundle case never reached brew bundle"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    BREW_CALL_LOG="$native_owner_calls" BREW_FORMULAE='' \
+    BREW_CASKS='codex claude-code@latest grok-build' FAKE_PLATFORM=linux \
+    "$update_all_fixture/native-owner-runner" >"$update_all_fixture/native-owner-update" 2>&1 \
+    || fail "the native-owner update-all run failed"
+  grep -qF 'Groundwork update complete' "$update_all_fixture/native-owner-update" \
+    || fail "the native-owner update-all run did not complete"
+  grep -qE '^upgrade ' "$native_owner_calls" \
+    || fail "the native-owner update-all run never reached Homebrew upgrades"
+  assert_not_contains '^uninstall|^bundle cleanup|--cleanup|--zap' "$native_owner_calls" \
+    "a native-owner bundle or update-all run removed a Homebrew package"
+  cp "$update_all_fixture/Brewfile.before-native-owner" "$update_all_home/.config/homebrew/Brewfile"
   rm -f "$update_all_home/.brew-bundle-count"
 
   cp "$update_all_home/.config/homebrew/Brewfile" \

@@ -116,6 +116,8 @@ gw_claude_dual_install_report() {
   managed="$prefix/bin/claude"
   managed_real="$(gw_cli_resolve "$managed")" || return 0
   case "$managed_real" in "$prefix/Caskroom/claude-code@latest/"*) ;; *) return 0 ;; esac
+  # A ~/.local/bin/claude link into the cask is the same copy, not a second one.
+  [[ "$(gw_cli_resolve "$native" || true)" != "$managed_real" ]] || return 0
   native_version="$(gw_cli_version "$native")" || native_version=unknown
   managed_version="$(gw_cli_version "$managed")" || managed_version=unknown
   printf 'Claude Code warning: two copies are installed: native %s (version %s) and Homebrew claude-code@latest %s (version %s).\n' \

@@ -122,6 +122,13 @@ class DualInstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_a_native_path_linked_into_the_cask_is_one_copy(self):
+        managed = self.install_cask()
+        (self.bin / "claude").symlink_to(managed)
+        result = self.report("homebrew")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_doctor_warns_without_failing_and_reads_the_profile_owner(self):
         self.install_native()
         self.install_cask()
