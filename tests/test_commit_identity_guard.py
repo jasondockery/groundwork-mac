@@ -5,6 +5,7 @@ Every test runs against a fixture HOME. The pinned guard is core/commit-guard.
 """
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 INSTALL = REPO / "home/dot_local/share/groundwork/lib/commit-identity-install.sh"
 GUARD = REPO / "core/commit-guard/commit-identity-guard.sh"
+PATTERNS = REPO / "core/commit-guard/owner-remote-patterns"
+REDACT_CHECK = REPO / "core/redaction/check-redact-url.sh"
 DOCTOR = REPO / "home/dot_local/bin/executable_groundwork-doctor"
 RUN_AFTER = REPO / "home/run_after_24-commit-identity-guard.sh.tmpl"
 
@@ -25,12 +28,20 @@ OWNED = {
     "mixed-case": "https://github.com/JasonDockery/fixture.git",
     "alias": "git@github-personal:jasondockery/x.git",
     "alias-mixed-case": "git@github-personal:JasonDockery/x.git",
+    # groundwork-core v0.10.0's fifth pattern: any ssh:// host, alias, or port.
+    "ssh-url-port": "ssh://git@github.com:22/jasondockery/fixture.git",
+    "ssh-url-443": "ssh://git@ssh.github.com:443/jasondockery/fixture.git",
+    "ssh-url-alias": "ssh://github-personal/jasondockery/x.git",
+    "ssh-url-alias-port-mixed-case": "ssh://git@github-personal:2222/JasonDockery/x.git",
 }
 EMPLOYER = "git@github.com:example-employer/fixture.git"
 NOT_OWNED = {
     "alias-employer": "git@github-personal:EmployerCorp/x.git",
     "alias-longer-owner": "git@github-personal:jasondockery2/x",
     "https-longer-owner": "https://github.com/jasondockery2/x.git",
+    "ssh-url-port-longer-owner": "ssh://git@github.com:22/jasondockery2/x.git",
+    "ssh-url-alias-other-owner": "ssh://github-personal/other-owner/x.git",
+    "ssh-url-owner-not-first": "ssh://git@github.com:22/other-owner/jasondockery/x.git",
 }
 BAD_MESSAGE = "m\n\nCo-authored-by: A <a@example.com>"
 
@@ -99,7 +110,10 @@ class CommitIdentityInstallTests(unittest.TestCase):
         self.assertIn(str(self.hooks), include)
         includes = self.git("config", "--file", str(self.home / ".config/git/config"),
                             "--get-regexp", r"^includeif\..*\.path$").stdout.splitlines()
-        self.assertEqual(len(includes), 4)
+        patterns = [line for line in PATTERNS.read_text().splitlines() if line and not line.startswith("#")]
+        self.assertEqual(len(includes), len(patterns))
+        self.assertEqual(len(includes), 5)
+        self.assertTrue(any(":ssh://*/[jJ][aA]" in line for line in includes), includes)
         self.assertFalse((self.home / ".gitconfig").exists())
         self.assertEqual((self.gw / "commit-denylist").read_text(), "")
         self.assertEqual(json.loads(self.settings.read_text()), {"attribution": {"commit": "", "pr": ""}})
@@ -263,6 +277,22 @@ class CommitIdentityInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(self.git("config", "--get", "core.hooksPath", cwd=repo).stdout.strip(), "")
 
+    def test_a_core_without_the_patterns_file_gets_the_same_five(self):
+        bare = Path(self.temp.name) / "old-core"
+        bare.mkdir()
+        guard = bare / GUARD.name
+        shutil.copy2(GUARD, guard)
+        result = subprocess.run(["bash", str(INSTALL), "--guard", str(guard)],
+                                env=self.env, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        built_in = self.git("config", "--file", str(self.home / ".config/git/config"),
+                            "--get-regexp", r"^includeif\..*\.path$").stdout
+        (self.home / ".config/git/config").unlink()
+        self.run_install()
+        from_core = self.git("config", "--file", str(self.home / ".config/git/config"),
+                             "--get-regexp", r"^includeif\..*\.path$").stdout
+        self.assertEqual(built_in, from_core)
+
     def test_userinfo_urls_are_not_matched(self):
         self.run_install()
         repo = self.make_repo(remote="https://user@github.com/jasondockery/x.git")
@@ -370,6 +400,27 @@ class CommitIdentityInstallTests(unittest.TestCase):
                                 capture_output=True, timeout=30)
         self.assertIn("opted out", result.stdout)
         self.assertIn("not installed", result.stdout)
+
+
+
+class SharedRedactionVectorTests(unittest.TestCase):
+    def test_bootstrap_redact_url_passes_groundwork_core_vectors(self):
+        if not REDACT_CHECK.exists():
+            if os.environ.get("CI"):
+                self.fail("core submodule is not checked out")
+            self.skipTest("core submodule is not checked out")
+        source = (REPO / "bootstrap-mac.sh").read_text()
+        start = source.index("redact_url() {")
+        end = source.index("\n}\n", start) + 3
+        with tempfile.TemporaryDirectory(prefix="groundwork-redact-") as temp:
+            cli = Path(temp) / "redact-cli"
+            cli.write_text("#!/usr/bin/env bash\nset -u\n" + source[start:end] + 'redact_url "$1"\necho\n')
+            cli.chmod(0o755)
+            result = subprocess.run(["bash", str(REDACT_CHECK), "bash", str(cli)],
+                                    env={"PATH": os.environ["PATH"], "HOME": temp},
+                                    text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(" 0 failed", result.stdout)
 
 
 if __name__ == "__main__":

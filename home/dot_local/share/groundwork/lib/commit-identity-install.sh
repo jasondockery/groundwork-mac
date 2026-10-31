@@ -9,8 +9,10 @@
 # symlink; nothing is copied. core.hooksPath is NOT set globally. It is set in
 # ~/.config/groundwork/commit-guard.gitconfig, which the XDG git config
 # (~/.config/git/config) includes through includeIf "hasconfig:remote.*.url:"
-# for the owner's GitHub URL forms and any scp-style host alias such as
-# git@github-personal:owner/repo (git 2.36+). URLs with userinfo
+# for the owner's GitHub URL forms, any scp-style host alias such as
+# git@github-personal:owner/repo, and any ssh:// host, alias, or port such as
+# ssh://git@ssh.github.com:443/owner/repo (git 2.36+). The patterns come from
+# core/commit-guard/owner-remote-patterns. URLs with userinfo
 # (https://user@github.com/...) are not matched. Work repositories are untouched.
 # If the user already sets core.hooksPath anywhere, nothing is written.
 # Gaps: a push straight to an owned URL from a repo with no owned remote, and
@@ -149,6 +151,21 @@ for ((i = 0; i < ${#owner}; i++)); do
   upper="$(printf '%s' "$ch" | tr '[:lower:]' '[:upper:]')"
   if [[ "$upper" == "$ch" ]]; then owner_glob+="$ch"; else owner_glob+="[$ch$upper]"; fi
 done
+# The owner-scoped remote URL patterns come from the pinned core, next to the
+# guard (core/commit-guard/owner-remote-patterns). A core without that file
+# gets the same five patterns built in.
+owner_patterns=()
+patterns_file="$(dirname "$guard")/owner-remote-patterns"
+if [[ -r "$patterns_file" ]]; then
+  while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+    case "$pattern" in '' | '#'*) continue ;; esac
+    owner_patterns+=("${pattern//<owner>/$owner_glob}")
+  done <"$patterns_file"
+fi
+if [[ "${#owner_patterns[@]}" -eq 0 ]]; then
+  owner_patterns=("https://github.com/$owner_glob/**" "git@github.com:$owner_glob/**"
+    "ssh://git@github.com/$owner_glob/**" "*:$owner_glob/**" "ssh://*/$owner_glob/**")
+fi
 include_file="$gw/commit-guard.gitconfig"
 cwd_safe="$(mktemp -d)"
 trap 'rmdir "$cwd_safe" 2>/dev/null || true' EXIT
@@ -173,7 +190,7 @@ else
     changed=1
   fi
   mkdir -p "$(dirname "$xdg_git")"
-  for url in "https://github.com/$owner_glob/**" "git@github.com:$owner_glob/**" "ssh://git@github.com/$owner_glob/**" "*:$owner_glob/**"; do
+  for url in "${owner_patterns[@]}"; do
     key="includeIf.hasconfig:remote.*.url:$url.path"
     if [[ "$(git config --file "$xdg_git" --get "$key" 2>/dev/null || true)" != "$include_file" ]]; then
       git config --file "$xdg_git" "$key" "$include_file"
