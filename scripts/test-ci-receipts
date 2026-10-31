@@ -988,19 +988,40 @@ esac
         else:
             raise AssertionError("a passed check with a skip code was accepted")
 
+        # A check stopped because another check failed the suite is cancelled:
+        # valid only in a failed suite, with a reason and a consistent count.
         cancelled_check = json.loads(json.dumps(skipped_envelope))
-        cancelled_check["body"]["checks"][1] = {
-            "name": "native check",
-            "durationSeconds": 1,
-            "result": "cancelled",
+        cancelled_check["result"] = "failed"
+        cancelled_check["body"]["checks"] = [
+            {"name": "portable check", "durationSeconds": 1, "result": "failed"},
+            {
+                "name": "concurrent check",
+                "durationSeconds": 1,
+                "result": "cancelled",
+                "reason": "stopped after the main suite failed",
+            },
+        ]
+        cancelled_check["body"].update(passedCount=0, skippedCount=0, failedCount=1, cancelledCount=1)
+        validate_receipt(cancelled_check, expected_kind="validation-suite")
+        cancelled_mutations = {
+            "a cancelled check in a passed suite": lambda body, receipt: (
+                receipt.update(result="passed"),
+                body["checks"][0].update(result="passed"),
+                body.update(passedCount=1, failedCount=0),
+            ),
+            "a cancelled check without a reason": lambda body, receipt: body["checks"][1].pop("reason"),
+            "a cancelled check without a cancelled count": lambda body, receipt: body.pop("cancelledCount"),
+            "an inconsistent cancelled count": lambda body, receipt: body.update(cancelledCount=0),
         }
-        cancelled_check["body"]["skippedCount"] = 0
-        try:
-            validate_receipt(cancelled_check, expected_kind="validation-suite")
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("a cancelled validation check was accepted")
+        for label, mutate in cancelled_mutations.items():
+            mutant = json.loads(json.dumps(cancelled_check))
+            mutate(mutant["body"], mutant)
+            try:
+                validate_receipt(mutant, expected_kind="validation-suite")
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"{label} was accepted")
 
         assert_malformed_detail_still_writes_job_receipt(temporary)
         assert_validator_detail_mismatches_fail_closed(temporary)

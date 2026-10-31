@@ -220,6 +220,16 @@ every platform; the install script honors it only on macOS. */ -}}
 {{- end -}}
 {{- end -}}
 
+{{- /* claude_code_owner names which Claude Code installation owns `claude`:
+the Homebrew claude-code@latest cask (default) or the native installer under
+~/.local/bin. groundwork-configure owns the change, so bootstrap never asks. An
+unknown stored value falls back to homebrew, which is also what an existing
+machine gets before the key exists. */ -}}
+{{- $claudeCodeOwner := "homebrew" -}}
+{{- if and (hasKey . "claude_code_owner") (has (toString .claude_code_owner) (list "homebrew" "native")) -}}
+{{- $claudeCodeOwner = toString .claude_code_owner -}}
+{{- end -}}
+
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 
 sourceDir = {{ .chezmoi.workingTree | quote }}
@@ -255,6 +265,7 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     imessage_gateway = {{ $imessageGateway }}
     local_inference = {{ $localInference }}
     git_filter_repo = {{ $gitFilterRepo }}
+    claude_code_owner = {{ $claudeCodeOwner | quote }}
 
 [edit]
     command = "nvim"

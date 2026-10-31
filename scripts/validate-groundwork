@@ -477,33 +477,68 @@ stop_copylast_control_clients() {
   copylast_control_pids=()
 }
 
-# TERM a process and every descendant. Descendants are collected before any
-# signal so a parent cannot respawn between listing and killing, and the tree is
-# signalled directly instead of relying on a shared process group.
-terminate_process_tree() {
-  local root="$1" pid
-  local -a tree=("$root") queue=("$root") children=()
+# Print each live descendant of the given roots that is not in the known set
+# (a space-separated PID list), parents before children.
+process_tree_new_members() {
+  local known=" $1 " pid child
+  shift
+  local -a queue=("$@")
   while [[ "${#queue[@]}" -gt 0 ]]; do
     pid="${queue[0]}"
     queue=("${queue[@]:1}")
-    children=()
-    while IFS= read -r child_pid; do
-      [[ -n "$child_pid" ]] && children+=("$child_pid")
+    while IFS= read -r child; do
+      [[ -n "$child" ]] || continue
+      queue+=("$child")
+      [[ "$known" != *" $child "* ]] || continue
+      known+="$child "
+      printf '%s\n' "$child"
     done < <(pgrep -P "$pid" 2>/dev/null || true)
-    if [[ "${#children[@]}" -gt 0 ]]; then
-      tree+=("${children[@]}")
-      queue+=("${children[@]}")
+  done
+}
+
+# TERM a process and every descendant. Descendants are collected before any
+# signal so a parent cannot respawn between listing and killing, and the tree is
+# signalled directly instead of relying on a shared process group. A listed
+# process still running its TERM handler can fork after that walk, possibly into
+# its own process group, so later walks start from every listed descendant that
+# is still alive and TERM only what is new, until none remains (about two
+# seconds at most). The root is not walked again: after TERM it only runs its
+# own EXIT bookkeeping, which must be allowed to finish.
+terminate_process_tree() {
+  local root="$1" pid rounds=0
+  local -a known=("$root") alive=() fresh=()
+  while IFS= read -r pid; do
+    known+=("$pid")
+  done < <(process_tree_new_members "$root" "$root")
+  kill -TERM "${known[@]}" 2>/dev/null || true
+  while [[ "$rounds" -lt 20 ]]; do
+    rounds=$((rounds + 1))
+    alive=()
+    for pid in "${known[@]:1}"; do
+      kill -0 "$pid" 2>/dev/null && alive+=("$pid")
+    done
+    [[ "${#alive[@]}" -gt 0 ]] || return 0
+    sleep 0.1
+    fresh=()
+    while IFS= read -r pid; do
+      fresh+=("$pid")
+    done < <(process_tree_new_members "${known[*]}" "${alive[@]}")
+    if [[ "${#fresh[@]}" -gt 0 ]]; then
+      known+=("${fresh[@]}")
+      kill -TERM "${fresh[@]}" 2>/dev/null || true
     fi
   done
-  kill -TERM "${tree[@]}" 2>/dev/null || true
 }
 
 report_and_cleanup() {
   local status="${1:-0}" failed_line="${2:-unknown}" failed_command="${3:-unknown}"
   local reason title validation_finished_epoch total_duration platform_name
   local platform_label platform_arch budget_state report_failed tree_changed
-  local passed_count skipped_count failed_count source_observation_complete tree_summary
+  local passed_count skipped_count failed_count cancelled_count source_observation_complete tree_summary
   local canonical_checks_expected canonical_checks_observed
+  # A second TERM (the supervisor signals the whole group once) must not cut
+  # this receipt-writing cleanup short.
+  trap '' TERM
   if [[ "$status" -ne 0 && -z "$fail_reason" ]]; then
     fail_reason="line $failed_line exited $status: $failed_command"
     echo "validate-groundwork: $current_check failed at line $failed_line: $failed_command (exit $status)" >&2
@@ -657,7 +692,10 @@ payload = common_envelope(
     source_after=source_after,
     tree_observation_complete=source_observation_complete == "1",
 )
-counts = {name: sum(check["result"] == name for check in checks) for name in ("passed", "skipped", "failed")}
+counts = {
+    name: sum(check["result"] == name for check in checks)
+    for name in ("passed", "skipped", "failed", "cancelled")
+}
 budget_value = int(budget)
 command = f"scripts/validate-groundwork --suite {suite} --report <path>"
 if deadline_explicit == "1":
@@ -677,6 +715,7 @@ payload["body"] = {
     "passedCount": counts["passed"],
     "skippedCount": counts["skipped"],
     "failedCount": counts["failed"],
+    "cancelledCount": counts["cancelled"],
     "checks": checks,
     "commands": {"localEquivalent": command},
 }
@@ -697,6 +736,7 @@ PY
   passed_count="$(awk -F '\t' '$3 == "passed" { count++ } END { print count + 0 }' "$timing_rows")"
   skipped_count="$(awk -F '\t' '$3 == "skipped" { count++ } END { print count + 0 }' "$timing_rows")"
   failed_count="$(awk -F '\t' '$3 == "failed" { count++ } END { print count + 0 }' "$timing_rows")"
+  cancelled_count="$(awk -F '\t' '$3 == "cancelled" { count++ } END { print count + 0 }' "$timing_rows")"
   if [[ "$status" -ne 0 && "${GITHUB_ACTIONS:-}" == "true" ]]; then
     printf '::error title=validate-groundwork %s failed::%s. Local equivalent: scripts/validate-groundwork --suite %s\n' \
       "$title" "$reason" "$suite" || true
@@ -706,11 +746,11 @@ PY
       printf '## validate-groundwork · %s\n' "$suite"
       echo
       if [[ "$status" -eq 0 ]]; then
-        printf '**Pass** — %s passed, %s skipped, %s failed.\n' \
-          "$passed_count" "$skipped_count" "$failed_count"
+        printf '**Pass** — %s passed, %s skipped, %s failed, %s cancelled.\n' \
+          "$passed_count" "$skipped_count" "$failed_count" "$cancelled_count"
       else
-        printf '**Fail** — %s passed, %s skipped, %s failed.\n' \
-          "$passed_count" "$skipped_count" "$failed_count"
+        printf '**Fail** — %s passed, %s skipped, %s failed, %s cancelled.\n' \
+          "$passed_count" "$skipped_count" "$failed_count" "$cancelled_count"
         echo
         echo "Reason: ${reason//|/\\|}"
       fi
@@ -747,6 +787,21 @@ PY
   exit "$status"
 }
 trap 'report_and_cleanup "$?" "$LINENO" "$BASH_COMMAND"' EXIT
+# The hard-deadline supervisor stops the suite with TERM. Bash's default TERM
+# action exits without running the EXIT trap, which would lose the receipt and
+# leave the concurrent maintenance group running; exit through it instead.
+# A deadline delivers TERM twice (the group signal and the supervisor's
+# forwarded copy). macOS bash 3.2 can run this trap again while the EXIT trap
+# is starting, and a second exit there would abandon the receipt, so only the
+# first TERM acts.
+validation_terminating=0
+trap 'if [[ "$validation_terminating" -eq 0 ]]; then
+  validation_terminating=1
+  trap "" TERM
+  fail_reason="the suite received TERM during $current_check (hard deadline or cancellation)"
+  echo "validate-groundwork: $fail_reason" >&2
+  exit 143
+fi' TERM
 
 # In GitHub Actions, gcc format feeds the shellcheck-gcc problem matcher
 # (.github/problem-matchers/shellcheck-gcc.json) so findings surface as
@@ -1186,6 +1241,7 @@ validate_static_foundation() {
   python3 -B tests/test_imessage_gateway.py
   python3 -B tests/test_local_inference.py
   python3 -B tests/test_git_filter_repo.py
+  python3 -B tests/test_claude_code_owner.py
   python3 -B tests/test_commit_identity_guard.py
   python3 -B tests/test_core_pin.py
 
@@ -1292,6 +1348,9 @@ SH
   check "whole-suite hard deadlines and process-group cleanup"
   scripts/test-validation-deadline
 
+  check "update maintenance group cancellation, deadline receipt, and late-fork cleanup"
+  scripts/test-update-group-cancellation
+
   for registry_mutation in omitted duplicate unknown dispatcher; do
     registry_mutant="$validator_cli_fixture/validate-groundwork-$registry_mutation"
     python3 - scripts/validate-groundwork "$registry_mutant" "$registry_mutation" <<'PY'
@@ -1377,10 +1436,15 @@ update_maintenance_pid=""
 update_maintenance_rows=""
 update_maintenance_log=""
 
+# A group check stopped because the main suite failed did not fail itself, so
+# its row says cancelled rather than blaming that check.
 update_maintenance_record_exit() {
   local status="$1"
-  [[ "$status" -eq 0 ]] \
-    || finish_current_check_timing failed "${fail_reason:-line exited $status}"
+  if [[ "$update_maintenance_cancelled" -eq 1 ]]; then
+    finish_current_check_timing cancelled "stopped after the main suite failed"
+  elif [[ "$status" -ne 0 ]]; then
+    finish_current_check_timing failed "${fail_reason:-line exited $status}"
+  fi
 }
 
 start_update_maintenance_group() {
@@ -1392,7 +1456,8 @@ start_update_maintenance_group() {
     # shellcheck disable=SC2030 # The subshell deliberately records into its own rows file.
     timing_rows="$update_maintenance_rows"
     current_check_active=0
-    trap 'exit 143' TERM
+    update_maintenance_cancelled=0
+    trap 'update_maintenance_cancelled=1; exit 143' TERM
     trap 'update_maintenance_record_exit "$?"' EXIT
     validate_update_maintenance_group
     finish_current_check_timing passed
@@ -2959,6 +3024,8 @@ SH
     "$update_all_home/.local/bin/groundwork-brew-refetch"
   cat >"$update_all_bin/brew" <<'SH'
 #!/usr/bin/env bash
+# Optional exact argument record for cases that pin what is never called.
+[[ -z "${BREW_CALL_LOG:-}" ]] || printf '%s\n' "$*" >>"$BREW_CALL_LOG"
 # Linux's baseline fixture has formulae only; native coding casks get their
 # own exact-token transaction case. macOS retains its desktop inventory.
 fixture_default_casks=""
@@ -5976,6 +6043,51 @@ EOF
     || fail "an ordinary bundle failure skipped the repair helper"
   [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq 2 ]] \
     || fail "an ordinary bundle failure did not retry after a successful repair"
+  rm -f "$update_all_home/.brew-bundle-count"
+
+  check "claude_code_owner native leaves an installed claude-code@latest cask in place"
+  # Removing the other copy is the user's explicit step, named by the
+  # two-copies warning. Neither the Brewfile bundle nor the update runner may
+  # remove the cask, even though the native Brewfile no longer declares it.
+  native_owner_data="{${base_data},\"work\":false,\"docker_backend\":\"colima\",\"xcode\":false,\"beta\":false,\"claude_code_owner\":\"native\""
+  cp "$update_all_home/.config/homebrew/Brewfile" "$update_all_fixture/Brewfile.before-native-owner"
+  chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
+    --override-data "${native_owner_data},\"headless\":false,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+    execute-template <home/dot_config/homebrew/Brewfile.tmpl \
+    >"$update_all_home/.config/homebrew/Brewfile"
+  assert_not_contains '^cask "claude-code@latest"' "$update_all_home/.config/homebrew/Brewfile" \
+    "the native-owner Brewfile still declares the claude-code@latest cask"
+  chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
+    --override-data "${native_owner_data},\"headless\":false,\"chezmoi\":{\"os\":\"linux\",\"arch\":\"amd64\",\"osRelease\":{\"ID\":\"ubuntu\"}}}" \
+    execute-template <home/dot_local/bin/executable_groundwork-update-run.tmpl \
+    >"$update_all_fixture/native-owner-runner"
+  chmod +x "$update_all_fixture/native-owner-runner"
+  grep -qF 'gw_claude_dual_install_report "native"' "$update_all_fixture/native-owner-runner" \
+    || fail "the native-owner runner did not render the stored owner"
+  native_owner_calls="$update_all_fixture/native-owner-brew-calls"
+  : >"$native_owner_calls"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    BREW_CALL_LOG="$native_owner_calls" BREW_CASKS='ghostty claude-code@latest' \
+    "$update_all_fixture/darwin-bundle-hook" \
+    >"$update_all_fixture/native-owner-bundle" 2>&1 \
+    || fail "the native-owner Brewfile bundle failed"
+  grep -qE '^bundle( |$)' "$native_owner_calls" \
+    || fail "the native-owner bundle case never reached brew bundle"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    BREW_CALL_LOG="$native_owner_calls" BREW_FORMULAE='' \
+    BREW_CASKS='codex claude-code@latest grok-build' FAKE_PLATFORM=linux \
+    "$update_all_fixture/native-owner-runner" >"$update_all_fixture/native-owner-update" 2>&1 \
+    || fail "the native-owner update-all run failed"
+  grep -qF 'Groundwork update complete' "$update_all_fixture/native-owner-update" \
+    || fail "the native-owner update-all run did not complete"
+  grep -qE '^upgrade ' "$native_owner_calls" \
+    || fail "the native-owner update-all run never reached Homebrew upgrades"
+  assert_not_contains '^uninstall|^bundle cleanup|--cleanup|--zap' "$native_owner_calls" \
+    "a native-owner bundle or update-all run removed a Homebrew package"
+  cp "$update_all_fixture/Brewfile.before-native-owner" "$update_all_home/.config/homebrew/Brewfile"
   rm -f "$update_all_home/.brew-bundle-count"
 
   cp "$update_all_home/.config/homebrew/Brewfile" \
