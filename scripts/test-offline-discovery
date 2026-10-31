@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
@@ -49,6 +50,12 @@ config) printf '%s\\n' "$HOME/npm-cache" ;;
 esac''')
         proxy = self.root / 'corepack/dist/pnpm.js'
         self.script(proxy, '''printf 'pnpm %s at %s network=%s prompt=%s\\n' "$*" "$PWD" "${COREPACK_ENABLE_NETWORK:-unset}" "${COREPACK_ENABLE_DOWNLOAD_PROMPT:-unset}" >>"$REVIEW_CALLS"
+if [[ -n "${REVIEW_ACTIVE:-}" ]]; then
+  : >"$REVIEW_ACTIVE/$$"
+  ls "$REVIEW_ACTIVE" | wc -l >>"$REVIEW_ACTIVE.log"
+  sleep "$REVIEW_LATENCY"
+  rm -f "$REVIEW_ACTIVE/$$"
+fi
 if [[ -f .hang ]]; then sleep 30; fi
 if [[ -f .offline ]]; then
   echo '! Corepack is about to download https://example.invalid/pnpm.tgz' >&2
@@ -59,7 +66,7 @@ if [[ "${1:-}" == --store-dir ]]; then shift 2; fi
 case "$*" in
 'store path') cat .store ;;
 --version) jq -r '.packageManager | sub("^pnpm@"; "")' package.json ;;
-'store prune'*) : ;;
+'store prune'*) [[ ! -f .prune-fails ]] || exit 3 ;;
 *) exit 64 ;;
 esac''')
         (self.bin / 'pnpm').symlink_to(proxy)
@@ -182,19 +189,133 @@ exec "$@"
         self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
         self.assertIn('0 known misses reused', result.stdout)
 
-    def test_cumulative_deadline_discards_partial_candidates_and_keeps_other_maintenance(self):
+    def pending(self):
+        return self.home / '.local/state/groundwork/update-all-pending/pnpm'
+
+    def test_discovery_timeout_warns_skips_pnpm_and_records_no_repair(self):
         self.repository('first-ready')
         slow = self.repository('second-hangs')
         (slow / '.hang').touch()
         self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
         result = self.run_cleanup('--yes')
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('partial candidates discarded; independent maintenance continues', result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('partial candidates discarded; pnpm store cleanup skipped', result.stdout)
+        self.assertIn('Warning: pnpm store cleanup skipped this run because repository discovery '
+                      'exceeded its 1s deadline.', result.stdout)
+        self.assertIn('Package-manager maintenance completed.', result.stdout)
         calls = self.calls.read_text()
         self.assertIn('brew cleanup --prune=all', calls)
         self.assertIn('npm cache verify', calls)
         self.assertNotIn(' store prune', calls)
+        self.assertFalse(self.pending().exists())
+        state = self.home / '.local/state/groundwork'
+        self.assertFalse((state / 'pnpm-prune-last-attempt').exists())
+        self.assertFalse((state / 'pnpm-prune-last-success').exists())
 
+    def test_discovery_timeout_reports_its_receipt_status(self):
+        slow = self.repository('hangs')
+        (slow / '.hang').touch()
+        self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
+        receipt = self.root / 'receipt'
+        # Stand in for the runner: it owns the transaction lock and lends fd 9.
+        runner = ('. "$HOME/.local/lib/groundwork/update-lock.sh"\n'
+                  'groundwork_lock_acquire update-all || exit\n'
+                  'exec 9>"$1"\n'
+                  'status=0\n'
+                  'GROUNDWORK_CLEANUP_RECEIPT_FD=9 /bin/bash "$2" --yes || status=$?\n'
+                  'groundwork_lock_release\n'
+                  'exit "$status"\n')
+        result = subprocess.run(['/bin/bash', '-c', runner, 'runner', str(receipt),
+                                 str(REPO / 'home/dot_local/bin/executable_groundwork-cleanup')],
+                                env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('pnpm\tdiscovery-incomplete\n', receipt.read_text())
+
+    def test_discovery_timeout_keeps_a_real_pending_repair_failing(self):
+        self.pending().parent.mkdir(parents=True)
+        self.pending().write_text('2026-10-01T00:00:00Z pnpm store maintenance failed (exit 3)\n')
+        slow = self.repository('hangs')
+        (slow / '.hang').touch()
+        self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
+        result = self.run_cleanup('--yes')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('an earlier pnpm repair is still pending', result.stderr)
+        self.assertIn('pnpm store maintenance failed (exit 3)', self.pending().read_text())
+        self.assertNotIn(' store prune', self.calls.read_text())
+
+    def test_discovery_only_reminder_from_earlier_releases_is_retired(self):
+        self.pending().parent.mkdir(parents=True)
+        self.pending().write_text('2026-10-01T00:00:00Z exact repository discovery is unavailable; '
+                                  'no pnpm store was touched\n')
+        slow = self.repository('hangs')
+        (slow / '.hang').touch()
+        self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Retired an earlier pnpm reminder that recorded only incomplete discovery', result.stdout)
+        self.assertFalse(self.pending().exists())
+
+    def test_failed_prune_still_fails_and_records_a_repair(self):
+        repo = self.repository('prune-fails')
+        (repo / '.prune-fails').touch()
+        result = self.run_cleanup('--yes')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Store maintenance incomplete (exit 3)', result.stderr)
+        self.assertIn('pnpm store maintenance failed (exit 3)', self.pending().read_text())
+
+    def test_large_worktree_inventory_finishes_within_the_deadline_with_bounded_parallel_probes(self):
+        # 25 repositories x 10 records (a main checkout plus nine linked
+        # worktrees sharing its lockfile): exact pins, one uncached pin, npm
+        # pins, records without package.json, and mostly no node_modules.
+        # Serial probing at this simulated launch latency overruns the deadline.
+        lines = []
+        for number in range(25):
+            kind = number % 10
+            for worktree in range(10):
+                repo = self.root / 'code' / f'repo{number:02d}' / ('main' if worktree == 0 else f'wt{worktree}')
+                repo.mkdir(parents=True)
+                lines.append(str(repo) + '\tfixture\n')
+                if kind == 9:
+                    continue
+                if kind == 8:
+                    (repo / 'package.json').write_text(json.dumps({'packageManager': 'npm@10.0.0'}))
+                    continue
+                pin, generation = {7: ('39.0.1', 'v39'), 6: ('41.0.0', None)}.get(kind, (FIXTURE_PIN, 'v40'))
+                (repo / 'package.json').write_text(json.dumps({'packageManager': 'pnpm@' + pin}))
+                (repo / 'pnpm-lock.yaml').write_text(f'lockfileVersion: 9\n# repo{number}\n')
+                if generation is None:
+                    (repo / '.offline').touch()
+                else:
+                    (self.stores / generation).mkdir(exist_ok=True)
+                    (repo / '.store').write_text(str(self.stores / generation) + '\n')
+                if worktree % 3 == 0:
+                    (repo / 'node_modules').mkdir()
+        self.records.write_text(''.join(lines))
+        active = self.root / 'active'
+        active.mkdir()
+        self.env.update(REVIEW_ACTIVE=str(active), REVIEW_LATENCY='0.1',
+                        GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS='40')
+        started = time.monotonic()
+        result = subprocess.run(['/bin/bash', str(REPO / 'home/dot_local/bin/executable_groundwork-cleanup')],
+                                env=self.env, capture_output=True, text=True, timeout=90)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('inspected 250/250 repository records; 191 store probes, 19 known misses reused; complete.',
+                      result.stdout)
+        self.assertNotIn('hard deadline', result.stderr)
+        self.assertIn('Automatic candidates: 2', result.stdout)
+        overlap = [int(line) for line in Path(str(active) + '.log').read_text().split()]
+        self.assertGreater(max(overlap), 1, 'probes never overlapped')
+        self.assertLessEqual(max(overlap), 4, 'probe parallelism exceeded its bound')
+        self.assertLess(elapsed, 40)
+
+    def test_discovery_parallelism_is_a_validated_bound(self):
+        for value in ('0', '17', 'many'):
+            with self.subTest(value=value):
+                self.env['GROUNDWORK_PNPM_DISCOVERY_JOBS'] = value
+                result = self.run_cleanup()
+                self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+                self.assertFalse(self.calls.exists())
 
 if __name__ == '__main__':
     unittest.main()
