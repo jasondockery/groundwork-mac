@@ -30,8 +30,8 @@ What Renovate manages here:
   review remain the delivery controls. Without that exception, strict age
   checking would leave every newer Gitleaks tag pending forever.
 - The primary Python version in `home/dot_config/mise/config.toml`. Renovate's
-  mise manager updates only the first array entry, so `python = ["3.13", "3.12"]`
-  can move `3.13` and leave `3.12` pinned for Aider (`audioop`). A local rule
+  mise manager updates only the first array entry, so `python = ["3.15", "3.12"]`
+  can move `3.15` and leave `3.12` pinned for Aider (`audioop`). A local rule
   sets `versioning` to `semver-partial`, so the written request stays two
   components, such as `3.15`. mise treats that request as fuzzy, and a later
   patch stays under the five-day machine floor. An exact tag is exempt from that

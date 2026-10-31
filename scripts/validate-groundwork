@@ -16734,7 +16734,7 @@ if python_versioning_rules != [{
 }]:
     raise SystemExit("the Python request must stay on semver-partial so mise can float patches inside the line")
 if python_pin_rules != [{
-    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.13\", \"3.12\"] must stay pinned. Renovate's mise manager (44.173.1) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
+    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.15\", \"3.12\"] must stay pinned. Renovate's mise manager (44.173.1) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
     "matchManagers": ["mise"],
     "matchDepNames": ["python"],
     "matchFileNames": ["home/dot_config/mise/config.toml"],
