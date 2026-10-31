@@ -782,11 +782,13 @@ def validate_receipt(payload: Any, *, expected_kind: str | None = None) -> dict[
         if not isinstance(checks, list):
             raise ReceiptError("body.checks must be an array")
         names: set[str] = set()
-        counts = {"passed": 0, "skipped": 0, "failed": 0}
+        counts = {"passed": 0, "skipped": 0, "failed": 0, "cancelled": 0}
         for index, check in enumerate(checks):
             _validate_phase(check, f"body.checks[{index}]", structured_skip=True)
-            if check["result"] not in counts:
-                raise ReceiptError(f"body.checks[{index}].result must be passed, skipped, or failed")
+            # A cancelled check was stopped because another check failed the
+            # suite first; it must say so instead of claiming a result.
+            if check["result"] == "cancelled":
+                validate_text(check.get("reason"), f"body.checks[{index}].reason")
             name = check["name"]
             if name in names:
                 raise ReceiptError(f"duplicate validation check: {name}")
@@ -794,11 +796,18 @@ def validate_receipt(payload: Any, *, expected_kind: str | None = None) -> dict[
             counts[check["result"]] += 1
         if body["checkCount"] != len(checks):
             raise ReceiptError("body.checkCount is inconsistent")
+        # Receipts written before cancelled checks existed carry no count.
+        if "cancelledCount" in body:
+            _require_integer(body["cancelledCount"], "body.cancelledCount")
+        elif counts["cancelled"]:
+            raise ReceiptError("body.cancelledCount is required when a check is cancelled")
         for result_name in counts:
-            if body[f"{result_name}Count"] != counts[result_name]:
+            if body.get(f"{result_name}Count", 0) != counts[result_name]:
                 raise ReceiptError(f"body.{result_name}Count is inconsistent")
         if receipt["result"] == "passed" and counts["failed"]:
             raise ReceiptError("a passed validation suite contains failed checks")
+        if receipt["result"] == "passed" and counts["cancelled"]:
+            raise ReceiptError("a passed validation suite contains cancelled checks")
         if receipt["result"] == "failed" and not counts["failed"]:
             raise ReceiptError("a failed validation suite contains no failed check")
         _validate_commands(body.get("commands"), "body.commands")

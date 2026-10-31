@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Prove how the update suite's concurrent maintenance group ends when the main
+# suite stops first. A fixture repository runs a copy of validate-groundwork
+# whose update suite and maintenance group are replaced by tiny fixture bodies;
+# the real start/join/terminate/report code paths and the real hard-deadline
+# supervisor are unchanged.
+#   fail      the main suite fails while a group check runs: the receipt names
+#             the main check failed and the group check cancelled.
+#   deadline  a short --deadline-seconds stops a hanging main check: the TERM
+#             trap still writes the receipt, with the group check cancelled.
+#   late-fork the group check forks a process into its own session from its
+#             TERM handler: the second tree walk stops it, so cleanup neither
+#             waits for the deadline nor leaks it.
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixture="$(mktemp -d "${TMPDIR:-/tmp}/groundwork-group-cancellation.XXXXXX")"
+cleanup() {
+  local pid_file pid
+  for pid_file in "$fixture"/*/late.pid; do
+    [[ -s "$pid_file" ]] || continue
+    pid="$(<"$pid_file")"
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  rm -rf -- "$fixture"
+}
+trap cleanup EXIT
+
+fail() {
+  echo "test-update-group-cancellation: $1" >&2
+  exit 1
+}
+
+checkout="$fixture/repo"
+mkdir -p "$checkout/scripts"
+for helper in run-validation-deadline tree-fingerprint ci_receipt.py; do
+  cp "$repo/scripts/$helper" "$checkout/scripts/$helper"
+done
+python3 - "$repo/scripts/validate-groundwork" "$checkout/scripts/validate-groundwork" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+dispatch = 'if [[ "$suite" == "full" ]]; then\n  validate_full\nelse\n'
+if source.count(dispatch) != 1:
+    raise SystemExit("validate-groundwork suite dispatch not found")
+fixture = r'''
+validate_update_maintenance_group() {
+  check "fixture group completed check"
+  :
+  check "fixture group in-flight check"
+  "$GROUP_FIXTURE_DIR/in-flight" "$GROUP_FIXTURE_DIR"
+}
+
+validate_update() {
+  start_update_maintenance_group
+  check "fixture main check"
+  local _
+  for _ in {1..100}; do
+    [[ -f "$GROUP_FIXTURE_DIR/ready" ]] && break
+    sleep 0.1
+  done
+  [[ -f "$GROUP_FIXTURE_DIR/ready" ]] || fail "the fixture group never became ready"
+  case "$GROUP_FIXTURE_MODE" in
+    fail) fail "fixture main check failed" ;;
+    hang) sleep 1000 ;;
+  esac
+  join_update_maintenance_group
+}
+
+'''
+pathlib.Path(sys.argv[2]).write_text(source.replace(dispatch, fixture + dispatch), encoding="utf-8")
+PY
+chmod +x "$checkout/scripts/"*
+git -C "$checkout" init -q
+git -C "$checkout" add -A
+git -C "$checkout" -c user.name=fixture -c user.email=fixture@example.com \
+  commit -q -m fixture
+
+cat >"$fixture/in-flight-plain" <<'SH'
+#!/usr/bin/env bash
+: >"$1/ready"
+while :; do sleep 0.1; done
+SH
+# The TERM handler forks a process that leaves the process group, then waits
+# for it. Only a later tree walk can reach it; without one the group never
+# exits and cleanup waits for the supervisor.
+cat >"$fixture/in-flight-late-fork" <<'SH'
+#!/usr/bin/env bash
+trap 'python3 -c "import os, time; os.setsid(); time.sleep(1000)" &
+printf "%s\n" "$!" >"$1/late.pid"
+wait
+exit 0' TERM
+: >"$1/ready"
+while :; do sleep 0.1; done
+SH
+chmod +x "$fixture/in-flight-plain" "$fixture/in-flight-late-fork"
+
+status=0
+# scenario mode in-flight deadline -> runs the fixture validator, sets $status
+run_scenario() {
+  local name="$1" mode="$2" in_flight="$3" deadline="$4" directory="$fixture/$1"
+  mkdir -p "$directory/tmp"
+  cp "$fixture/in-flight-$in_flight" "$directory/in-flight"
+  status=0
+  env -u GROUNDWORK_VALIDATION_DEADLINE_PARENT -u GROUNDWORK_VALIDATION_PROCESS_GROUP \
+    -u GITHUB_ACTIONS -u GITHUB_STEP_SUMMARY \
+    TMPDIR="$directory/tmp" GROUP_FIXTURE_DIR="$directory" GROUP_FIXTURE_MODE="$mode" \
+    "$checkout/scripts/validate-groundwork" --suite update \
+    --deadline-seconds "$deadline" --report "$directory/receipt.json" \
+    >"$directory/stdout" 2>"$directory/stderr" || status=$?
+  if [[ ! -s "$directory/receipt.json" ]]; then
+    cat "$directory/stderr" >&2
+    fail "$name: no receipt was written (exit $status)"
+  fi
+  python3 - "$checkout/scripts" "$directory/receipt.json" >"$directory/rows" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from ci_receipt import validate_receipt
+
+with open(sys.argv[2], encoding="utf-8") as source:
+    receipt = validate_receipt(json.load(source), expected_kind="validation-suite")
+print(f"result\t{receipt['result']}\t{receipt['body']['cancelledCount']}")
+for check in receipt["body"]["checks"]:
+    print(f"{check['name']}\t{check['result']}\t{check.get('reason', '')}")
+PY
+}
+
+expect_row() { # scenario check-name result [reason-fragment]
+  local rows="$fixture/$1/rows" row
+  row="$(awk -F '\t' -v name="$2" '$1 == name' "$rows")"
+  [[ "$(printf '%s\n' "$row" | cut -f 2)" == "$3" ]] || {
+    cat "$rows" >&2
+    fail "$1: '$2' was not recorded as $3"
+  }
+  [[ -z "${4:-}" || "$row" == *"$4"* ]] || {
+    cat "$rows" >&2
+    fail "$1: '$2' did not record the reason '$4'"
+  }
+}
+
+# L4: the main suite fails first; the stopped group check is cancelled.
+run_scenario fail fail plain 60
+[[ "$status" -eq 1 ]] || fail "fail: the validator exited $status instead of 1"
+expect_row fail result failed
+expect_row fail "fixture main check" failed
+grep -qF 'fixture main check failed' "$fixture/fail/stderr" || fail "fail: the main failure was not reported"
+expect_row fail "fixture group completed check" passed
+expect_row fail "fixture group in-flight check" cancelled "stopped after the main suite failed"
+
+# L5: the hard deadline TERMs a hanging suite; the receipt is still written.
+started="$(date +%s)"
+run_scenario deadline hang plain 3
+elapsed=$(($(date +%s) - started))
+[[ "$status" -ne 0 ]] || fail "deadline: a deadline-stopped suite exited 0"
+[[ "$elapsed" -lt 30 ]] || fail "deadline: the suite took ${elapsed}s to stop after a 3-second deadline"
+expect_row deadline result failed
+expect_row deadline "fixture main check" failed
+grep -qF 'the suite received TERM during fixture main check' "$fixture/deadline/stderr" \
+  || fail "deadline: the TERM was not attributed to the running main check"
+expect_row deadline "fixture group completed check" passed
+expect_row deadline "fixture group in-flight check" cancelled
+if grep -qF 'surviving non-zombie process-group members' "$fixture/deadline/stderr"; then
+  cat "$fixture/deadline/stderr" >&2
+  fail "deadline: the supervisor had to clean up after the validator"
+fi
+
+# L6: a process forked during termination, in its own session, is still stopped.
+started="$(date +%s)"
+run_scenario late-fork fail late-fork 20
+elapsed=$(($(date +%s) - started))
+[[ "$status" -eq 1 ]] || fail "late-fork: the validator exited $status instead of 1"
+[[ "$elapsed" -lt 15 ]] || fail "late-fork: cleanup waited ${elapsed}s for a process forked during termination"
+test -s "$fixture/late-fork/late.pid" || fail "late-fork: the TERM handler never forked"
+late_pid="$(<"$fixture/late-fork/late.pid")"
+for _ in {1..20}; do
+  kill -0 "$late_pid" 2>/dev/null || break
+  sleep 0.1
+done
+! kill -0 "$late_pid" 2>/dev/null \
+  || fail "late-fork: process $late_pid forked during termination survived the suite"
+expect_row late-fork "fixture group in-flight check" cancelled
+
+echo "ok: a stopped maintenance-group check is cancelled, a deadline TERM still writes the receipt, and a late fork is stopped"
