@@ -19572,6 +19572,25 @@ validate_platform_native_processes() {
       "macOS representative apply smoke requires macOS"
   fi
 
+  check "shipped Bash scripts parse under stock macOS /bin/bash"
+  # macOS ships Bash 3.2, which parses some constructs differently from the
+  # Bash 5 on Linux runners: it ends a $( ) at a case pattern's ")" inside a
+  # quoted heredoc. Every Bash file lint-shell owns must parse under it.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stock_bash_files="$out_dir/stock-bash-files"
+    scripts/lint-shell --list >"$stock_bash_files"
+    [[ -s "$stock_bash_files" ]] || fail "lint-shell listed no Bash files to parse"
+    while IFS= read -r stock_bash_file; do
+      /bin/bash -n "$stock_bash_file" \
+        || fail "$stock_bash_file does not parse under stock /bin/bash ($(/bin/bash -c 'echo "$BASH_VERSION"'))"
+    done <"$stock_bash_files"
+  elif [[ "$suite" == "platform-macos" && "${GROUNDWORK_FULL_COMPOSITION:-0}" != "1" ]]; then
+    fail "the platform-macos suite must run on a macOS host"
+  else
+    skip_current_check requires-macos-native-host \
+      "stock macOS /bin/bash parsing requires macOS"
+  fi
+
   check "macOS native process and filesystem primitives"
   if [[ "$(uname -s)" != "Darwin" ]]; then
     if [[ "$suite" == "platform-macos" && "${GROUNDWORK_FULL_COMPOSITION:-0}" != "1" ]]; then

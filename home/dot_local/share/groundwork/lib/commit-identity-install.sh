@@ -61,7 +61,10 @@ fi
 # Hook names that forward to the repository's own hooks.
 hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge post-rewrite pre-push pre-auto-gc reference-transaction push-to-checkout sendemail-validate fsmonitor-watchman post-index-change p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit pre-receive update proc-receive post-receive post-update"
 
-dispatcher=$(
+# The text lives in a function, not in a heredoc inside $( ): stock macOS
+# bash 3.2 ends a command substitution at the first case pattern's ")" even
+# inside a quoted heredoc, so the hook body ran in the installer instead.
+dispatcher_text() {
   cat <<'DISPATCH'
 #!/usr/bin/env bash
 # Managed by Groundwork (commit-identity-install.sh). Runs the pinned commit
@@ -111,7 +114,8 @@ else
   exec "$local_hook" "$@"
 fi
 DISPATCH
-)
+}
+dispatcher="$(dispatcher_text)"
 
 changed=0
 
