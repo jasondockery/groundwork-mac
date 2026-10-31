@@ -9,8 +9,10 @@
 # symlink; nothing is copied. core.hooksPath is NOT set globally. It is set in
 # ~/.config/groundwork/commit-guard.gitconfig, which the XDG git config
 # (~/.config/git/config) includes through includeIf "hasconfig:remote.*.url:"
-# for the owner's GitHub URL forms and any scp-style host alias such as
-# git@github-personal:owner/repo (git 2.36+). URLs with userinfo
+# for the owner's GitHub URL forms, any scp-style host alias such as
+# git@github-personal:owner/repo, and any ssh:// host, alias, or port such as
+# ssh://git@ssh.github.com:443/owner/repo (git 2.36+). The patterns come from
+# core/commit-guard/owner-remote-patterns. URLs with userinfo
 # (https://user@github.com/...) are not matched. Work repositories are untouched.
 # If the user already sets core.hooksPath anywhere, nothing is written.
 # Gaps: a push straight to an owned URL from a repo with no owned remote, and
@@ -57,6 +59,40 @@ if [[ ! -f "$guard" ]]; then
   say "$guard is not in this checkout (is the core submodule checked out?); skipped."
   exit 0
 fi
+
+# The owner-scoped remote URL patterns come only from the pinned core, next to
+# the guard (core/commit-guard/owner-remote-patterns). Read and check them
+# before anything is written. A broken list leaves the guard inactive, the same
+# outcome as a missing guard, so it is a loud skip that writes nothing, not a
+# failed apply. groundwork-doctor --commit-identity reports it as a failure.
+patterns_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/commit-guard-patterns.sh"
+# shellcheck source=home/dot_local/share/groundwork/lib/commit-guard-patterns.sh
+. "$patterns_lib"
+patterns_file="$(dirname "$guard")/owner-remote-patterns"
+if ! raw_patterns="$(gw_owner_patterns_read "$patterns_file")"; then
+  if [[ -e "$hooks/commit-identity-guard.sh" || -L "$hooks/commit-identity-guard.sh" ]]; then
+    state="the earlier install in $hooks was left exactly as it was and was NOT updated"
+  else
+    state="the commit identity guard is NOT active"
+  fi
+  {
+    echo "Groundwork commit identity guard: WARNING: $raw_patterns."
+    echo "Groundwork commit identity guard: nothing was installed or changed; $state."
+    echo "Groundwork commit identity guard: update the core submodule (git submodule update --init core), then run groundwork-update. groundwork-doctor --commit-identity reports this."
+  } >&2
+  exit 0
+fi
+owner="jasondockery"
+owner_glob=""
+for ((i = 0; i < ${#owner}; i++)); do
+  ch="${owner:i:1}"
+  upper="$(printf '%s' "$ch" | tr '[:lower:]' '[:upper:]')"
+  if [[ "$upper" == "$ch" ]]; then owner_glob+="$ch"; else owner_glob+="[$ch$upper]"; fi
+done
+owner_patterns=()
+while IFS= read -r pattern; do
+  owner_patterns+=("${pattern//<owner>/$owner_glob}")
+done <<<"$raw_patterns"
 
 # Hook names that forward to the repository's own hooks.
 hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge post-rewrite pre-push pre-auto-gc reference-transaction push-to-checkout sendemail-validate fsmonitor-watchman post-index-change p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit pre-receive update proc-receive post-receive post-update"
@@ -141,14 +177,8 @@ for hook in $hook_names; do
   fi
 done
 
-# core.hooksPath, scoped to repositories with an owned GitHub remote.
-owner="jasondockery"
-owner_glob=""
-for ((i = 0; i < ${#owner}; i++)); do
-  ch="${owner:i:1}"
-  upper="$(printf '%s' "$ch" | tr '[:lower:]' '[:upper:]')"
-  if [[ "$upper" == "$ch" ]]; then owner_glob+="$ch"; else owner_glob+="[$ch$upper]"; fi
-done
+# core.hooksPath, scoped to repositories with an owned GitHub remote; the
+# patterns were read and validated before anything was written.
 include_file="$gw/commit-guard.gitconfig"
 cwd_safe="$(mktemp -d)"
 trap 'rmdir "$cwd_safe" 2>/dev/null || true' EXIT
@@ -173,7 +203,7 @@ else
     changed=1
   fi
   mkdir -p "$(dirname "$xdg_git")"
-  for url in "https://github.com/$owner_glob/**" "git@github.com:$owner_glob/**" "ssh://git@github.com/$owner_glob/**" "*:$owner_glob/**"; do
+  for url in "${owner_patterns[@]}"; do
     key="includeIf.hasconfig:remote.*.url:$url.path"
     if [[ "$(git config --file "$xdg_git" --get "$key" 2>/dev/null || true)" != "$include_file" ]]; then
       git config --file "$xdg_git" "$key" "$include_file"
