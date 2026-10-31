@@ -2082,6 +2082,7 @@ maintenance_status=0
 maintenance_homebrew="skipped"
 maintenance_npm="skipped"
 maintenance_pnpm="skipped"
+pnpm_discovery_warning_count=0
 owner_review_count=0
 if [[ "$homebrew_status" -ne 0 ]]; then
   maintenance_homebrew="skipped · Homebrew update failed"
@@ -2142,6 +2143,17 @@ elif [[ -x "$HOME/.local/bin/groundwork-cleanup" ]]; then
           cleanup_receipt_valid=0
         else
           maintenance_pnpm="$receipt_value"
+          receipt_pnpm_seen=1
+        fi
+        ;;
+      pnpm:discovery-incomplete)
+        # Read-only discovery did not finish: no store was touched and no
+        # repair is pending, so this is a warning, not a failed stage.
+        if [[ "$receipt_pnpm_seen" -eq 1 ]]; then
+          cleanup_receipt_valid=0
+        else
+          maintenance_pnpm="skipped · discovery incomplete, no store touched"
+          pnpm_discovery_warning_count=1
           receipt_pnpm_seen=1
         fi
         ;;
@@ -2746,9 +2758,15 @@ if [[ "$owner_review_count" -gt 0 || "$brew_cask_action_review_count" -gt 0 \
       "$owner_review_count"
   fi
 fi
+if [[ "$brew_warning_count" -gt 0 || "$pnpm_discovery_warning_count" -gt 0 ]]; then
+  printf '\nWarning\n'
+fi
 if [[ "$brew_warning_count" -gt 0 ]]; then
-  printf '\nWarning\n  Homebrew                %s unknown warning(s) preserved in the transcript and raw logs\n' \
+  printf '  Homebrew                %s unknown warning(s) preserved in the transcript and raw logs\n' \
     "$brew_warning_count"
+fi
+if [[ "$pnpm_discovery_warning_count" -gt 0 ]]; then
+  echo "  pnpm                    store cleanup skipped · repository discovery did not finish; the next run retries"
 fi
 result_suffix=""
 total_owner_review_count=$((owner_review_count + brew_cask_action_review_count \
@@ -2759,8 +2777,8 @@ fi
 if [[ "$brew_deferred_running_count" -gt 0 ]]; then
   result_suffix="$result_suffix · $brew_deferred_running_count DEFERRED-RUNNING"
 fi
-if [[ "$brew_warning_count" -gt 0 ]]; then
-  result_suffix="$result_suffix · $brew_warning_count WARNING(S)"
+if [[ $((brew_warning_count + pnpm_discovery_warning_count)) -gt 0 ]]; then
+  result_suffix="$result_suffix · $((brew_warning_count + pnpm_discovery_warning_count)) WARNING(S)"
 fi
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."

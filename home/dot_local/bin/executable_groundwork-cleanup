@@ -34,7 +34,10 @@ are never deleted by this command.
 Cleanup probes pnpm with networking and download prompts disabled. An uncached
 Corepack version is review-only, not a VPN/router test. Repeated misses share
 only artifact availability; every usable repository still resolves its own
-store configuration. Discovery has one cumulative deadline and reports progress.
+store configuration. Discovery runs a bounded number of probes in parallel under
+one cumulative deadline and reports progress. If it cannot finish, pnpm store
+cleanup is skipped for that run with a warning: no store is touched, no repair
+is recorded, and the next run tries again.
 
 Every observation is bounded. Each mutating package-manager command runs in
 its own process group with a hard deadline, visible heartbeat, and cancellation
@@ -121,6 +124,7 @@ legacy_pending="$state_dir/homebrew-cleanup-pending"
 deadline="${GROUNDWORK_MAINTENANCE_DEADLINE_SECONDS:-1800}"
 observe_deadline="${GROUNDWORK_MAINTENANCE_OBSERVE_DEADLINE_SECONDS:-120}"
 discovery_deadline="${GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS:-120}"
+discovery_jobs="${GROUNDWORK_PNPM_DISCOVERY_JOBS:-4}"
 heartbeat="${GROUNDWORK_MAINTENANCE_HEARTBEAT_SECONDS:-60}"
 cancel_grace="${GROUNDWORK_MAINTENANCE_CANCEL_GRACE_SECONDS:-2}"
 poll_seconds="${GROUNDWORK_MAINTENANCE_POLL_SECONDS:-1}"
@@ -129,13 +133,17 @@ monthly_days="${GROUNDWORK_PNPM_PRUNE_DAYS:-30}"
 high_water_gib="${GROUNDWORK_PNPM_HIGH_WATER_GIB:-20}"
 high_water_retry_days="${GROUNDWORK_PNPM_HIGH_WATER_RETRY_DAYS:-7}"
 
-for numeric_setting in "$deadline" "$observe_deadline" "$discovery_deadline" "$heartbeat" "$cancel_grace" "$orphan_grace" "$monthly_days" \
+for numeric_setting in "$deadline" "$observe_deadline" "$discovery_deadline" "$discovery_jobs" "$heartbeat" "$cancel_grace" "$orphan_grace" "$monthly_days" \
   "$high_water_gib" "$high_water_retry_days"; do
   if [[ ! "$numeric_setting" =~ ^[0-9]+$ || "$numeric_setting" -lt 1 ]]; then
     echo "groundwork-cleanup: maintenance deadlines, cadence, and thresholds must be positive integers." >&2
     exit 64
   fi
 done
+if [[ "$discovery_jobs" -gt 16 ]]; then
+  echo "groundwork-cleanup: pnpm discovery parallelism must be between 1 and 16." >&2
+  exit 64
+fi
 if ! awk -v value="$poll_seconds" \
   'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/ && value >= 0.05 && value <= 1) }'; then
   echo "groundwork-cleanup: maintenance polling must be between 0.05 and 1 second." >&2
@@ -546,42 +554,40 @@ pnpm_artifact_key_at() {
   printf '%q|%q\n' "$fields" "$declaration"
 }
 
+# Discovery workers rebind these per record, as they do review_records and
+# store_selections, so parallel probes never share an output path.
+probe_errors="$probe_dir/errors"
+probe_scratch="$probe_dir"
+
 record_pnpm_probe_error() {
   local repo="$1" operation="$2" diagnostic="$3"
   [[ -s "$diagnostic" ]] || return 0
-  printf '\nRepository: %s\nProbe: %s\n' "$repo" "$operation" >>"$probe_dir/errors"
-  cat "$diagnostic" >>"$probe_dir/errors"
+  printf '\nRepository: %s\nProbe: %s\n' "$repo" "$operation" >>"$probe_errors"
+  cat "$diagnostic" >>"$probe_errors"
 }
 
-add_store_selection() {
-  local repo="$1" package_manager="$2" expected_version store version canonical output key diagnostic status=0
-  local seen_key
-  if has_terminal_control "$repo" || has_terminal_control "$package_manager"; then
-    echo "groundwork-cleanup: refused a repository selection containing a record control character." >&2
-    return 1
-  fi
+# One worker per exact-pinned record. Every repository resolves its own store
+# and version; only a same-run Corepack miss is shared, through the leader's
+# marker file, and successful probes are never reused.
+probe_store_selection() {
+  local index="$1" repo="$2" package_manager="$3" key="$4" expected_version store version canonical
+  local output diagnostic status=0
+  local review_records="$discovery_work/$index.review"
+  local store_selections="$discovery_work/$index.selection"
+  local probe_errors="$discovery_work/$index.errors"
+  local probe_scratch="$discovery_work/$index"
   expected_version="${package_manager#pnpm@}"
   expected_version="${expected_version%%+*}"
-  output="$probe_dir/output"
-  diagnostic="$probe_dir/stderr"
-  key="$(pnpm_artifact_key_at "$repo" "$package_manager")" || key=''
-  if [[ -n "$key" && -n "${offline_missing_keys[*]-}" ]]; then
-    for seen_key in "${offline_missing_keys[@]}"; do
-      if [[ "$key" == "$seen_key" ]]; then
-        cache_hits=$((cache_hits + 1))
-        append_review "$repo" "$package_manager is uncached in this Corepack context (same-run observation); cleanup is intentionally offline, not a connectivity test; no store was touched"
-        return 0
-      fi
-    done
-  fi
-  probe_count=$((probe_count + 1))
+  output="$probe_scratch.output"
+  diagnostic="$probe_scratch.stderr"
+  : >"$discovery_work/$index.probed"
   (pnpm_store_path_at "$repo") >"$output" 2>"$diagnostic" || status=$?
   record_pnpm_probe_error "$repo" 'store path' "$diagnostic"
   exit_if_terminal_status "$status"
   if [[ "$status" -ne 0 ]]; then
     rm -f -- "$output"
     if grep -qF "Network access disabled by the environment; can't reach " "$diagnostic"; then
-      [[ -z "$key" ]] || offline_missing_keys+=("$key")
+      [[ -z "$key" ]] || : >"$discovery_work/$index.miss"
       append_review "$repo" "$package_manager is uncached; cleanup is intentionally offline, not a connectivity test; no store was touched"
     else
       append_review "$repo" "$package_manager could not resolve a store offline; see private probe diagnostics; no store was touched"
@@ -637,10 +643,165 @@ add_store_selection() {
   printf '%s\t%s\t%s\t%s\n' "$canonical" "$repo" "$version" "$package_manager" >>"$store_selections"
 }
 
+record_artifact_key() {
+  local index="$1" repo="$2" package_manager="$3" key
+  key="$(pnpm_artifact_key_at "$repo" "$package_manager")" || key=''
+  printf '%s\n' "$key" >"$discovery_work/$index.key"
+}
+
+# Classify one repository record without launching pnpm. Exact stable pins
+# become probe tasks; everything else is decided here.
+classify_record() {
+  local index="$1" repo="$2" package_manager output version status=0
+  local review_records="$discovery_work/$index.review"
+  [[ -f "$repo/package.json" ]] || return 0
+  output="$discovery_work/package-manager"
+  "$jq_bin" -r '.packageManager // empty' "$repo/package.json" >"$output" || status=$?
+  exit_if_terminal_status "$status"
+  if [[ "$status" -ne 0 ]]; then
+    rm -f -- "$output"
+    append_review "$repo/package.json" "invalid or unreadable JSON; pnpm selection was not inspected"
+    return 0
+  fi
+  package_manager="$(<"$output")"
+  rm -f -- "$output"
+  if has_terminal_control "$package_manager"; then
+    append_review "$repo/package.json" "packageManager contains a control character; pnpm selection was refused"
+    return 0
+  fi
+  case "$package_manager" in
+    pnpm@*)
+      version="${package_manager#pnpm@}"
+      version="${version%%+*}"
+      if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if has_terminal_control "$repo"; then
+          echo "groundwork-cleanup: refused a repository selection containing a record control character." >&2
+          return 1
+        fi
+        printf '%s\t%s\t%s\n' "$index" "$repo" "$package_manager" >>"$discovery_work/tasks"
+      elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+        append_review "$repo/package.json" "prerelease pnpm pins are review-only for unattended maintenance: $package_manager"
+      else
+        append_review "$repo/package.json" "malformed pnpm packageManager declaration: $package_manager"
+      fi
+      ;;
+  esac
+}
+
+# A FIFO pool of at most discovery_jobs background workers. Bash 3.2 has no
+# `wait -n`; the probes are similar in cost, so waiting on the oldest is close
+# to optimal. Workers stay in discovery's process group, so the cumulative
+# deadline cancels them with it. Any worker failure makes discovery incomplete.
+discovery_pool_start() {
+  while [[ $((discovery_pool_tail - discovery_pool_head)) -ge "$discovery_jobs" ]]; do
+    discovery_pool_reap
+  done
+  "$@" &
+  discovery_pool_pids[discovery_pool_tail]=$!
+  discovery_pool_tail=$((discovery_pool_tail + 1))
+}
+
+discovery_pool_reap() {
+  local status=0
+  wait "${discovery_pool_pids[discovery_pool_head]}" || status=$?
+  discovery_pool_head=$((discovery_pool_head + 1))
+  discovery_pool_done=$((discovery_pool_done + 1))
+  case "$status" in
+    0) ;;
+    125 | 129 | 130 | 143) discovery_pool_terminal="$status" discovery_pool_failed=1 ;;
+    *) discovery_pool_failed=1 ;;
+  esac
+  if [[ $((discovery_pool_done % 25)) -eq 0 ]]; then
+    printf '  Offline pnpm discovery: %s %s/%s.\n' "$discovery_pool_label" "$discovery_pool_done" "$discovery_pool_total"
+  fi
+}
+
+discovery_pool_run() {
+  discovery_pool_label="$1"
+  discovery_pool_total="$2"
+  discovery_pool_done=0
+  shift 2
+  "$@"
+  while [[ "$discovery_pool_tail" -gt "$discovery_pool_head" ]]; do
+    discovery_pool_reap
+  done
+  exit_if_terminal_status "$discovery_pool_terminal"
+  [[ "$discovery_pool_failed" -eq 0 ]]
+}
+
+queue_artifact_keys() {
+  local index repo package_manager
+  while IFS=$'\t' read -r index repo package_manager; do
+    [[ "$discovery_pool_failed" -eq 0 ]] || break
+    discovery_pool_start record_artifact_key "$index" "$repo" "$package_manager"
+  done <"$discovery_work/tasks"
+}
+
+# Each distinct non-empty Corepack key has one leader, its first record. Records
+# without a key never share an observation.
+plan_probe_waves() {
+  local index repo package_manager key leader position
+  local leader_keys=() leader_indexes=()
+  : >"$discovery_work/leaders"
+  : >"$discovery_work/followers"
+  while IFS=$'\t' read -r index repo package_manager; do
+    IFS= read -r key <"$discovery_work/$index.key" || key=''
+    leader=""
+    if [[ -n "$key" ]]; then
+      position=0
+      while [[ "$position" -lt "${#leader_keys[@]}" ]]; do
+        if [[ "${leader_keys[position]}" == "$key" ]]; then
+          leader="${leader_indexes[position]}"
+          break
+        fi
+        position=$((position + 1))
+      done
+    fi
+    if [[ -n "$leader" ]]; then
+      printf '%s\t%s\t%s\t%s\n' "$index" "$repo" "$package_manager" "$leader" >>"$discovery_work/followers"
+      continue
+    fi
+    if [[ -n "$key" ]]; then
+      leader_keys[${#leader_keys[@]}]="$key"
+      leader_indexes[${#leader_indexes[@]}]="$index"
+    fi
+    printf '%s\t%s\t%s\n' "$index" "$repo" "$package_manager" >>"$discovery_work/leaders"
+  done <"$discovery_work/tasks"
+}
+
+# Leaders finish first so a follower can reuse only an observed miss; every
+# other follower still probes its own repository.
+queue_store_probes() {
+  local index repo package_manager leader key
+  while IFS=$'\t' read -r index repo package_manager; do
+    [[ "$discovery_pool_failed" -eq 0 ]] || return 0
+    IFS= read -r key <"$discovery_work/$index.key" || key=''
+    discovery_pool_start probe_store_selection "$index" "$repo" "$package_manager" "$key"
+  done <"$discovery_work/leaders"
+  while [[ "$discovery_pool_tail" -gt "$discovery_pool_head" ]]; do
+    discovery_pool_reap
+  done
+  while IFS=$'\t' read -r index repo package_manager leader; do
+    [[ "$discovery_pool_failed" -eq 0 ]] || return 0
+    if [[ -e "$discovery_work/$leader.miss" ]]; then
+      printf '%s\t%s\n' "$repo" "$package_manager is uncached in this Corepack context (same-run observation); cleanup is intentionally offline, not a connectivity test; no store was touched" \
+        >>"$discovery_work/$index.review"
+      : >"$discovery_work/$index.reused"
+      discovery_pool_done=$((discovery_pool_done + 1))
+      continue
+    fi
+    IFS= read -r key <"$discovery_work/$index.key" || key=''
+    discovery_pool_start probe_store_selection "$index" "$repo" "$package_manager" "$key"
+  done <"$discovery_work/followers"
+}
+
 discover_exact_selections() {
-  local repos_command jq_bin repo _ package_manager output version status=0 count=0 total
-  local offline_missing_keys=()
-  local probe_count=0 cache_hits=0
+  local repos_command jq_bin repo _ status=0 count=0 total index probe_count=0 cache_hits=0 task_count
+  local discovery_work="$probe_dir/discovery"
+  local discovery_pool_pids=() discovery_pool_head=0 discovery_pool_tail=0 discovery_pool_done=0
+  local discovery_pool_failed=0 discovery_pool_terminal=0 discovery_pool_label="" discovery_pool_total=0
+  # Workers must stay in this supervised process group.
+  set +m
   repos_command="$HOME/.local/bin/groundwork-repos"
   if [[ ! -x "$repos_command" ]]; then
     append_review "Repository discovery" "groundwork-repos is unavailable; pnpm automatic maintenance is incomplete"
@@ -664,43 +825,32 @@ discover_exact_selections() {
     append_review "Repository discovery" "jq failed its bounded self-check; exact packageManager pins were not inspected and no pnpm store is automatic"
     return 1
   fi
+  mkdir "$discovery_work"
+  : >"$discovery_work/tasks"
+  : >"$discovery_work/key-leaders"
   total="$(awk 'END {print NR + 0}' "$repository_records")"
-  printf '  Offline pnpm discovery: %s repository/worktree records; deadline %ss.\n' "$total" "$discovery_deadline"
+  printf '  Offline pnpm discovery: %s repository/worktree records; deadline %ss; up to %s parallel probes.\n' \
+    "$total" "$discovery_deadline" "$discovery_jobs"
   while IFS=$'\t' read -r repo _; do
     count=$((count + 1))
-    if [[ "$count" -eq 1 || $((count % 25)) -eq 0 ]]; then
-      printf '  Offline pnpm discovery: inspected %s/%s repository records.\n' "$count" "$total"
-    fi
-    [[ -f "$repo/package.json" ]] || continue
-    output="$probe_dir/package-manager"
-    status=0
-    "$jq_bin" -r '.packageManager // empty' "$repo/package.json" >"$output" || status=$?
-    exit_if_terminal_status "$status"
-    if [[ "$status" -ne 0 ]]; then
-      rm -f -- "$output"
-      append_review "$repo/package.json" "invalid or unreadable JSON; pnpm selection was not inspected"
-      continue
-    fi
-    package_manager="$(<"$output")"
-    rm -f -- "$output"
-    if has_terminal_control "$package_manager"; then
-      append_review "$repo/package.json" "packageManager contains a control character; pnpm selection was refused"
-      continue
-    fi
-    case "$package_manager" in
-      pnpm@*)
-        version="${package_manager#pnpm@}"
-        version="${version%%+*}"
-        if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          add_store_selection "$repo" "$package_manager"
-        elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-          append_review "$repo/package.json" "prerelease pnpm pins are review-only for unattended maintenance: $package_manager"
-        else
-          append_review "$repo/package.json" "malformed pnpm packageManager declaration: $package_manager"
-        fi
-        ;;
-    esac
+    classify_record "$count" "$repo"
   done <"$repository_records"
+  task_count="$(awk 'END {print NR + 0}' "$discovery_work/tasks")"
+  printf '  Offline pnpm discovery: classified %s/%s records; %s exact pnpm pins to resolve.\n' \
+    "$count" "$total" "$task_count"
+  discovery_pool_run 'resolved Corepack contexts' "$task_count" queue_artifact_keys || return 1
+  plan_probe_waves
+  discovery_pool_run 'probed pinned records' "$task_count" queue_store_probes || return 1
+  # Merge per-record results in inventory order so reports stay deterministic.
+  index=0
+  while [[ "$index" -lt "$count" ]]; do
+    index=$((index + 1))
+    [[ ! -f "$discovery_work/$index.review" ]] || cat "$discovery_work/$index.review" >>"$review_records"
+    [[ ! -f "$discovery_work/$index.selection" ]] || cat "$discovery_work/$index.selection" >>"$store_selections"
+    [[ ! -f "$discovery_work/$index.errors" ]] || cat "$discovery_work/$index.errors" >>"$probe_errors"
+    [[ ! -e "$discovery_work/$index.probed" ]] || probe_count=$((probe_count + 1))
+    [[ ! -e "$discovery_work/$index.reused" ]] || cache_hits=$((cache_hits + 1))
+  done
   printf '  Offline pnpm discovery: inspected %s/%s repository records; %s store probes, %s known misses reused; complete.\n' "$count" "$total" "$probe_count" "$cache_hits"
 }
 
@@ -772,7 +922,21 @@ build_candidates() {
   rm -f -- "$sorted"
 }
 
+# Earlier releases recorded this pnpm reminder for an incomplete discovery, when no
+# store was touched. It never described a repair, so acting mode retires it
+# instead of letting it keep pnpm due and failing on every run.
+discovery_only_pending="exact repository discovery is unavailable; no pnpm store was touched"
+retired_discovery_pending=0
+if [[ "$act" -eq 1 && -f "$pending_dir/pnpm" ]]; then
+  IFS= read -r pending_message <"$pending_dir/pnpm" || pending_message=""
+  if [[ "${pending_message#* }" == "$discovery_only_pending" ]]; then
+    clear_pending "pnpm"
+    retired_discovery_pending=1
+  fi
+fi
+
 pnpm_discovery_failed=0
+pnpm_discovery_reason=""
 if command -v pnpm >/dev/null 2>&1; then
   # All observation children share one supervised group and cumulative deadline.
   # A partial inventory cannot prove absence of conflicting selectors.
@@ -786,7 +950,12 @@ if command -v pnpm >/dev/null 2>&1; then
   if [[ "$discovery_status" -ne 0 ]]; then
     pnpm_discovery_failed=1
     : >"$store_selections"
-    append_review 'Repository discovery' "offline selection incomplete (exit $discovery_status); partial candidates discarded; independent maintenance continues"
+    if [[ "$discovery_status" -eq 124 ]]; then
+      pnpm_discovery_reason="repository discovery exceeded its ${discovery_deadline}s deadline"
+    else
+      pnpm_discovery_reason="repository discovery did not complete (exit $discovery_status)"
+    fi
+    append_review 'Repository discovery' "offline selection incomplete (exit $discovery_status); partial candidates discarded; pnpm store cleanup skipped; no store was touched; independent maintenance continues"
   fi
   if [[ -s "$probe_dir/errors" ]]; then
     if [[ "$act" -eq 1 ]]; then
@@ -826,7 +995,9 @@ last_success_days="$(state_age_days "$pnpm_success")"
 last_attempt_days="$(state_age_days "$pnpm_attempt")"
 pnpm_due=0
 pnpm_due_reason=""
-if [[ -f "$pending_dir/pnpm" ]]; then
+if [[ "$pnpm_discovery_failed" -ne 0 ]]; then
+  pnpm_due_reason="$pnpm_discovery_reason; pnpm store cleanup is skipped until discovery completes"
+elif [[ -f "$pending_dir/pnpm" ]]; then
   pnpm_due=1
   pnpm_due_reason="a previous pnpm maintenance attempt is pending repair"
 elif [[ ! -s "$store_candidates" ]]; then
@@ -1200,11 +1371,21 @@ prune_pnpm_store() {
 
 echo
 echo "pnpm"
-if [[ "$pnpm_discovery_failed" -ne 0 ]]; then
+if [[ "$retired_discovery_pending" -eq 1 ]]; then
+  echo "  Retired an earlier pnpm reminder that recorded only incomplete discovery; no store had been touched, so there was nothing to repair."
+fi
+if [[ "$pnpm_discovery_failed" -ne 0 && -f "$pending_dir/pnpm" ]]; then
+  # A real earlier repair (a prune that started or failed) stays pending and
+  # still fails; this run could not select stores to retry it.
   pnpm_receipt_status="failed"
   maintenance_failed=1
-  mark_pending "pnpm" "exact repository discovery is unavailable; no pnpm store was touched"
-  echo "  Maintenance incomplete: exact repository discovery is unavailable; no pnpm store was touched" >&2
+  echo "  Maintenance incomplete: an earlier pnpm repair is still pending, and $pnpm_discovery_reason, so it could not be retried; no pnpm store was touched" >&2
+elif [[ "$pnpm_discovery_failed" -ne 0 ]]; then
+  # Discovery is read-only. Skipping touches no store, records no repair, and
+  # leaves the cadence state alone, so the next run simply tries again.
+  pnpm_receipt_status="discovery-incomplete"
+  echo "  Warning: pnpm store cleanup skipped this run because $pnpm_discovery_reason."
+  echo "  No pnpm store was touched, no repair is pending, and the pnpm cadence is unchanged; the next run retries discovery."
 elif [[ "$pnpm_due" -eq 0 ]]; then
   pnpm_receipt_status="not-due"
   echo "  Maintenance not due: $pnpm_due_reason"
