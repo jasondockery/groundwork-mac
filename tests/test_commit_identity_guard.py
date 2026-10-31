@@ -287,25 +287,57 @@ class CommitIdentityInstallTests(unittest.TestCase):
         return subprocess.run(["bash", str(INSTALL), "--guard", str(guard)],
                               env=self.env, text=True, capture_output=True, timeout=30)
 
-    def test_a_bad_pattern_list_fails_closed_and_writes_nothing(self):
+    def test_a_bad_pattern_list_skips_loudly_and_writes_nothing(self):
         cases = {
             "missing": (None, "is missing"),
-            "empty": ("", "has no patterns"),
-            "comment-only": ("# only comments\n\n# here\n", "has no patterns"),
+            "empty": ("", "is empty or only comments"),
+            "comment-only": ("# only comments\n\n# here\n", "is empty or only comments"),
             "line without owner": ("https://github.com/<owner>/**\n**\n", "has no <owner>: **"),
         }
         for name, (patterns, message) in cases.items():
             with self.subTest(name):
                 before = self.snapshot()
                 result = self.install_with_patterns(patterns)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("WARNING: ", result.stderr)
                 self.assertIn(message, result.stderr)
+                self.assertIn("the commit identity guard is NOT active", result.stderr)
                 self.assertIn("nothing was installed or changed", result.stderr)
                 self.assertEqual(self.snapshot(), before, "a rejected pattern list wrote files")
                 self.assertFalse(self.gw.exists())
                 self.assertFalse((self.home / ".config/git").exists())
                 self.assertFalse(self.settings.exists())
                 shutil.rmtree(Path(self.temp.name) / "fixture-core")
+
+    def test_a_bad_pattern_list_leaves_an_earlier_install_untouched(self):
+        self.assertEqual(self.run_install().returncode, 0)
+        before = self.snapshot()
+        result = self.install_with_patterns("**\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("earlier install", result.stderr)
+        self.assertIn("NOT updated", result.stderr)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_doctor_reports_a_bad_pattern_list_as_a_failure(self):
+        core = Path(self.temp.name) / "tree/core/commit-guard"
+        core.mkdir(parents=True)
+        shutil.copy2(GUARD, core / GUARD.name)
+        (core / PATTERNS.name).write_text("**\n")
+        fakebin = Path(self.temp.name) / "doctor-bin"
+        fakebin.mkdir()
+        fake = fakebin / "chezmoi"
+        fake.write_text('#!/bin/sh\nprintf \'{"chezmoi":{"workingTree":"%s"}}\\n\' "$FAKE_TREE"\n')
+        fake.chmod(0o755)
+        env = dict(self.env, PATH=f"{fakebin}:{self.env['PATH']}", FAKE_TREE=str(core.parent.parent))
+        result = subprocess.run(["bash", str(DOCTOR), "--commit-identity"], env=env, text=True,
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("  FAIL  a pattern line in", result.stdout)
+        self.assertIn("has no <owner>: **", result.stdout)
+        (core / PATTERNS.name).write_text((REPO / "core/commit-guard/owner-remote-patterns").read_text())
+        result = subprocess.run(["bash", str(DOCTOR), "--commit-identity"], env=env, text=True,
+                                capture_output=True, timeout=30)
+        self.assertNotIn("FAIL", result.stdout)
 
     def test_userinfo_urls_are_not_matched(self):
         self.run_install()

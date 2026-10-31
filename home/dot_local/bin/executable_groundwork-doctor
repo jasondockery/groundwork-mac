@@ -92,6 +92,7 @@ EOF
 heading() { printf '\n== %s ==\n' "$1"; }
 ok() { printf '  ok    %s\n' "$1"; }
 warn() { printf '  warn  %s\n' "$1"; }
+fail_line() { printf '  FAIL  %s\n' "$1"; }
 note() { printf '  note  %s\n' "$1"; }
 
 # Colima treats an omitted disk as 0 and creates a 0-byte data disk. Starting
@@ -1377,11 +1378,43 @@ ai_tools_section() {
   gw_claude_dual_install_report "$(gw_doctor_selected_claude_code_owner)"
 }
 
+# The pinned core's owner remote pattern list: next to the installed guard's
+# target, or in the chezmoi working tree's core when the guard is not installed.
+gw_doctor_commit_guard_patterns_file() {
+  local guard_link="$1" target working_tree chezmoi_bin jq_bin
+  if [[ -L "$guard_link" ]] && target="$(readlink "$guard_link")" && [[ "$target" == /* ]]; then
+    printf '%s/owner-remote-patterns\n' "$(dirname "$target")"
+    return 0
+  fi
+  chezmoi_bin="$(type -P chezmoi 2>/dev/null || true)"
+  jq_bin="$(type -P jq 2>/dev/null || true)"
+  [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] || return 1
+  working_tree="$("$chezmoi_bin" data --format=json 2>/dev/null | "$jq_bin" -r '.chezmoi.workingTree // empty' 2>/dev/null)" \
+    || return 1
+  [[ "$working_tree" == /* ]] || return 1
+  printf '%s/core/commit-guard/owner-remote-patterns\n' "$working_tree"
+}
+
 commit_identity_section() {
   heading "Commit identity"
   local gw="${XDG_CONFIG_HOME:-$HOME/.config}/groundwork" hooks guard
+  local patterns_lib patterns_file patterns_problem
   hooks="$gw/git-hooks"
   guard="$hooks/commit-identity-guard.sh"
+  patterns_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../share/groundwork/lib/commit-guard-patterns.sh"
+  [[ -r "$patterns_lib" ]] || patterns_lib="$HOME/.local/share/groundwork/lib/commit-guard-patterns.sh"
+  if [[ ! -r "$patterns_lib" ]]; then
+    fail_line "Groundwork's commit-guard pattern check is missing: $patterns_lib; run groundwork-update."
+  elif patterns_file="$(gw_doctor_commit_guard_patterns_file "$guard")" \
+    && [[ -f "$(dirname "$patterns_file")/commit-identity-guard.sh" ]]; then
+    # A core with no guard at all is the installer's ordinary skip, reported
+    # below as not installed; only a present guard's list is checked here.
+    # shellcheck source=/dev/null
+    . "$patterns_lib"
+    if ! patterns_problem="$(gw_owner_patterns_read "$patterns_file")"; then
+      fail_line "$patterns_problem; the installer wrote nothing, so the guard is not installed or updated. Update the core submodule (git submodule update --init core), then run groundwork-update."
+    fi
+  fi
   if [[ -e "$gw/commit-guard-off" ]]; then
     note "opted out: $gw/commit-guard-off exists, so the hooks skip the guard. Remove the file to turn it back on."
   fi

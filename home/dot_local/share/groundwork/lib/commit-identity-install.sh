@@ -61,10 +61,27 @@ if [[ ! -f "$guard" ]]; then
 fi
 
 # The owner-scoped remote URL patterns come only from the pinned core, next to
-# the guard (core/commit-guard/owner-remote-patterns). Read and validate them
-# before anything is written: a missing, empty, or comment-only list, or a line
-# without <owner> (which would guard repositories this user does not own),
-# fails closed with nothing installed or changed.
+# the guard (core/commit-guard/owner-remote-patterns). Read and check them
+# before anything is written. A broken list leaves the guard inactive, the same
+# outcome as a missing guard, so it is a loud skip that writes nothing, not a
+# failed apply. groundwork-doctor --commit-identity reports it as a failure.
+patterns_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/commit-guard-patterns.sh"
+# shellcheck source=home/dot_local/share/groundwork/lib/commit-guard-patterns.sh
+. "$patterns_lib"
+patterns_file="$(dirname "$guard")/owner-remote-patterns"
+if ! raw_patterns="$(gw_owner_patterns_read "$patterns_file")"; then
+  if [[ -e "$hooks/commit-identity-guard.sh" || -L "$hooks/commit-identity-guard.sh" ]]; then
+    state="the earlier install in $hooks was left exactly as it was and was NOT updated"
+  else
+    state="the commit identity guard is NOT active"
+  fi
+  {
+    echo "Groundwork commit identity guard: WARNING: $raw_patterns."
+    echo "Groundwork commit identity guard: nothing was installed or changed; $state."
+    echo "Groundwork commit identity guard: update the core submodule (git submodule update --init core), then run groundwork-update. groundwork-doctor --commit-identity reports this."
+  } >&2
+  exit 0
+fi
 owner="jasondockery"
 owner_glob=""
 for ((i = 0; i < ${#owner}; i++)); do
@@ -72,22 +89,10 @@ for ((i = 0; i < ${#owner}; i++)); do
   upper="$(printf '%s' "$ch" | tr '[:lower:]' '[:upper:]')"
   if [[ "$upper" == "$ch" ]]; then owner_glob+="$ch"; else owner_glob+="[$ch$upper]"; fi
 done
-patterns_file="$(dirname "$guard")/owner-remote-patterns"
-patterns_fail() {
-  echo "Groundwork commit identity guard: $1; nothing was installed or changed. Update the core submodule (git submodule update --init core), then run groundwork-update." >&2
-  exit 1
-}
-[[ -f "$patterns_file" && -r "$patterns_file" ]] \
-  || patterns_fail "the owner remote pattern list is missing ($patterns_file)"
 owner_patterns=()
-while IFS= read -r pattern || [[ -n "$pattern" ]]; do
-  case "$pattern" in '' | '#'*) continue ;; esac
-  [[ "$pattern" == *"<owner>"* ]] \
-    || patterns_fail "a pattern in $patterns_file has no <owner>: $pattern"
+while IFS= read -r pattern; do
   owner_patterns+=("${pattern//<owner>/$owner_glob}")
-done <"$patterns_file"
-[[ "${#owner_patterns[@]}" -gt 0 ]] \
-  || patterns_fail "the owner remote pattern list has no patterns ($patterns_file)"
+done <<<"$raw_patterns"
 
 # Hook names that forward to the repository's own hooks.
 hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge post-rewrite pre-push pre-auto-gc reference-transaction push-to-checkout sendemail-validate fsmonitor-watchman post-index-change p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit pre-receive update proc-receive post-receive post-update"
