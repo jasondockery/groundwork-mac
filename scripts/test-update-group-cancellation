@@ -37,6 +37,9 @@ mkdir -p "$checkout/scripts"
 for helper in run-validation-deadline tree-fingerprint ci_receipt.py; do
   cp "$repo/scripts/$helper" "$checkout/scripts/$helper"
 done
+mkdir -p "$checkout/home/dot_local/share/groundwork/lib"
+cp "$repo/home/dot_local/share/groundwork/lib/maintenance-runner.sh" \
+  "$checkout/home/dot_local/share/groundwork/lib/maintenance-runner.sh"
 python3 - "$repo/scripts/validate-groundwork" "$checkout/scripts/validate-groundwork" <<'PY'
 import pathlib
 import sys
@@ -65,6 +68,17 @@ validate_update() {
   case "$GROUP_FIXTURE_MODE" in
     fail) fail "fixture main check failed" ;;
     hang) sleep 1000 ;;
+    bounded)
+      # The production bounded runner swaps in its own TERM trap, so the
+      # deadline's first TERM is consumed there and the second one can arrive
+      # after it restores the suite trap.
+      # shellcheck disable=SC2034
+      local deadline=60 observe_deadline=60 heartbeat=60 cancel_grace=1 poll_seconds=0.05 orphan_grace=1
+      # shellcheck source=/dev/null
+      source home/dot_local/share/groundwork/lib/maintenance-runner.sh
+      run_bounded_internal "fixture bounded hang" 60 "" sleep 1000 \
+        || fail "fixture bounded command stopped"
+      ;;
   esac
   join_update_maintenance_group
 }
@@ -167,6 +181,14 @@ if grep -qF 'surviving non-zombie process-group members' "$fixture/deadline/stde
   cat "$fixture/deadline/stderr" >&2
   fail "deadline: the supervisor had to clean up after the validator"
 fi
+
+# A deadline whose first TERM lands inside the production bounded runner's own
+# TERM trap still writes the receipt.
+run_scenario bounded bounded plain 3
+[[ "$status" -ne 0 ]] || fail "bounded: a deadline-stopped suite exited 0"
+expect_row bounded result failed
+expect_row bounded "fixture main check" failed
+expect_row bounded "fixture group in-flight check" cancelled
 
 # L6: a process forked during termination, in its own session, is still stopped.
 started="$(date +%s)"

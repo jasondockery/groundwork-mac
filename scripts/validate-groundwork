@@ -531,6 +531,11 @@ terminate_process_tree() {
 }
 
 report_and_cleanup() {
+  # First, before anything a pending TERM could interrupt: the suite TERM trap
+  # becomes a no-op. The first TERM may have been consumed by a trap a sourced
+  # bounded runner swapped in, so the suite trap's own flag may still be clear,
+  # and its exit here would abandon the receipt.
+  validation_terminating=1
   local status="${1:-0}" failed_line="${2:-unknown}" failed_command="${3:-unknown}"
   local reason title validation_finished_epoch total_duration platform_name
   local platform_label platform_arch budget_state report_failed tree_changed
@@ -793,7 +798,7 @@ trap 'report_and_cleanup "$?" "$LINENO" "$BASH_COMMAND"' EXIT
 # A deadline delivers TERM twice (the group signal and the supervisor's
 # forwarded copy). macOS bash 3.2 can run this trap again while the EXIT trap
 # is starting, and a second exit there would abandon the receipt, so only the
-# first TERM acts.
+# first TERM acts, and none acts once report_and_cleanup has started.
 validation_terminating=0
 trap 'if [[ "$validation_terminating" -eq 0 ]]; then
   validation_terminating=1
@@ -6085,7 +6090,9 @@ EOF
     || fail "the native-owner update-all run did not complete"
   grep -qE '^upgrade ' "$native_owner_calls" \
     || fail "the native-owner update-all run never reached Homebrew upgrades"
-  assert_not_contains '^uninstall|^bundle cleanup|--cleanup|--zap' "$native_owner_calls" \
+  # uninstall, and its remove and rm aliases, in any argument position.
+  assert_not_contains '(^|[[:space:]])(uninstall|remove|rm)([[:space:]]|$)|^bundle cleanup|--cleanup|--zap' \
+    "$native_owner_calls" \
     "a native-owner bundle or update-all run removed a Homebrew package"
   cp "$update_all_fixture/Brewfile.before-native-owner" "$update_all_home/.config/homebrew/Brewfile"
   rm -f "$update_all_home/.brew-bundle-count"
