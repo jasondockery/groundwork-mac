@@ -191,6 +191,27 @@ gw_config_after=""
 gw_regenerated=0
 [[ "$gw_config_before" != "$gw_config_after" ]] && gw_regenerated=1
 
+# The desktop Brave hook hashes core/browser/brave.json while chezmoi status
+# renders. Check out the pinned submodule first so that render can see the
+# file. A machine with no chezmoi config yet, or a tree that does not contain
+# the helper, skips this. The already-installed launcher on the update that
+# introduces the helper still renders status before this copy exists; the
+# runner checks the submodule out again before its full apply.
+gw_source_dir=""
+if [[ -f "$gw_config" ]]; then
+  gw_source_dir="$(sed -n 's/^sourceDir = "\(.*\)"/\1/p' "$gw_config" | head -n 1)"
+fi
+if [[ -n "$gw_source_dir" ]]; then
+  gw_tree="$gw_source_dir"
+  if [[ "$(basename "$gw_tree")" == "home" ]]; then
+    gw_tree="$(dirname "$gw_tree")"
+  fi
+  gw_checkout="$gw_tree/home/dot_local/share/groundwork/lib/checkout-core.sh"
+  if [[ -f "$gw_checkout" ]]; then
+    bash "$gw_checkout" "$gw_tree"
+  fi
+fi
+
 # The preflight must succeed before anything is applied: a status failure
 # means chezmoi cannot render this source against this machine, and applying
 # anyway would run install hooks against a state nobody inspected.

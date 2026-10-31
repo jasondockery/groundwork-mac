@@ -477,12 +477,73 @@ stop_copylast_control_clients() {
   copylast_control_pids=()
 }
 
+# Print each live descendant of the given roots that is not in the known set
+# (a space-separated PID list), parents before children.
+process_tree_new_members() {
+  local known=" $1 " pid child
+  shift
+  local -a queue=("$@")
+  while [[ "${#queue[@]}" -gt 0 ]]; do
+    pid="${queue[0]}"
+    queue=("${queue[@]:1}")
+    while IFS= read -r child; do
+      [[ -n "$child" ]] || continue
+      queue+=("$child")
+      [[ "$known" != *" $child "* ]] || continue
+      known+="$child "
+      printf '%s\n' "$child"
+    done < <(pgrep -P "$pid" 2>/dev/null || true)
+  done
+}
+
+# TERM a process and every descendant. Descendants are collected before any
+# signal so a parent cannot respawn between listing and killing, and the tree is
+# signalled directly instead of relying on a shared process group. A listed
+# process still running its TERM handler can fork after that walk, possibly into
+# its own process group, so later walks start from every listed descendant that
+# is still alive and TERM only what is new, until none remains (about two
+# seconds at most). The root is not walked again: after TERM it only runs its
+# own EXIT bookkeeping, which must be allowed to finish.
+terminate_process_tree() {
+  local root="$1" pid rounds=0
+  local -a known=("$root") alive=() fresh=()
+  while IFS= read -r pid; do
+    known+=("$pid")
+  done < <(process_tree_new_members "$root" "$root")
+  kill -TERM "${known[@]}" 2>/dev/null || true
+  while [[ "$rounds" -lt 20 ]]; do
+    rounds=$((rounds + 1))
+    alive=()
+    for pid in "${known[@]:1}"; do
+      kill -0 "$pid" 2>/dev/null && alive+=("$pid")
+    done
+    [[ "${#alive[@]}" -gt 0 ]] || return 0
+    sleep 0.1
+    fresh=()
+    while IFS= read -r pid; do
+      fresh+=("$pid")
+    done < <(process_tree_new_members "${known[*]}" "${alive[@]}")
+    if [[ "${#fresh[@]}" -gt 0 ]]; then
+      known+=("${fresh[@]}")
+      kill -TERM "${fresh[@]}" 2>/dev/null || true
+    fi
+  done
+}
+
 report_and_cleanup() {
+  # First, before anything a pending TERM could interrupt: the suite TERM trap
+  # becomes a no-op. The first TERM may have been consumed by a trap a sourced
+  # bounded runner swapped in, so the suite trap's own flag may still be clear,
+  # and its exit here would abandon the receipt.
+  validation_terminating=1
   local status="${1:-0}" failed_line="${2:-unknown}" failed_command="${3:-unknown}"
   local reason title validation_finished_epoch total_duration platform_name
   local platform_label platform_arch budget_state report_failed tree_changed
-  local passed_count skipped_count failed_count source_observation_complete tree_summary
+  local passed_count skipped_count failed_count cancelled_count source_observation_complete tree_summary
   local canonical_checks_expected canonical_checks_observed
+  # A second TERM (the supervisor signals the whole group once) must not cut
+  # this receipt-writing cleanup short.
+  trap '' TERM
   if [[ "$status" -ne 0 && -z "$fail_reason" ]]; then
     fail_reason="line $failed_line exited $status: $failed_command"
     echo "validate-groundwork: $current_check failed at line $failed_line: $failed_command (exit $status)" >&2
@@ -491,6 +552,17 @@ report_and_cleanup() {
     finish_current_check_timing passed
   else
     finish_current_check_timing failed
+  fi
+  if [[ -n "${update_maintenance_pid:-}" ]]; then
+    # The suite ended (failure, signal, or deadline) while the concurrent
+    # maintenance group was still running. Stop its whole subtree, then keep its
+    # evidence: replay its held output and merge its timing rows before the
+    # temporary directory is removed.
+    terminate_process_tree "$update_maintenance_pid"
+    wait "$update_maintenance_pid" 2>/dev/null || true
+    update_maintenance_pid=""
+    cat "$update_maintenance_log" >&2 2>/dev/null || true
+    cat "$update_maintenance_rows" >>"$timing_rows" 2>/dev/null || true
   fi
   stop_copylast_control_clients
   if [[ -n "${copylast_socket:-}" ]]; then
@@ -625,7 +697,10 @@ payload = common_envelope(
     source_after=source_after,
     tree_observation_complete=source_observation_complete == "1",
 )
-counts = {name: sum(check["result"] == name for check in checks) for name in ("passed", "skipped", "failed")}
+counts = {
+    name: sum(check["result"] == name for check in checks)
+    for name in ("passed", "skipped", "failed", "cancelled")
+}
 budget_value = int(budget)
 command = f"scripts/validate-groundwork --suite {suite} --report <path>"
 if deadline_explicit == "1":
@@ -645,6 +720,7 @@ payload["body"] = {
     "passedCount": counts["passed"],
     "skippedCount": counts["skipped"],
     "failedCount": counts["failed"],
+    "cancelledCount": counts["cancelled"],
     "checks": checks,
     "commands": {"localEquivalent": command},
 }
@@ -665,6 +741,7 @@ PY
   passed_count="$(awk -F '\t' '$3 == "passed" { count++ } END { print count + 0 }' "$timing_rows")"
   skipped_count="$(awk -F '\t' '$3 == "skipped" { count++ } END { print count + 0 }' "$timing_rows")"
   failed_count="$(awk -F '\t' '$3 == "failed" { count++ } END { print count + 0 }' "$timing_rows")"
+  cancelled_count="$(awk -F '\t' '$3 == "cancelled" { count++ } END { print count + 0 }' "$timing_rows")"
   if [[ "$status" -ne 0 && "${GITHUB_ACTIONS:-}" == "true" ]]; then
     printf '::error title=validate-groundwork %s failed::%s. Local equivalent: scripts/validate-groundwork --suite %s\n' \
       "$title" "$reason" "$suite" || true
@@ -674,11 +751,11 @@ PY
       printf '## validate-groundwork · %s\n' "$suite"
       echo
       if [[ "$status" -eq 0 ]]; then
-        printf '**Pass** — %s passed, %s skipped, %s failed.\n' \
-          "$passed_count" "$skipped_count" "$failed_count"
+        printf '**Pass** — %s passed, %s skipped, %s failed, %s cancelled.\n' \
+          "$passed_count" "$skipped_count" "$failed_count" "$cancelled_count"
       else
-        printf '**Fail** — %s passed, %s skipped, %s failed.\n' \
-          "$passed_count" "$skipped_count" "$failed_count"
+        printf '**Fail** — %s passed, %s skipped, %s failed, %s cancelled.\n' \
+          "$passed_count" "$skipped_count" "$failed_count" "$cancelled_count"
         echo
         echo "Reason: ${reason//|/\\|}"
       fi
@@ -715,6 +792,21 @@ PY
   exit "$status"
 }
 trap 'report_and_cleanup "$?" "$LINENO" "$BASH_COMMAND"' EXIT
+# The hard-deadline supervisor stops the suite with TERM. Bash's default TERM
+# action exits without running the EXIT trap, which would lose the receipt and
+# leave the concurrent maintenance group running; exit through it instead.
+# A deadline delivers TERM twice (the group signal and the supervisor's
+# forwarded copy). macOS bash 3.2 can run this trap again while the EXIT trap
+# is starting, and a second exit there would abandon the receipt, so only the
+# first TERM acts, and none acts once report_and_cleanup has started.
+validation_terminating=0
+trap 'if [[ "$validation_terminating" -eq 0 ]]; then
+  validation_terminating=1
+  trap "" TERM
+  fail_reason="the suite received TERM during $current_check (hard deadline or cancellation)"
+  echo "validate-groundwork: $fail_reason" >&2
+  exit 143
+fi' TERM
 
 # In GitHub Actions, gcc format feeds the shellcheck-gcc problem matcher
 # (.github/problem-matchers/shellcheck-gcc.json) so findings surface as
@@ -1149,9 +1241,14 @@ line_number() {
 validate_static_foundation() {
   check "common developer setup and Docker configuration merge"
   python3 -B scripts/test-common-setup
+  python3 -B scripts/test-brave-browser
   python3 -B scripts/test-remote-desktop
   python3 -B tests/test_imessage_gateway.py
   python3 -B tests/test_local_inference.py
+  python3 -B tests/test_git_filter_repo.py
+  python3 -B tests/test_claude_code_owner.py
+  python3 -B tests/test_commit_identity_guard.py
+  python3 -B tests/test_core_pin.py
 
   local canonical_rows canonical_expected canonical_observed
 
@@ -1256,6 +1353,9 @@ SH
   check "whole-suite hard deadlines and process-group cleanup"
   scripts/test-validation-deadline
 
+  check "update maintenance group cancellation, deadline receipt, and late-fork cleanup"
+  scripts/test-update-group-cancellation
+
   for registry_mutation in omitted duplicate unknown dispatcher; do
     registry_mutant="$validator_cli_fixture/validate-groundwork-$registry_mutation"
     python3 - scripts/validate-groundwork "$registry_mutant" "$registry_mutation" <<'PY'
@@ -1327,7 +1427,74 @@ PY
   scripts/test-aggregate-ci-receipts
 }
 
+# The groundwork-cleanup and groundwork-pnpm-store-tidy runtime checks own a
+# private fixture root, define every helper they use, and share no state with the
+# rest of the update suite. validate_update runs them in a concurrent subshell:
+# the checks keep their names and per-check timing rows (written to a private
+# file and merged at the join), their output is held and replayed at the join,
+# and a failure fails the suite exactly as a serial one would. The subshell
+# shares the suite's process group, so the hard deadline still bounds it.
+# A backgrounded subshell has SIGINT ignored and inherits no job control, so no
+# test that needs a real INT delivered may live in this group; keep such cases
+# in the serial part of the suite.
+update_maintenance_pid=""
+update_maintenance_rows=""
+update_maintenance_log=""
+
+# A group check stopped because the main suite failed did not fail itself, so
+# its row says cancelled rather than blaming that check.
+update_maintenance_record_exit() {
+  local status="$1"
+  if [[ "$update_maintenance_cancelled" -eq 1 ]]; then
+    finish_current_check_timing cancelled "stopped after the main suite failed"
+  elif [[ "$status" -ne 0 ]]; then
+    finish_current_check_timing failed "${fail_reason:-line exited $status}"
+  fi
+}
+
+start_update_maintenance_group() {
+  update_maintenance_rows="$out_dir/update-maintenance-timings.tsv"
+  update_maintenance_log="$out_dir/update-maintenance.log"
+  : >"$update_maintenance_rows"
+  : >"$update_maintenance_log"
+  (
+    # shellcheck disable=SC2030 # The subshell deliberately records into its own rows file.
+    timing_rows="$update_maintenance_rows"
+    current_check_active=0
+    update_maintenance_cancelled=0
+    trap 'update_maintenance_cancelled=1; exit 143' TERM
+    trap 'update_maintenance_record_exit "$?"' EXIT
+    validate_update_maintenance_group
+    finish_current_check_timing passed
+  ) >"$update_maintenance_log" 2>&1 &
+  update_maintenance_pid=$!
+}
+
+join_update_maintenance_group() {
+  local status=0 failed_name
+  [[ -n "$update_maintenance_pid" ]] || return 0
+  finish_current_check_timing passed
+  # Attribute a deadline or signal during the wait to the group, not to the last
+  # serial check. The group's own checks carry the real timing rows.
+  current_check="update maintenance group"
+  current_check_started_epoch="$(date +%s)"
+  current_check_active=1
+  wait "$update_maintenance_pid" || status=$?
+  current_check_active=0
+  update_maintenance_pid=""
+  cat "$update_maintenance_log"
+  # shellcheck disable=SC2031 # The subshell's own rows file is merged back here.
+  cat "$update_maintenance_rows" >>"$timing_rows"
+  if [[ "$status" -ne 0 ]]; then
+    failed_name="$(awk -F '\t' '$3 == "failed" { print $1; exit }' "$update_maintenance_rows")"
+    current_check="${failed_name:-update maintenance group}"
+    fail "the concurrent update maintenance group failed (exit $status)"
+  fi
+}
+
 validate_update() {
+  start_update_maintenance_group
+
   check "sudo metadata completeness and retry intent"
   python3 -B scripts/test-sudo-preflight
 
@@ -2741,12 +2908,26 @@ brew "git"
 cask "ghostty"
 mas "Anybox", id: 1593408455
 EOF
-  update_all_saved_xdg_config="${XDG_CONFIG_HOME-}"
-  update_all_saved_xdg_cache="${XDG_CACHE_HOME-}"
-  update_all_had_xdg_config="${XDG_CONFIG_HOME+x}"
-  update_all_had_xdg_cache="${XDG_CACHE_HOME+x}"
+  # Redirect every inherited XDG_* name into the fixture home. HOME alone does
+  # not: groundwork-cleanup trusts $XDG_DATA_HOME/pnpm/store, so a host value
+  # adds that machine's real store generations to the owner-review report.
+  update_all_xdg_saved_names=()
+  while IFS= read -r update_all_xdg_name; do
+    case "$update_all_xdg_name" in
+      XDG_*) ;;
+      *) continue ;;
+    esac
+    update_all_xdg_saved_names+=("$update_all_xdg_name")
+    printf -v "update_all_xdg_saved_${update_all_xdg_name}" '%s' "${!update_all_xdg_name}"
+  done < <(compgen -v)
+  for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
+    unset "$update_all_xdg_name"
+  done
   export XDG_CONFIG_HOME="$update_all_home/.config"
   export XDG_CACHE_HOME="$update_all_home/.cache"
+  export XDG_DATA_HOME="$update_all_home/.local/share"
+  export XDG_STATE_HOME="$update_all_home/.local/state"
+  export XDG_RUNTIME_DIR="$update_all_home/xdg-runtime"
   cp home/dot_local/bin/executable_groundwork-repos \
     "$update_all_bin/groundwork-repos"
   cat >"$update_all_home/.config/groundwork/repos.conf" <<EOF
@@ -2848,6 +3029,8 @@ SH
     "$update_all_home/.local/bin/groundwork-brew-refetch"
   cat >"$update_all_bin/brew" <<'SH'
 #!/usr/bin/env bash
+# Optional exact argument record for cases that pin what is never called.
+[[ -z "${BREW_CALL_LOG:-}" ]] || printf '%s\n' "$*" >>"$BREW_CALL_LOG"
 # Linux's baseline fixture has formulae only; native coding casks get their
 # own exact-token transaction case. macOS retains its desktop inventory.
 fixture_default_casks=""
@@ -2978,6 +3161,9 @@ case "${1:-}" in
           ;;
         self-current)
           printf '%s' '{"token":"self-current","installed":"1.1.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":true,"pinned":false,"outdated":false,"deprecated":false,"disabled":false,"artifacts":[{"app":["Self Current.app"]}]}'
+          ;;
+        brave-browser)
+          printf '%s' '{"token":"brave-browser","installed":"1.0.0","version":"1.1.0","sha256":"fixture-sha","auto_updates":true,"pinned":false,"outdated":false,"deprecated":false,"disabled":false,"artifacts":[{"app":["Brave Browser.app"]}]}'
           ;;
         google-chrome | google-chrome@beta)
           case "$token" in
@@ -4271,9 +4457,11 @@ EOF
   # exist in that branch.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
     "$update_all_fixture/darwin-runner"
+  # The common Mac setup uses Colima. Pass that backend explicitly. A retired
+  # work-managed profile is not a separate render.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
-    "$update_all_fixture/darwin-work-runner" true false false false bitwarden \
-    work-managed managed current
+    "$update_all_fixture/darwin-work-runner" false false false false bitwarden \
+    personal-current personal current colima
   chmod +x "$update_all_fixture/darwin-runner" \
     "$update_all_fixture/darwin-work-runner"
   cat >"$update_all_bin/groundwork-apps-start" <<'SH'
@@ -4395,7 +4583,7 @@ EOF
   dynamic_exit=0
   HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
-    BREW_CASKS='ghostty chatgpt cursor claude obsidian self-current google-chrome google-chrome@beta unknown-vendor disabled-cask latest-cask codex-app' \
+    BREW_CASKS='ghostty chatgpt cursor claude obsidian self-current brave-browser google-chrome google-chrome@beta unknown-vendor disabled-cask latest-cask codex-app' \
     BREW_AUTO_OUTDATED='chatgpt cursor claude obsidian' \
     BREW_LATEST_OUTDATED='latest-cask' \
     BREW_LAUNCH_AFTER_SNAPSHOT=1 \
@@ -4416,17 +4604,20 @@ EOF
   assert_not_contains '^brew upgrade --greedy([[:space:]]|$)|^brew upgrade --cask --greedy([[:space:]]|$)' \
     "$update_all_log" \
     "update-all invoked an unscoped global greedy upgrade"
-  grep -qF 'Groundwork vendor-covered: google-chrome remains with its declared self-updater' \
+  grep -qF 'Groundwork vendor-covered: brave-browser remains with its declared self-updater' \
     "$update_all_fixture/darwin-dynamic-casks" \
-    || fail "a no-checksum vendor-updated cask disappeared from the coverage receipt"
-  assert_not_contains 'Groundwork vendor-covered: google-chrome@beta' \
+    || fail "Brave disappeared from the declared Sparkle coverage receipt"
+  assert_not_contains 'Groundwork vendor-covered: google-chrome' \
     "$update_all_fixture/darwin-dynamic-casks" \
-    "an installed Chrome Beta cask was still treated as declared vendor coverage"
+    "Chrome was still treated as declared vendor coverage"
+  grep -qF 'Groundwork review: google-chrome 1.0.0 -> 1.1.0 was not upgraded automatically (unverified-vendor-updater).' \
+    "$update_all_fixture/darwin-dynamic-casks" \
+    || fail "an installed Chrome cask was not left as an unmanaged review item"
   grep -qF 'Groundwork review: google-chrome@beta 1.0.0 -> 1.1.0 was not upgraded automatically (unverified-vendor-updater).' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "an installed Chrome Beta cask was not left as an unmanaged review item"
-  assert_not_contains 'brew (upgrade|uninstall).*google-chrome@beta' "$update_all_log" \
-    "update-all upgraded or uninstalled an unmanaged Chrome Beta cask"
+  assert_not_contains 'brew (upgrade|uninstall).*google-chrome' "$update_all_log" \
+    "update-all upgraded or uninstalled an unmanaged Chrome cask"
   grep -qF 'Inspect exact ownership before optional removal: groundwork-app-remove codex-app' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the deprecated codex-app was not distinguished from current ChatGPT"
@@ -4436,7 +4627,7 @@ EOF
   grep -qF 'Groundwork review: unknown-vendor 1.0.0 -> 1.1.0 was not upgraded automatically (unverified-vendor-updater).' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "an unknown no-checksum self-updater was incorrectly trusted"
-  grep -qF 'Unverified casks        2 checksum/updater-ownership item(s) named above' \
+  grep -qF 'Unverified casks        3 checksum/updater-ownership item(s) named above' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the unverified updater count was absent from the final receipt"
   grep -qF 'Groundwork owner action: disabled cask disabled-cask 1.0.0 -> 1.1.0 remains installed and unchanged.' \
@@ -4448,7 +4639,7 @@ EOF
   assert_not_contains 'brew upgrade .*disabled-cask|brew upgrade --cask --require-sha disabled-cask' \
     "$update_all_log" \
     "a disabled cask entered a mutating command"
-  grep -qF 'Discovered              13 installed formulae and casks' \
+  grep -qF 'Discovered              14 installed formulae and casks' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the Homebrew discovery count omitted a formula or cask"
   grep -qF 'Current                 1' \
@@ -4460,7 +4651,7 @@ EOF
   grep -qF 'Verified updated        7' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the Homebrew verified-update count did not match reconciliation"
-  grep -qF 'SUCCESS · 4 OWNER-REVIEW ITEM(S)' \
+  grep -qF 'SUCCESS · 5 OWNER-REVIEW ITEM(S)' \
     "$update_all_fixture/darwin-dynamic-casks" \
     || fail "the deprecated cask was not kept distinct from an updater failure"
   test -f "$update_all_stamp" \
@@ -5774,9 +5965,10 @@ PY
   render darwin false arm64 home/run_onchange_after_10-brew-bundle.sh.tmpl \
     "$update_all_fixture/darwin-bundle-hook"
   chmod +x "$update_all_fixture/darwin-bundle-hook"
-  # The browser lane runs after a successful bundle and needs its own manifest.
+  # Brewfile.browser records the selection. The bundle hook no longer installs
+  # from it; Brave is a checksummed cask in the main Brewfile.
   cat >"$update_all_home/.config/homebrew/Brewfile.browser" <<'EOF'
-cask "google-chrome"
+cask "brave-browser"
 EOF
   for cancel_status in 124 125 129 130 143; do
     rm -f "$update_all_home/.brew-bundle-count"
@@ -5856,6 +6048,53 @@ EOF
     || fail "an ordinary bundle failure skipped the repair helper"
   [[ "$(grep -cxF 'brew-bundle' "$update_all_log")" -eq 2 ]] \
     || fail "an ordinary bundle failure did not retry after a successful repair"
+  rm -f "$update_all_home/.brew-bundle-count"
+
+  check "claude_code_owner native leaves an installed claude-code@latest cask in place"
+  # Removing the other copy is the user's explicit step, named by the
+  # two-copies warning. Neither the Brewfile bundle nor the update runner may
+  # remove the cask, even though the native Brewfile no longer declares it.
+  native_owner_data="{${base_data},\"work\":false,\"docker_backend\":\"colima\",\"xcode\":false,\"beta\":false,\"claude_code_owner\":\"native\""
+  cp "$update_all_home/.config/homebrew/Brewfile" "$update_all_fixture/Brewfile.before-native-owner"
+  chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
+    --override-data "${native_owner_data},\"headless\":false,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+    execute-template <home/dot_config/homebrew/Brewfile.tmpl \
+    >"$update_all_home/.config/homebrew/Brewfile"
+  assert_not_contains '^cask "claude-code@latest"' "$update_all_home/.config/homebrew/Brewfile" \
+    "the native-owner Brewfile still declares the claude-code@latest cask"
+  chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
+    --override-data "${native_owner_data},\"headless\":false,\"chezmoi\":{\"os\":\"linux\",\"arch\":\"amd64\",\"osRelease\":{\"ID\":\"ubuntu\"}}}" \
+    execute-template <home/dot_local/bin/executable_groundwork-update-run.tmpl \
+    >"$update_all_fixture/native-owner-runner"
+  chmod +x "$update_all_fixture/native-owner-runner"
+  grep -qF 'gw_claude_dual_install_report "native"' "$update_all_fixture/native-owner-runner" \
+    || fail "the native-owner runner did not render the stored owner"
+  native_owner_calls="$update_all_fixture/native-owner-brew-calls"
+  : >"$native_owner_calls"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_bin:$update_all_path" \
+    GROUNDWORK_TEST_LOG="$update_all_log" GROUNDWORK_BREW_BIN="$update_all_bin/brew" \
+    BREW_CALL_LOG="$native_owner_calls" BREW_CASKS='ghostty claude-code@latest' \
+    "$update_all_fixture/darwin-bundle-hook" \
+    >"$update_all_fixture/native-owner-bundle" 2>&1 \
+    || fail "the native-owner Brewfile bundle failed"
+  grep -qE '^bundle( |$)' "$native_owner_calls" \
+    || fail "the native-owner bundle case never reached brew bundle"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    BREW_CALL_LOG="$native_owner_calls" BREW_FORMULAE='' \
+    BREW_CASKS='codex claude-code@latest grok-build' FAKE_PLATFORM=linux \
+    "$update_all_fixture/native-owner-runner" >"$update_all_fixture/native-owner-update" 2>&1 \
+    || fail "the native-owner update-all run failed"
+  grep -qF 'Groundwork update complete' "$update_all_fixture/native-owner-update" \
+    || fail "the native-owner update-all run did not complete"
+  grep -qE '^upgrade ' "$native_owner_calls" \
+    || fail "the native-owner update-all run never reached Homebrew upgrades"
+  # uninstall, and its remove and rm aliases, in any argument position.
+  assert_not_contains '(^|[[:space:]])(uninstall|remove|rm)([[:space:]]|$)|^bundle cleanup|--cleanup|--zap' \
+    "$native_owner_calls" \
+    "a native-owner bundle or update-all run removed a Homebrew package"
+  cp "$update_all_fixture/Brewfile.before-native-owner" "$update_all_home/.config/homebrew/Brewfile"
   rm -f "$update_all_home/.brew-bundle-count"
 
   cp "$update_all_home/.config/homebrew/Brewfile" \
@@ -7797,17 +8036,422 @@ SH
   test ! -e "$helper_pending" \
     || fail "a successful maintenance helper did not clear generic pending state"
 
-  if [[ -n "$update_all_had_xdg_config" ]]; then
-    export XDG_CONFIG_HOME="$update_all_saved_xdg_config"
-  else
-    unset XDG_CONFIG_HOME
+  unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
+  for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
+    update_all_xdg_saved_ref="update_all_xdg_saved_${update_all_xdg_name}"
+    printf -v "$update_all_xdg_name" '%s' "${!update_all_xdg_saved_ref}"
+    export "${update_all_xdg_name?}"
+  done
+  unset update_all_xdg_name update_all_xdg_saved_ref
+
+  check "groundwork-disk-clean: preview, consent, bounded receipt, update-all isolation"
+  # Logging shims on a closed PATH stand in for brew, mise, docker, and
+  # colima; a pseudo-terminal drives every confirmation state.
+  python3 -B scripts/test-disk-clean
+
+  check "groundwork-doctor --storage stays read-only, opt-in, and honest"
+  storage_fixture="$out_dir/doctor-storage-fixture"
+  storage_home="$storage_fixture/home"
+  storage_bin="$storage_fixture/bin"
+  mkdir -p "$storage_bin" "$storage_home/.nvm/versions" "$storage_home/.npm/_cacache"
+  dd if=/dev/urandom of="$storage_home/.nvm/versions/node.blob" bs=1024 count=512 >/dev/null 2>&1
+  storage_brew_cache="$storage_fixture/brew cache"
+  mkdir -p "$storage_brew_cache/downloads"
+  dd if=/dev/urandom of="$storage_brew_cache/downloads/big.blob" bs=1024 count=1024 >/dev/null 2>&1
+  storage_pnpm_root="$storage_fixture/pnpm-store"
+  mkdir -p "$storage_pnpm_root/v10" "$storage_pnpm_root/v11"
+  dd if=/dev/urandom of="$storage_pnpm_root/v11/pkg.blob" bs=1024 count=1024 >/dev/null 2>&1
+  # An alias of the selected store: canonical dedup must report it exactly once.
+  ln -s "$storage_pnpm_root/v11" "$storage_pnpm_root/v-alias"
+  dd if=/dev/urandom of="$storage_home/.npm/_cacache/data.blob" bs=1024 count=1024 >/dev/null 2>&1
+  cat >"$storage_bin/brew" <<SH
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "--cache" ]]; then
+  printf '%s\n' "$storage_brew_cache"
+  exit 0
+fi
+printf 'brew %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
+SH
+  cat >"$storage_bin/pnpm" <<SH
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "store" && "\${2:-}" == "path" ]]; then
+  [[ -z "\${PNPM_ENV_PROBE:-}" ]] \\
+    || printf 'corepack_net=%s\n' "\${COREPACK_ENABLE_NETWORK:-unset}" >"\$PNPM_ENV_PROBE"
+  [[ "\${PNPM_STORE_PATH_FAIL:-0}" == "0" ]] || exit 1
+  printf '%s\n' "$storage_pnpm_root/v11"
+  exit 0
+fi
+printf 'pnpm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
+SH
+  cat >"$storage_bin/npm" <<SH
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "cache" ]]; then
+  [[ "\${NPM_CONFIG_FAIL:-0}" == "0" ]] || exit 1
+  if [[ "\${NPM_CACHE_MISSING:-0}" != "0" ]]; then
+    printf '%s\n' "$storage_home/uncreated-npm-cache"
+    exit 0
   fi
-  if [[ -n "$update_all_had_xdg_cache" ]]; then
-    export XDG_CACHE_HOME="$update_all_saved_xdg_cache"
+  printf '%s\n' "$storage_home/.npm"
+  exit 0
+fi
+printf 'npm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
+SH
+  cat >"$storage_bin/mise" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "which" ]]; then
+  exit "${MISE_WHICH_NPM_STATUS:-1}"
+fi
+if [[ "${1:-}" == "exec" ]]; then
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+  exec "$@"
+fi
+exit 0
+SH
+  # du passthrough that can be told to fail for one path — how else would a
+  # doctor prove that a broken measurement is not reported as healthy?
+  cat >"$storage_bin/du" <<'SH'
+#!/usr/bin/env bash
+if [[ -n "${DU_FAIL_GLOB:-}" ]]; then
+  for arg in "$@"; do
+    [[ "$arg" == *"$DU_FAIL_GLOB"* ]] && exit 1
+  done
+fi
+exec /usr/bin/du "$@"
+SH
+  chmod +x "$storage_bin/brew" "$storage_bin/pnpm" "$storage_bin/npm" \
+    "$storage_bin/mise" "$storage_bin/du"
+  storage_log="$storage_fixture/commands.log"
+  # One list for every doctor invocation in this fixture. Unset host PNPM_HOME
+  # and every current XDG_* name, then pin the five fixture directories.
+  # GNU env applies -u only while it is still an option, so every -u precedes
+  # the assignments. The nopnpm run replaces PATH after this list.
+  storage_xdg_clear=()
+  while IFS= read -r storage_xdg_name; do
+    case "$storage_xdg_name" in
+      XDG_*) storage_xdg_clear+=(-u "$storage_xdg_name") ;;
+    esac
+  done < <(compgen -v)
+  storage_env=(
+    ${storage_xdg_clear[@]+"${storage_xdg_clear[@]}"}
+    -u PNPM_HOME
+    HOME="$storage_home"
+    XDG_CONFIG_HOME="$storage_home/.config"
+    XDG_CACHE_HOME="$storage_home/.cache"
+    XDG_DATA_HOME="$storage_home/.local/share"
+    XDG_STATE_HOME="$storage_home/.local/state"
+    XDG_RUNTIME_DIR="$storage_home/xdg-runtime"
+    PATH="$storage_bin:/usr/bin:/bin"
+    GROUNDWORK_TEST_LOG="$storage_log"
+  )
+  run_storage_doctor() {
+    local output="$1"
+    shift
+    : >"$storage_log"
+    env "${storage_env[@]}" "$@" \
+      /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
+      >"$output" 2>&1
+  }
+
+  run_storage_doctor "$storage_fixture/output" PNPM_ENV_PROBE="$storage_fixture/env-probe" \
+    || fail "groundwork-doctor --storage must succeed"
+  # Read-only is the contract: every brew/pnpm/npm call other than the size
+  # queries would have been logged.
+  test ! -s "$storage_log" \
+    || fail "doctor --storage invoked a non-query command: $(cat "$storage_log")"
+  grep -qF 'read-only report' "$storage_fixture/output"
+  grep -qF 'not a full disk scan' "$storage_fixture/output" \
+    || fail "the storage report must say it is curated, not exhaustive"
+  grep -qxF 'corepack_net=0' "$storage_fixture/env-probe" \
+    || fail "the doctor's pnpm query must disable Corepack networking"
+  grep -qE 'Homebrew cache: [0-9.]+ MiB' "$storage_fixture/output" \
+    || fail "the storage report must size the Homebrew cache"
+  grep -qF 'pnpm store v10 (other generation)' "$storage_fixture/output" \
+    || fail "other pnpm store generations must not be called inactive — Corepack selects per repository"
+  grep -qF 'pnpm store v11 (selected here)' "$storage_fixture/output" \
+    || fail "the storage report must mark the store selected by the current directory"
+  grep -qE 'working directory .* selects: ' "$storage_fixture/output" \
+    || fail "the storage report must say which directory the selection followed"
+  grep -qF 'legacy runtime manager: ~/.nvm' "$storage_fixture/output" \
+    || fail "a legacy nvm install must be reported"
+  grep -qF "Groundwork's intended Node owner: mise" "$storage_fixture/output" \
+    || fail "the nvm finding must state intent, not assert the live Node owner"
+  grep -qF -- '--node-toolchain' "$storage_fixture/output" \
+    || fail "the nvm finding must point at the section that verifies the live owner"
+  assert_not_contains 'v-alias' "$storage_fixture/output" \
+    "an alias of the selected pnpm store was counted as a second generation"
+  # npm resolves exactly as update-all resolves it, and the report names the
+  # provider that answered — here mise owns no npm, so the PATH npm answers.
+  grep -qE 'npm cache via PATH npm \([^)]*\) \(.*\.npm\): [0-9.]+ MiB' "$storage_fixture/output" \
+    || fail "the storage report must size npm's configured cache and name the provider"
+  run_storage_doctor "$storage_fixture/mise-npm-output" MISE_WHICH_NPM_STATUS=0 \
+    || fail "doctor --storage must succeed with a mise-owned npm"
+  grep -qF 'npm cache via mise-managed npm' "$storage_fixture/mise-npm-output" \
+    || fail "a mise-owned npm must be reported as the provider update-all uses"
+  # A failed cache-path query stays unknown: ~/.npm is mentioned but never
+  # relabeled as the configured cache.
+  run_storage_doctor "$storage_fixture/npm-fail-output" NPM_CONFIG_FAIL=1 \
+    || fail "doctor --storage must survive a failed npm config get cache"
+  grep -qF 'npm cache path unavailable' "$storage_fixture/npm-fail-output" \
+    || fail "a failed npm cache query must be reported as unavailable"
+  grep -qF 'NOT verified as the active cache' "$storage_fixture/npm-fail-output" \
+    || fail "an unverified ~/.npm must be labeled unverified, not configured"
+  grep -qF 'groundwork-cleanup' "$storage_fixture/output" \
+    || fail "the storage report must point at the automatic maintenance report"
+  # Absent areas stay silent rather than being invented: no Xcode or Parallels
+  # directories exist in this fixture HOME.
+  assert_not_contains 'Parallels' "$storage_fixture/output" \
+    "the storage report invented a Parallels area that does not exist"
+  assert_not_contains 'DeviceSupport' "$storage_fixture/output" \
+    "the storage report invented an Xcode area that does not exist"
+
+  # Thresholds are policy with boundaries: forced to 0 GiB, the same data warns.
+  run_storage_doctor "$storage_fixture/warn-output" \
+    GROUNDWORK_STORAGE_BREW_WARN_GIB=0 GROUNDWORK_STORAGE_PNPM_WARN_GIB=0 \
+    GROUNDWORK_STORAGE_NPM_WARN_GIB=0 \
+    || fail "doctor --storage must succeed at a zero threshold"
+  grep -qE 'warn.*Homebrew cache.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
+    || fail "a Homebrew cache above threshold must warn and name the threshold"
+  grep -qE 'warn.*pnpm stores total.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
+    || fail "a pnpm store total above threshold must warn and name the threshold"
+  grep -qE 'warn.*npm cache via.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
+    || fail "an npm cache above threshold must warn and name the threshold"
+
+  # A FAILED measurement is never healthy: broken du on the Homebrew cache must
+  # not produce ok, and a partial pnpm total must not be judged at all.
+  run_storage_doctor "$storage_fixture/du-fail-output" DU_FAIL_GLOB="brew cache" \
+    || fail "doctor --storage must survive a failed du"
+  grep -qF 'Homebrew cache: size unavailable' "$storage_fixture/du-fail-output" \
+    || fail "a failed Homebrew measurement must be reported as unavailable"
+  assert_not_contains 'ok    Homebrew cache' "$storage_fixture/du-fail-output" \
+    "a failed Homebrew measurement was reported as healthy"
+  run_storage_doctor "$storage_fixture/partial-output" DU_FAIL_GLOB="v10" \
+    || fail "doctor --storage must survive a partial pnpm measurement"
+  grep -qF 'pnpm store total incomplete' "$storage_fixture/partial-output" \
+    || fail "a partial pnpm total must be reported incomplete, threshold unevaluated"
+  assert_not_contains 'ok    pnpm stores total' "$storage_fixture/partial-output" \
+    "a partial pnpm total was reported as complete and healthy"
+
+  # A configured npm cache path that does not exist yet is a valid zero-state,
+  # distinct from a failed query.
+  run_storage_doctor "$storage_fixture/npm-uncreated-output" NPM_CACHE_MISSING=1 \
+    || fail "doctor --storage must survive an uncreated npm cache path"
+  grep -qE 'npm cache via PATH npm .*uncreated-npm-cache\): not created yet' \
+    "$storage_fixture/npm-uncreated-output" \
+    || fail "a configured-but-uncreated npm cache must be reported, not dropped"
+
+  # Discovery does not depend on the launcher: with the selected pnpm
+  # unavailable offline, the known store roots are still found and sized.
+  mkdir -p "$storage_home/Library/pnpm/store/v7"
+  dd if=/dev/urandom of="$storage_home/Library/pnpm/store/v7/pkg.blob" bs=1024 count=512 >/dev/null 2>&1
+  run_storage_doctor "$storage_fixture/offline-output" PNPM_STORE_PATH_FAIL=1 \
+    || fail "doctor --storage must survive an offline-unavailable pnpm"
+  grep -qF 'selected-for-this-directory store: unavailable' "$storage_fixture/offline-output" \
+    || fail "an offline-unavailable selection must be named, not silently absent"
+  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/offline-output" \
+    || fail "known store roots must be sized even when pnpm cannot answer"
+
+  # pnpm removed entirely, stores left behind: still found and sized.
+  # A host PNPM_HOME store must stay out of that report. The decoy is exported
+  # in this shell; storage_env has to unset it. This run has its own PATH so
+  # the fixture pnpm is absent while the other tools stay.
+  storage_nopnpm_bin="$storage_fixture/nopnpm-bin"
+  mkdir -p "$storage_nopnpm_bin"
+  for storage_tool in brew npm mise du; do
+    ln -s "$storage_bin/$storage_tool" "$storage_nopnpm_bin/$storage_tool"
+  done
+  host_pnpm_home="$storage_fixture/host-pnpm-home"
+  mkdir -p "$host_pnpm_home/store/v98"
+  dd if=/dev/urandom of="$host_pnpm_home/store/v98/pkg.blob" bs=1024 count=64 >/dev/null 2>&1
+  storage_saved_pnpm_home="${PNPM_HOME-}"
+  storage_had_pnpm_home="${PNPM_HOME+x}"
+  export PNPM_HOME="$host_pnpm_home"
+  : >"$storage_log"
+  env "${storage_env[@]}" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
+    /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
+    >"$storage_fixture/nopnpm-output" 2>&1 \
+    || fail "doctor --storage must succeed with pnpm removed"
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/nopnpm-output"; then
+    fail "a host PNPM_HOME store changed the nopnpm storage report"
+  fi
+  assert_not_contains 'pnpm store v98' "$storage_fixture/nopnpm-output" \
+    "a host PNPM_HOME generation was sized as if it belonged to the fixture"
+  grep -qF 'pnpm not installed; known store roots are still sized' "$storage_fixture/nopnpm-output" \
+    || fail "a removed pnpm must not hide the stores it left behind"
+  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/nopnpm-output" \
+    || fail "stores that outlived pnpm must still be sized"
+
+  # Storage never runs in the default doctor: du over VM bundles and simulator
+  # trees can take minutes, and the routine health check must stay quick.
+  : >"$storage_log"
+  env "${storage_env[@]}" \
+    /bin/bash home/dot_local/bin/executable_groundwork-doctor \
+    >"$storage_fixture/default-output" 2>&1 \
+    || fail "the default doctor run must succeed"
+  if [[ -n "$storage_had_pnpm_home" ]]; then
+    export PNPM_HOME="$storage_saved_pnpm_home"
   else
-    unset XDG_CACHE_HOME
+    unset PNPM_HOME
+  fi
+  if grep -Fq -- "$host_pnpm_home" "$storage_fixture/default-output"; then
+    fail "a host PNPM_HOME changed the default doctor report"
+  fi
+  assert_not_contains '== Storage ==' "$storage_fixture/default-output" \
+    "the default doctor ran the storage section"
+  grep -qF -- '--storage for the (slower)' "$storage_fixture/default-output" \
+    || fail "the default doctor must point at the opt-in storage report"
+
+  check "shell self-reload preserves background jobs"
+  # BEHAVIORAL, not a source grep. The guard used "$(jobs)", which forks — and a
+  # forked child has no job table, so the test was ALWAYS true and every reload
+  # exec'd straight through running background jobs. Source matching cannot
+  # catch that class of bug; only running the real hook with a real job can.
+  # The function under test is EXTRACTED FROM THE RENDERED TEMPLATE, so this
+  # exercises the shipped implementation rather than a copy of it.
+  if ! command -v zsh >/dev/null 2>&1; then
+    skip_current_check zsh-missing "zsh is required to run the self-reload hook"
+  else
+    reload_dir="$out_dir/shell-reload"
+    mkdir -p "$reload_dir"
+    render darwin false arm64 home/dot_zshrc.tmpl "$reload_dir/rendered-zshrc"
+    # The hook plus its module gate; nothing else from the rendered file runs.
+    sed -n '/^zmodload -F zsh\/stat b:zstat/,/^fi$/p' "$reload_dir/rendered-zshrc" \
+      >"$reload_dir/hook.zsh"
+    grep -qF '_groundwork_config_refresh_precmd' "$reload_dir/hook.zsh" \
+      || fail "could not extract the self-reload hook from the rendered .zshrc"
+    cat >"$reload_dir/drive.zsh" <<'ZSH'
+set -e
+ZDOTDIR="$1"; export ZDOTDIR
+: >"$ZDOTDIR/.zshrc"
+source "$2"
+sleep 30 &
+job_pid=$!
+print -r -- "$job_pid" >"$ZDOTDIR/job.pid"
+# Make the config look rewritten, exactly as `chezmoi apply` would.
+sleep 1
+: >"$ZDOTDIR/.zshrc"
+# If the guard is broken this exec's and the marker below is never written.
+_groundwork_config_refresh_precmd
+print -r -- held >"$ZDOTDIR/outcome"
+kill "$job_pid" 2>/dev/null || true
+ZSH
+    reload_home="$reload_dir/home"
+    mkdir -p "$reload_home"
+    rm -f "$reload_home/outcome" "$reload_home/job.pid"
+    zsh -f "$reload_dir/drive.zsh" "$reload_home" "$reload_dir/hook.zsh" \
+      </dev/null >"$reload_dir/drive.out" 2>&1 || true
+    [[ -f "$reload_home/outcome" ]] \
+      || fail "the self-reload hook exec'd while a background job was running, replacing the shell out from under it"
+    grep -qxF held "$reload_home/outcome" \
+      || fail "the self-reload hook did not hold off while a background job was running"
+    # ...and with no jobs it must still actually reload, or the guard is just off.
+    cat >"$reload_dir/drive-clean.zsh" <<'ZSH'
+set -e
+ZDOTDIR="$1"; export ZDOTDIR
+: >"$ZDOTDIR/.zshrc"
+source "$2"
+sleep 1
+: >"$ZDOTDIR/.zshrc"
+_groundwork_config_refresh_precmd
+print -r -- "did-not-reload" >"$ZDOTDIR/outcome"
+ZSH
+    reload_clean="$reload_dir/clean"
+    mkdir -p "$reload_clean"
+    SHELL="$(command -v zsh)" zsh -f "$reload_dir/drive-clean.zsh" \
+      "$reload_clean" "$reload_dir/hook.zsh" </dev/null >"$reload_dir/clean.out" 2>&1 || true
+    if [[ -f "$reload_clean/outcome" ]]; then
+      fail "the self-reload hook never reloads, so the job guard is masking a dead feature"
+    fi
+    grep -qF 'shell config updated' "$reload_dir/clean.out" \
+      || fail "the self-reload hook did not announce the reload it performed"
   fi
 
+  check "update-all migration notice"
+  migration_home="$out_dir/update-all-migration-home"
+  migration_flag="$migration_home/.local/state/groundwork/update-all-migration-pending"
+  mkdir -p "$migration_home"
+  HOME="$migration_home" /bin/bash home/run_once_after_97-package-maintenance-notice.sh \
+    >"$out_dir/package-maintenance-migration-notice"
+  grep -qF 'update-all now includes automatic package-manager maintenance' \
+    "$out_dir/package-maintenance-migration-notice"
+  grep -qF 'Whole pnpm store generations remain' \
+    "$out_dir/package-maintenance-migration-notice"
+  assert_not_contains 'Docker data remain owner-confirmed' \
+    "$out_dir/package-maintenance-migration-notice" \
+    "the package-maintenance notice retained the obsolete Docker contract"
+  HOME="$migration_home" /bin/bash home/run_once_after_98-docker-scratch-maintenance-notice.sh \
+    >"$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'update-all now includes automatic Docker scratch maintenance' \
+    "$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'groundwork-doctor --docker' "$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'groundwork-docker-cache-tidy' "$out_dir/docker-maintenance-migration-notice"
+  grep -qF -- '--rm-after' "$out_dir/docker-maintenance-migration-notice"
+  grep -qF 'scripts/verify-docker-image' "$out_dir/docker-maintenance-migration-notice"
+  cat >"$migration_home/.zshrc" <<'EOF'
+update-all() {
+  echo old
+}
+EOF
+  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
+    >"$out_dir/update-all-migration-notice"
+  grep -qF 'moved update-all from an in-memory shell function' "$out_dir/update-all-migration-notice"
+  grep -qF "Run \`exec zsh\` once" "$out_dir/update-all-migration-notice"
+  test -f "$migration_flag"
+  # The end-of-apply reminder repeats the one required action after Homebrew
+  # output has scrolled the first notice away, then clears the flag so it
+  # never repeats.
+  # A noninteractive apply (piped/CI) cannot deliver the reminder to anyone, so
+  # it must print nothing and leave the flag pending for the next interactive run.
+  HOME="$migration_home" /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-noninteractive"
+  test ! -s "$out_dir/update-all-migration-noninteractive" \
+    || fail "the migration reminder printed to a non-terminal"
+  test -f "$migration_flag" \
+    || fail "a noninteractive apply consumed the migration reminder"
+  # Interactive: shown, then the flag is cleared so it never repeats.
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-reminder"
+  grep -qF 'one step left' "$out_dir/update-all-migration-reminder"
+  grep -qF 'exec zsh' "$out_dir/update-all-migration-reminder"
+  test ! -e "$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-reminder-repeat"
+  test ! -s "$out_dir/update-all-migration-reminder-repeat"
+  # Color keys on the run-wide signal update-all exports, not on a per-stage
+  # TTY probe: with GROUNDWORK_COLOR=1 the reminder emits ANSI even though
+  # stdout is a file here; with it 0 (or NO_COLOR and no signal) it stays plain.
+  reminder_esc="$(printf '\033')"
+  : >"$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=1 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-color-on"
+  grep -qF "${reminder_esc}[1;33m" "$out_dir/update-all-migration-color-on" \
+    || fail "the migration reminder must emit color when GROUNDWORK_COLOR=1, even behind a capture"
+  : >"$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=0 \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-color-off"
+  grep -qF 'one step left' "$out_dir/update-all-migration-color-off"
+  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-color-off" \
+    "the migration reminder emitted color although GROUNDWORK_COLOR=0"
+  : >"$migration_flag"
+  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 NO_COLOR=1 GROUNDWORK_COLOR='' \
+    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
+    >"$out_dir/update-all-migration-no-color"
+  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-no-color" \
+    "the migration reminder emitted color although NO_COLOR was set and no signal decided otherwise"
+  printf '# fresh install has no old function\n' >"$migration_home/.zshrc"
+  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
+    >"$out_dir/update-all-fresh-notice"
+  test ! -s "$out_dir/update-all-fresh-notice"
+  test ! -e "$migration_flag"
+
+  join_update_maintenance_group
+}
+
+validate_update_maintenance_group() {
   check "groundwork-cleanup fixture setup"
   cleanup_fixture="$out_dir/package-maintenance-fixture"
   cleanup_home="$cleanup_fixture/home"
@@ -8323,10 +8967,21 @@ SH
   chmod +x "$cleanup_bin/brew" "$cleanup_bin/mise" "$cleanup_bin/pnpm" \
     "$cleanup_bin/du" "$cleanup_bin/groundwork-repos"
 
+  cleanup_xdg_clear=()
+  while IFS= read -r cleanup_xdg_name; do
+    case "$cleanup_xdg_name" in
+      XDG_*) cleanup_xdg_clear+=(-u "$cleanup_xdg_name") ;;
+    esac
+  done < <(compgen -v)
   cleanup_env=(
+    ${cleanup_xdg_clear[@]+"${cleanup_xdg_clear[@]}"}
+    -u PNPM_HOME
     HOME="$cleanup_home"
     XDG_CACHE_HOME="$cleanup_home/.cache"
     XDG_CONFIG_HOME="$cleanup_home/.config"
+    XDG_DATA_HOME="$cleanup_home/.local/share"
+    XDG_STATE_HOME="$cleanup_home/.local/state"
+    XDG_RUNTIME_DIR="$cleanup_home/xdg-runtime"
     PATH="/usr/bin:/bin"
     GROUNDWORK_TEST_LOG="$cleanup_log"
     CLEANUP_BREW_CACHE="$cleanup_fixture/brew-cache"
@@ -8416,9 +9071,27 @@ SH
   # candidates. Same-major selectors choose the highest pin deterministically;
   # offline, unknown-version, custom-root, false-marker, and whole-generation
   # cases stay review-only.
+  # A host XDG_DATA_HOME with a real pnpm store must not change that report.
+  # The decoy is exported in this shell; cleanup_env has to override it.
+  host_xdg_data="$cleanup_fixture/host-xdg-data"
+  mkdir -p "$host_xdg_data/pnpm/store/v99/payload"
+  : >"$host_xdg_data/pnpm/store/v99/payload/pkg"
+  cleanup_saved_xdg_data="${XDG_DATA_HOME-}"
+  cleanup_had_xdg_data="${XDG_DATA_HOME+x}"
+  export XDG_DATA_HOME="$host_xdg_data"
   : >"$cleanup_log"
   (cd "$cleanup_fixture/unrelated" && env "${cleanup_env[@]}" "$cleanup_command") \
     >"$cleanup_fixture/report"
+  if [[ -n "$cleanup_had_xdg_data" ]]; then
+    export XDG_DATA_HOME="$cleanup_saved_xdg_data"
+  else
+    unset XDG_DATA_HOME
+  fi
+  if grep -Fq -- "$host_xdg_data" "$cleanup_fixture/report"; then
+    fail "a host XDG_DATA_HOME pnpm store changed the cleanup fixture report"
+  fi
+  assert_not_contains 'pnpm v99 store' "$cleanup_fixture/report" \
+    "a host XDG_DATA_HOME generation was reviewed as if it belonged to the fixture"
   grep -qF 'Automatic candidates: 2' "$cleanup_fixture/report" \
     || {
       cat "$cleanup_fixture/report" >&2
@@ -9801,370 +10474,6 @@ SH
     || fail "a machine without pnpm must exit 0"
   grep -qF 'nothing to tidy' "$pnpm_fixture/no-pnpm-output"
   test ! -s "$pnpm_log"
-
-  check "groundwork-disk-clean: preview, consent, bounded receipt, update-all isolation"
-  # Logging shims on a closed PATH stand in for brew, mise, docker, and
-  # colima; a pseudo-terminal drives every confirmation state.
-  python3 -B scripts/test-disk-clean
-
-  check "groundwork-doctor --storage stays read-only, opt-in, and honest"
-  storage_fixture="$out_dir/doctor-storage-fixture"
-  storage_home="$storage_fixture/home"
-  storage_bin="$storage_fixture/bin"
-  mkdir -p "$storage_bin" "$storage_home/.nvm/versions" "$storage_home/.npm/_cacache"
-  dd if=/dev/urandom of="$storage_home/.nvm/versions/node.blob" bs=1024 count=512 >/dev/null 2>&1
-  storage_brew_cache="$storage_fixture/brew cache"
-  mkdir -p "$storage_brew_cache/downloads"
-  dd if=/dev/urandom of="$storage_brew_cache/downloads/big.blob" bs=1024 count=1024 >/dev/null 2>&1
-  storage_pnpm_root="$storage_fixture/pnpm-store"
-  mkdir -p "$storage_pnpm_root/v10" "$storage_pnpm_root/v11"
-  dd if=/dev/urandom of="$storage_pnpm_root/v11/pkg.blob" bs=1024 count=1024 >/dev/null 2>&1
-  # An alias of the selected store: canonical dedup must report it exactly once.
-  ln -s "$storage_pnpm_root/v11" "$storage_pnpm_root/v-alias"
-  dd if=/dev/urandom of="$storage_home/.npm/_cacache/data.blob" bs=1024 count=1024 >/dev/null 2>&1
-  cat >"$storage_bin/brew" <<SH
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "--cache" ]]; then
-  printf '%s\n' "$storage_brew_cache"
-  exit 0
-fi
-printf 'brew %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
-SH
-  cat >"$storage_bin/pnpm" <<SH
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "store" && "\${2:-}" == "path" ]]; then
-  [[ -z "\${PNPM_ENV_PROBE:-}" ]] \\
-    || printf 'corepack_net=%s\n' "\${COREPACK_ENABLE_NETWORK:-unset}" >"\$PNPM_ENV_PROBE"
-  [[ "\${PNPM_STORE_PATH_FAIL:-0}" == "0" ]] || exit 1
-  printf '%s\n' "$storage_pnpm_root/v11"
-  exit 0
-fi
-printf 'pnpm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
-SH
-  cat >"$storage_bin/npm" <<SH
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "cache" ]]; then
-  [[ "\${NPM_CONFIG_FAIL:-0}" == "0" ]] || exit 1
-  if [[ "\${NPM_CACHE_MISSING:-0}" != "0" ]]; then
-    printf '%s\n' "$storage_home/uncreated-npm-cache"
-    exit 0
-  fi
-  printf '%s\n' "$storage_home/.npm"
-  exit 0
-fi
-printf 'npm %s\n' "\$*" >>"\$GROUNDWORK_TEST_LOG"
-SH
-  cat >"$storage_bin/mise" <<'SH'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "which" ]]; then
-  exit "${MISE_WHICH_NPM_STATUS:-1}"
-fi
-if [[ "${1:-}" == "exec" ]]; then
-  shift
-  [[ "${1:-}" == "--" ]] && shift
-  exec "$@"
-fi
-exit 0
-SH
-  # du passthrough that can be told to fail for one path — how else would a
-  # doctor prove that a broken measurement is not reported as healthy?
-  cat >"$storage_bin/du" <<'SH'
-#!/usr/bin/env bash
-if [[ -n "${DU_FAIL_GLOB:-}" ]]; then
-  for arg in "$@"; do
-    [[ "$arg" == *"$DU_FAIL_GLOB"* ]] && exit 1
-  done
-fi
-exec /usr/bin/du "$@"
-SH
-  chmod +x "$storage_bin/brew" "$storage_bin/pnpm" "$storage_bin/npm" \
-    "$storage_bin/mise" "$storage_bin/du"
-  storage_log="$storage_fixture/commands.log"
-  run_storage_doctor() {
-    local output="$1"
-    shift
-    : >"$storage_log"
-    env HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
-      GROUNDWORK_TEST_LOG="$storage_log" "$@" \
-      /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
-      >"$output" 2>&1
-  }
-
-  run_storage_doctor "$storage_fixture/output" PNPM_ENV_PROBE="$storage_fixture/env-probe" \
-    || fail "groundwork-doctor --storage must succeed"
-  # Read-only is the contract: every brew/pnpm/npm call other than the size
-  # queries would have been logged.
-  test ! -s "$storage_log" \
-    || fail "doctor --storage invoked a non-query command: $(cat "$storage_log")"
-  grep -qF 'read-only report' "$storage_fixture/output"
-  grep -qF 'not a full disk scan' "$storage_fixture/output" \
-    || fail "the storage report must say it is curated, not exhaustive"
-  grep -qxF 'corepack_net=0' "$storage_fixture/env-probe" \
-    || fail "the doctor's pnpm query must disable Corepack networking"
-  grep -qE 'Homebrew cache: [0-9.]+ MiB' "$storage_fixture/output" \
-    || fail "the storage report must size the Homebrew cache"
-  grep -qF 'pnpm store v10 (other generation)' "$storage_fixture/output" \
-    || fail "other pnpm store generations must not be called inactive — Corepack selects per repository"
-  grep -qF 'pnpm store v11 (selected here)' "$storage_fixture/output" \
-    || fail "the storage report must mark the store selected by the current directory"
-  grep -qE 'working directory .* selects: ' "$storage_fixture/output" \
-    || fail "the storage report must say which directory the selection followed"
-  grep -qF 'legacy runtime manager: ~/.nvm' "$storage_fixture/output" \
-    || fail "a legacy nvm install must be reported"
-  grep -qF "Groundwork's intended Node owner: mise" "$storage_fixture/output" \
-    || fail "the nvm finding must state intent, not assert the live Node owner"
-  grep -qF -- '--node-toolchain' "$storage_fixture/output" \
-    || fail "the nvm finding must point at the section that verifies the live owner"
-  assert_not_contains 'v-alias' "$storage_fixture/output" \
-    "an alias of the selected pnpm store was counted as a second generation"
-  # npm resolves exactly as update-all resolves it, and the report names the
-  # provider that answered — here mise owns no npm, so the PATH npm answers.
-  grep -qE 'npm cache via PATH npm \([^)]*\) \(.*\.npm\): [0-9.]+ MiB' "$storage_fixture/output" \
-    || fail "the storage report must size npm's configured cache and name the provider"
-  run_storage_doctor "$storage_fixture/mise-npm-output" MISE_WHICH_NPM_STATUS=0 \
-    || fail "doctor --storage must succeed with a mise-owned npm"
-  grep -qF 'npm cache via mise-managed npm' "$storage_fixture/mise-npm-output" \
-    || fail "a mise-owned npm must be reported as the provider update-all uses"
-  # A failed cache-path query stays unknown: ~/.npm is mentioned but never
-  # relabeled as the configured cache.
-  run_storage_doctor "$storage_fixture/npm-fail-output" NPM_CONFIG_FAIL=1 \
-    || fail "doctor --storage must survive a failed npm config get cache"
-  grep -qF 'npm cache path unavailable' "$storage_fixture/npm-fail-output" \
-    || fail "a failed npm cache query must be reported as unavailable"
-  grep -qF 'NOT verified as the active cache' "$storage_fixture/npm-fail-output" \
-    || fail "an unverified ~/.npm must be labeled unverified, not configured"
-  grep -qF 'groundwork-cleanup' "$storage_fixture/output" \
-    || fail "the storage report must point at the automatic maintenance report"
-  # Absent areas stay silent rather than being invented: no Xcode or Parallels
-  # directories exist in this fixture HOME.
-  assert_not_contains 'Parallels' "$storage_fixture/output" \
-    "the storage report invented a Parallels area that does not exist"
-  assert_not_contains 'DeviceSupport' "$storage_fixture/output" \
-    "the storage report invented an Xcode area that does not exist"
-
-  # Thresholds are policy with boundaries: forced to 0 GiB, the same data warns.
-  run_storage_doctor "$storage_fixture/warn-output" \
-    GROUNDWORK_STORAGE_BREW_WARN_GIB=0 GROUNDWORK_STORAGE_PNPM_WARN_GIB=0 \
-    GROUNDWORK_STORAGE_NPM_WARN_GIB=0 \
-    || fail "doctor --storage must succeed at a zero threshold"
-  grep -qE 'warn.*Homebrew cache.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
-    || fail "a Homebrew cache above threshold must warn and name the threshold"
-  grep -qE 'warn.*pnpm stores total.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
-    || fail "a pnpm store total above threshold must warn and name the threshold"
-  grep -qE 'warn.*npm cache via.*above the 0 GiB threshold' "$storage_fixture/warn-output" \
-    || fail "an npm cache above threshold must warn and name the threshold"
-
-  # A FAILED measurement is never healthy: broken du on the Homebrew cache must
-  # not produce ok, and a partial pnpm total must not be judged at all.
-  run_storage_doctor "$storage_fixture/du-fail-output" DU_FAIL_GLOB="brew cache" \
-    || fail "doctor --storage must survive a failed du"
-  grep -qF 'Homebrew cache: size unavailable' "$storage_fixture/du-fail-output" \
-    || fail "a failed Homebrew measurement must be reported as unavailable"
-  assert_not_contains 'ok    Homebrew cache' "$storage_fixture/du-fail-output" \
-    "a failed Homebrew measurement was reported as healthy"
-  run_storage_doctor "$storage_fixture/partial-output" DU_FAIL_GLOB="v10" \
-    || fail "doctor --storage must survive a partial pnpm measurement"
-  grep -qF 'pnpm store total incomplete' "$storage_fixture/partial-output" \
-    || fail "a partial pnpm total must be reported incomplete, threshold unevaluated"
-  assert_not_contains 'ok    pnpm stores total' "$storage_fixture/partial-output" \
-    "a partial pnpm total was reported as complete and healthy"
-
-  # A configured npm cache path that does not exist yet is a valid zero-state,
-  # distinct from a failed query.
-  run_storage_doctor "$storage_fixture/npm-uncreated-output" NPM_CACHE_MISSING=1 \
-    || fail "doctor --storage must survive an uncreated npm cache path"
-  grep -qE 'npm cache via PATH npm .*uncreated-npm-cache\): not created yet' \
-    "$storage_fixture/npm-uncreated-output" \
-    || fail "a configured-but-uncreated npm cache must be reported, not dropped"
-
-  # Discovery does not depend on the launcher: with the selected pnpm
-  # unavailable offline, the known store roots are still found and sized.
-  mkdir -p "$storage_home/Library/pnpm/store/v7"
-  dd if=/dev/urandom of="$storage_home/Library/pnpm/store/v7/pkg.blob" bs=1024 count=512 >/dev/null 2>&1
-  run_storage_doctor "$storage_fixture/offline-output" PNPM_STORE_PATH_FAIL=1 \
-    || fail "doctor --storage must survive an offline-unavailable pnpm"
-  grep -qF 'selected-for-this-directory store: unavailable' "$storage_fixture/offline-output" \
-    || fail "an offline-unavailable selection must be named, not silently absent"
-  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/offline-output" \
-    || fail "known store roots must be sized even when pnpm cannot answer"
-
-  # pnpm removed entirely, stores left behind: still found and sized.
-  storage_nopnpm_bin="$storage_fixture/nopnpm-bin"
-  mkdir -p "$storage_nopnpm_bin"
-  for storage_tool in brew npm mise du; do
-    ln -s "$storage_bin/$storage_tool" "$storage_nopnpm_bin/$storage_tool"
-  done
-  : >"$storage_log"
-  env HOME="$storage_home" PATH="$storage_nopnpm_bin:/usr/bin:/bin" \
-    GROUNDWORK_TEST_LOG="$storage_log" \
-    /bin/bash home/dot_local/bin/executable_groundwork-doctor --storage \
-    >"$storage_fixture/nopnpm-output" 2>&1 \
-    || fail "doctor --storage must succeed with pnpm removed"
-  grep -qF 'pnpm not installed; known store roots are still sized' "$storage_fixture/nopnpm-output" \
-    || fail "a removed pnpm must not hide the stores it left behind"
-  grep -qE 'pnpm store v7 \(other generation\): [0-9.]+ KiB' "$storage_fixture/nopnpm-output" \
-    || fail "stores that outlived pnpm must still be sized"
-
-  # Storage never runs in the default doctor: du over VM bundles and simulator
-  # trees can take minutes, and the routine health check must stay quick.
-  : >"$storage_log"
-  env HOME="$storage_home" PATH="$storage_bin:/usr/bin:/bin" \
-    GROUNDWORK_TEST_LOG="$storage_log" \
-    /bin/bash home/dot_local/bin/executable_groundwork-doctor \
-    >"$storage_fixture/default-output" 2>&1 \
-    || fail "the default doctor run must succeed"
-  assert_not_contains '== Storage ==' "$storage_fixture/default-output" \
-    "the default doctor ran the storage section"
-  grep -qF -- '--storage for the (slower)' "$storage_fixture/default-output" \
-    || fail "the default doctor must point at the opt-in storage report"
-
-  check "shell self-reload preserves background jobs"
-  # BEHAVIORAL, not a source grep. The guard used "$(jobs)", which forks — and a
-  # forked child has no job table, so the test was ALWAYS true and every reload
-  # exec'd straight through running background jobs. Source matching cannot
-  # catch that class of bug; only running the real hook with a real job can.
-  # The function under test is EXTRACTED FROM THE RENDERED TEMPLATE, so this
-  # exercises the shipped implementation rather than a copy of it.
-  if ! command -v zsh >/dev/null 2>&1; then
-    skip_current_check zsh-missing "zsh is required to run the self-reload hook"
-  else
-    reload_dir="$out_dir/shell-reload"
-    mkdir -p "$reload_dir"
-    render darwin false arm64 home/dot_zshrc.tmpl "$reload_dir/rendered-zshrc"
-    # The hook plus its module gate; nothing else from the rendered file runs.
-    sed -n '/^zmodload -F zsh\/stat b:zstat/,/^fi$/p' "$reload_dir/rendered-zshrc" \
-      >"$reload_dir/hook.zsh"
-    grep -qF '_groundwork_config_refresh_precmd' "$reload_dir/hook.zsh" \
-      || fail "could not extract the self-reload hook from the rendered .zshrc"
-    cat >"$reload_dir/drive.zsh" <<'ZSH'
-set -e
-ZDOTDIR="$1"; export ZDOTDIR
-: >"$ZDOTDIR/.zshrc"
-source "$2"
-sleep 30 &
-job_pid=$!
-print -r -- "$job_pid" >"$ZDOTDIR/job.pid"
-# Make the config look rewritten, exactly as `chezmoi apply` would.
-sleep 1
-: >"$ZDOTDIR/.zshrc"
-# If the guard is broken this exec's and the marker below is never written.
-_groundwork_config_refresh_precmd
-print -r -- held >"$ZDOTDIR/outcome"
-kill "$job_pid" 2>/dev/null || true
-ZSH
-    reload_home="$reload_dir/home"
-    mkdir -p "$reload_home"
-    rm -f "$reload_home/outcome" "$reload_home/job.pid"
-    zsh -f "$reload_dir/drive.zsh" "$reload_home" "$reload_dir/hook.zsh" \
-      </dev/null >"$reload_dir/drive.out" 2>&1 || true
-    [[ -f "$reload_home/outcome" ]] \
-      || fail "the self-reload hook exec'd while a background job was running, replacing the shell out from under it"
-    grep -qxF held "$reload_home/outcome" \
-      || fail "the self-reload hook did not hold off while a background job was running"
-    # ...and with no jobs it must still actually reload, or the guard is just off.
-    cat >"$reload_dir/drive-clean.zsh" <<'ZSH'
-set -e
-ZDOTDIR="$1"; export ZDOTDIR
-: >"$ZDOTDIR/.zshrc"
-source "$2"
-sleep 1
-: >"$ZDOTDIR/.zshrc"
-_groundwork_config_refresh_precmd
-print -r -- "did-not-reload" >"$ZDOTDIR/outcome"
-ZSH
-    reload_clean="$reload_dir/clean"
-    mkdir -p "$reload_clean"
-    SHELL="$(command -v zsh)" zsh -f "$reload_dir/drive-clean.zsh" \
-      "$reload_clean" "$reload_dir/hook.zsh" </dev/null >"$reload_dir/clean.out" 2>&1 || true
-    if [[ -f "$reload_clean/outcome" ]]; then
-      fail "the self-reload hook never reloads, so the job guard is masking a dead feature"
-    fi
-    grep -qF 'shell config updated' "$reload_dir/clean.out" \
-      || fail "the self-reload hook did not announce the reload it performed"
-  fi
-
-  check "update-all migration notice"
-  migration_home="$out_dir/update-all-migration-home"
-  migration_flag="$migration_home/.local/state/groundwork/update-all-migration-pending"
-  mkdir -p "$migration_home"
-  HOME="$migration_home" /bin/bash home/run_once_after_97-package-maintenance-notice.sh \
-    >"$out_dir/package-maintenance-migration-notice"
-  grep -qF 'update-all now includes automatic package-manager maintenance' \
-    "$out_dir/package-maintenance-migration-notice"
-  grep -qF 'Whole pnpm store generations remain' \
-    "$out_dir/package-maintenance-migration-notice"
-  assert_not_contains 'Docker data remain owner-confirmed' \
-    "$out_dir/package-maintenance-migration-notice" \
-    "the package-maintenance notice retained the obsolete Docker contract"
-  HOME="$migration_home" /bin/bash home/run_once_after_98-docker-scratch-maintenance-notice.sh \
-    >"$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'update-all now includes automatic Docker scratch maintenance' \
-    "$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'groundwork-doctor --docker' "$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'groundwork-docker-cache-tidy' "$out_dir/docker-maintenance-migration-notice"
-  grep -qF -- '--rm-after' "$out_dir/docker-maintenance-migration-notice"
-  grep -qF 'scripts/verify-docker-image' "$out_dir/docker-maintenance-migration-notice"
-  cat >"$migration_home/.zshrc" <<'EOF'
-update-all() {
-  echo old
-}
-EOF
-  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
-    >"$out_dir/update-all-migration-notice"
-  grep -qF 'moved update-all from an in-memory shell function' "$out_dir/update-all-migration-notice"
-  grep -qF "Run \`exec zsh\` once" "$out_dir/update-all-migration-notice"
-  test -f "$migration_flag"
-  # The end-of-apply reminder repeats the one required action after Homebrew
-  # output has scrolled the first notice away, then clears the flag so it
-  # never repeats.
-  # A noninteractive apply (piped/CI) cannot deliver the reminder to anyone, so
-  # it must print nothing and leave the flag pending for the next interactive run.
-  HOME="$migration_home" /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-noninteractive"
-  test ! -s "$out_dir/update-all-migration-noninteractive" \
-    || fail "the migration reminder printed to a non-terminal"
-  test -f "$migration_flag" \
-    || fail "a noninteractive apply consumed the migration reminder"
-  # Interactive: shown, then the flag is cleared so it never repeats.
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-reminder"
-  grep -qF 'one step left' "$out_dir/update-all-migration-reminder"
-  grep -qF 'exec zsh' "$out_dir/update-all-migration-reminder"
-  test ! -e "$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-reminder-repeat"
-  test ! -s "$out_dir/update-all-migration-reminder-repeat"
-  # Color keys on the run-wide signal update-all exports, not on a per-stage
-  # TTY probe: with GROUNDWORK_COLOR=1 the reminder emits ANSI even though
-  # stdout is a file here; with it 0 (or NO_COLOR and no signal) it stays plain.
-  reminder_esc="$(printf '\033')"
-  : >"$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=1 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-color-on"
-  grep -qF "${reminder_esc}[1;33m" "$out_dir/update-all-migration-color-on" \
-    || fail "the migration reminder must emit color when GROUNDWORK_COLOR=1, even behind a capture"
-  : >"$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 GROUNDWORK_COLOR=0 \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-color-off"
-  grep -qF 'one step left' "$out_dir/update-all-migration-color-off"
-  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-color-off" \
-    "the migration reminder emitted color although GROUNDWORK_COLOR=0"
-  : >"$migration_flag"
-  HOME="$migration_home" GROUNDWORK_REMINDER_ASSUME_TTY=1 NO_COLOR=1 GROUNDWORK_COLOR='' \
-    /bin/bash home/run_after_98-update-all-migration-reminder.sh \
-    >"$out_dir/update-all-migration-no-color"
-  assert_not_contains "$reminder_esc" "$out_dir/update-all-migration-no-color" \
-    "the migration reminder emitted color although NO_COLOR was set and no signal decided otherwise"
-  printf '# fresh install has no old function\n' >"$migration_home/.zshrc"
-  HOME="$migration_home" /bin/bash home/run_once_before_07-update-all-command-migration.sh \
-    >"$out_dir/update-all-fresh-notice"
-  test ! -s "$out_dir/update-all-fresh-notice"
-  test ! -e "$migration_flag"
-
 }
 
 validate_static_configuration() {
@@ -10488,12 +10797,34 @@ PYTHON
     || fail "a fresh personal install must seed personal-current without another prompt"
   grep -qF 'release_posture = "current"' <<<"$preset_out" \
     || fail "a fresh install must default to stable/current release posture"
+  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
+    || fail "a fresh install must use the personal role"
   preset_out="$(_profile_render '{"work":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
-    || fail "fresh work profile did not render"
-  grep -qF 'profile_preset = "work-managed"' <<<"$preset_out" \
-    || fail "a fresh work install must seed work-managed from the work answer"
+    || fail "a stored work flag must still render"
+  grep -qF 'profile_preset = "personal-current"' <<<"$preset_out" \
+    || fail "a stored work flag must seed the common personal-current profile"
+  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
+    || fail "a stored work flag must not select a managed role"
   grep -qF 'release_posture = "current"' <<<"$preset_out" \
-    || fail "a fresh work install must default to stable/current release posture"
+    || fail "a stored work flag must keep the stable/current release posture"
+  grep -qF 'personal_apps = true' <<<"$preset_out" \
+    || fail "a stored work flag must keep the common personal-apps setup"
+  grep -qF 'work_extensions = false' <<<"$preset_out" \
+    || fail "a stored work flag must not enable the old infrastructure-extension seed"
+  grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' <<<"$preset_out" \
+    || fail "a stored work flag must record the one-line retirement notice"
+  grep -qF 'work = false' <<<"$preset_out" \
+    || fail "a stored work flag must be written back as false once migrated"
+  ! grep -qF 'work = true' <<<"$preset_out" \
+    || fail "a migrated config must not keep work = true"
+  preset_out="$(_profile_render '{"work":false,"personal_apps":false,"work_extensions":true,"git_identity":"work","chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
+    || fail "a migrated config must still render"
+  grep -qF 'personal_apps = false' <<<"$preset_out" \
+    || fail "a migrated config must keep an explicit personal_apps choice"
+  grep -qF 'work_extensions = true' <<<"$preset_out" \
+    || fail "a migrated config must keep an explicit work_extensions choice"
+  ! grep -qF 'Retired work-managed setting ignored' <<<"$preset_out" \
+    || fail "a migrated config must not repeat the retirement notice"
   preset_out="$(_profile_render '{"work":false,"profile_preset":"personal-preview","release_posture":"preview","xcode":true,"beta":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
     || fail "stored preview preferences did not render"
   grep -qF 'profile_preset = "personal-preview"' <<<"$preset_out" \
@@ -10784,8 +11115,8 @@ KRXS
     || fail "groundwork-configure must expose independent posture/role and dependent Xcode beta settings"
   grep -qE '^fields_kind=\(posture role multiplexer bool docker ' "$gc_bin" \
     || fail "release posture, environment role, terminal multiplexer, and Xcode beta must use the matching guarded field types"
-  grep -qE '^role_values=\(personal managed disposable\)$' "$gc_bin" \
-    || fail "groundwork-configure must keep every supported environment role reachable"
+  grep -qE '^role_values=\(personal disposable\)$' "$gc_bin" \
+    || fail "groundwork-configure must offer personal and disposable, and no managed role"
   grep -qF 'pending_origin=()' "$gc_bin" \
     || fail "groundwork-configure must distinguish user and dependency-created pending changes"
   assert_no_matches "profile_preset is bootstrap history, not a live settings master" \
@@ -10995,7 +11326,7 @@ EOF
     }
     # Accept: only posture moves. Preset and independently stored role survive.
     gc_focus_accept="$gc_focus/accept"
-    write_gc_focus_config "$gc_focus_accept" current false false managed
+    write_gc_focus_config "$gc_focus_accept" current false false disposable
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_accept")"
     await_gc_output "$gc_focus_sock" "$gc_focus_accept/out" \
       'Preview the dotfiles this would change?' 1 \
@@ -11013,7 +11344,7 @@ EOF
       "focused release-posture receipt included an unselected independent field"
     grep -qF 'release_posture = "preview"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "accepted focused transaction did not persist preview posture"
-    grep -qF 'environment_role = "managed"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
+    grep -qF 'environment_role = "disposable"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "focused posture change rewrote the independent environment role"
     grep -qF 'profile_preset = "personal-current"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "focused posture change rewrote the bootstrap preset history"
@@ -11025,15 +11356,15 @@ EOF
     )"
     render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl \
       "$gc_focus_accept/Brewfile.browser" false false false false bitwarden \
-      personal-current managed "$gc_focus_accept_posture"
-    grep -qx 'cask "google-chrome"' "$gc_focus_accept/Brewfile.browser" \
-      || fail "accepted preview posture did not keep Chrome stable for the immediate apply"
+      personal-current disposable "$gc_focus_accept_posture"
+    grep -qx 'cask "brave-browser"' "$gc_focus_accept/Brewfile.browser" \
+      || fail "accepted preview posture did not keep Brave for the immediate apply"
     assert_not_contains 'google-chrome@beta' "$gc_focus_accept/Brewfile.browser" \
       "accepted preview posture selected Chrome Beta"
 
     # Already-active posture is a true no-op: no receipt, preview, or apply.
     gc_focus_noop="$gc_focus/noop"
-    write_gc_focus_config "$gc_focus_noop" preview false false managed
+    write_gc_focus_config "$gc_focus_noop" preview false false disposable
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_noop")"
     await_gc_output "$gc_focus_sock" "$gc_focus_noop/out" 'No changes to apply.' 1 \
       "focused no-op transaction did not finish within ten seconds"
@@ -11286,9 +11617,9 @@ EOF
       "role-change transaction did not reach the settings menu within ten seconds"
     tmux -L "$gc_focus_sock" send-keys -t 0 "$gc_role_index" Enter
     await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
-      'Choose 1-3 (Enter keeps current)' 1 \
+      'Choose 1-2 (Enter keeps current)' 1 \
       "role-change transaction did not reach the role choice within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 3 Enter
+    tmux -L "$gc_focus_sock" send-keys -t 0 2 Enter
     await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
       'Choose a setting to change' 2 \
       "role-change transaction did not return to the settings menu within ten seconds"
@@ -11958,6 +12289,73 @@ validate_static_runtime() {
   grep -qxF 'switch' "$prompt_fixture/switch-out" \
     || fail "an answer typed on the controlling terminal must win over the default"
 
+  # Credentialed URLs (origin or GROUNDWORK_REPO_URL) must never be printed.
+  redact_fixture="$out_dir/redact-fixture"
+  mkdir -p "$redact_fixture/bin" "$redact_fixture/checkout/.git"
+  redact_secret="s3$(printf 'cr%s' 'et')$$-$(date +%s)"
+  cat >"$redact_fixture/bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"remote get-url origin"* ]]; then
+  printf '%s\n' "$STUB_ORIGIN"
+  exit 0
+fi
+[[ -z "${STUB_READABLE:-}" ]] || exit 0
+exit 1
+SH
+  chmod +x "$redact_fixture/bin/git"
+  # Mismatched origin carrying userinfo, query and fragment.
+  set +e
+  env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo STUB_READABLE=1 \
+    GROUNDWORK_DIR="$redact_fixture/checkout" \
+    GROUNDWORK_REPO_URL="https://deploy:${redact_secret}-repo@github.com/example/wanted.git?t=${redact_secret}-q#${redact_secret}-f" \
+    STUB_ORIGIN="https://deploy:${redact_secret}-origin@github.com/example/other.git?t=${redact_secret}-oq" \
+    /bin/bash bootstrap-mac.sh >"$redact_fixture/mismatch-out" 2>"$redact_fixture/mismatch-err" </dev/null
+  redact_status=$?
+  set -e
+  [[ "$redact_status" -ne 0 ]] || fail "a mismatched origin must stop the bootstrap"
+  if grep -qF "$redact_secret" "$redact_fixture/mismatch-out" "$redact_fixture/mismatch-err"; then
+    fail "bootstrap printed credentials from an origin or repo URL"
+  fi
+  grep -qF "github.com/example/other.git" "$redact_fixture/mismatch-err" \
+    || fail "the origin mismatch message must still name the existing origin"
+  grep -qF "github.com/example/wanted.git" "$redact_fixture/mismatch-err" \
+    || fail "the origin mismatch message must still name the expected repo"
+  # Unreadable repo: git ls-remote fails, so the access message prints the URL.
+  rm -rf "$redact_fixture/checkout"
+  set +e
+  env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo \
+    GROUNDWORK_REPO_URL="ssh://deploy:${redact_secret}-repo@github.com/example/wanted.git" \
+    /bin/bash bootstrap-mac.sh >"$redact_fixture/access-out" 2>"$redact_fixture/access-err" </dev/null
+  set -e
+  if grep -qF "$redact_secret" "$redact_fixture/access-out" "$redact_fixture/access-err"; then
+    fail "bootstrap printed credentials while reporting repo access"
+  fi
+  grep -qF "github.com/example/wanted.git" "$redact_fixture/access-err" \
+    || fail "the repo access message must still name the repo"
+  # Unencoded "/" in a password, a token after a path "@", and token-shaped
+  # path segments must be masked; a plain ghp_-prefixed name must survive.
+  redact_tok="$(printf 'gh%s' 'p_')$(printf 'A%.0s' {1..36})$$"
+  redact_pat="$(printf 'github%s' '_pat_')$(printf 'B%.0s' {1..22})$$"
+  for redact_url_case in \
+    "https://u:pa/${redact_secret}x@example.com/o/r.git|example.com/o/r.git" \
+    "u:pa/${redact_secret}x@example.com:o/r.git|example.com:o/r.git" \
+    "https://example.com/o/r@${redact_tok}|https://" \
+    "https://example.com/o/${redact_tok}/r.git|example.com/o/***/r.git" \
+    "https://example.com/o/${redact_pat}/r.git|example.com/o/***/r.git" \
+    "https://example.com/o/ghp_utils.git|example.com/o/ghp_utils.git"; do
+    set +e
+    env PATH="$redact_fixture/bin:/usr/bin:/bin" GROUNDWORK_BOOTSTRAP_SELFTEST=repo \
+      GROUNDWORK_REPO_URL="${redact_url_case%%|*}" \
+      /bin/bash bootstrap-mac.sh >"$redact_fixture/path-out" 2>"$redact_fixture/path-err" </dev/null
+    set -e
+    if grep -qF -e "$redact_secret" -e "$redact_tok" -e "$redact_pat" -e "pa/" \
+      "$redact_fixture/path-out" "$redact_fixture/path-err"; then
+      fail "bootstrap printed a secret carried in a URL: ${redact_url_case%%|*}"
+    fi
+    grep -qF -e "${redact_url_case##*|}" "$redact_fixture/path-err" \
+      || fail "the repo access message lost its useful part for a secret-bearing URL"
+  done
+
   # groundwork-brew-repair keeps the same convention around its [y/N] gate.
   cat >"$prompt_fixture/bin/brew" <<'SH'
 #!/usr/bin/env bash
@@ -12224,15 +12622,17 @@ EOF
 
   check "Homebrew cask policy (rendered installer behavior)"
   # The NETWORK audit (scripts/audit-brew-casks) owns upstream cask metadata.
-  # THIS owns profile resolution and the bounded installer, offline and
-  # deterministically. Every desktop posture selects Chrome stable only.
-  grep -qxF 'google-chrome' home/dot_local/share/groundwork/vendor-updater-casks.txt \
-    || fail "Chrome stable must remain a declared vendor-updater exception"
-  assert_not_contains 'google-chrome@beta' home/dot_local/share/groundwork/vendor-updater-casks.txt \
-    "Chrome Beta is still a declared vendor-updater exception"
+  # THIS owns profile resolution offline and deterministically. Every desktop
+  # posture selects Brave. Sparkle owns later updates, so Brave is declared
+  # vendor-covered even though its cask has a checksum.
+  grep -qxF 'brave-browser' home/dot_local/share/groundwork/vendor-updater-casks.txt \
+    || fail "Brave must remain a declared vendor-updater"
+  assert_not_contains 'google-chrome' home/dot_local/share/groundwork/vendor-updater-casks.txt \
+    "Chrome is still a declared vendor-updater"
   browser_current="$out_dir/browser-current"
   browser_preview="$out_dir/browser-preview"
   browser_managed="$out_dir/browser-managed"
+  browser_xcode="$out_dir/browser-xcode"
   browser_headless="$out_dir/browser-headless"
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_current" \
     false false false false bitwarden personal-current personal current
@@ -12240,35 +12640,38 @@ EOF
     false false false false bitwarden personal-preview personal preview
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_managed" \
     true false false false 1password work-managed managed current
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_xcode" \
+    false true false false bitwarden personal-current personal current
   render darwin true arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_headless" \
     false false false false none personal-current personal current
 
-  grep -qxF 'cask "google-chrome"' "$browser_current" \
-    || fail "Personal Current must select Chrome stable"
+  grep -qxF 'cask "brave-browser"' "$browser_current" \
+    || fail "Personal Current must select Brave"
   diff -u "$browser_current" "$browser_preview" \
-    || fail "Personal Preview changed the managed browser away from Chrome stable"
+    || fail "Personal Preview changed the managed browser away from Brave"
   diff -u "$browser_current" "$browser_managed" \
-    || fail "Work Managed changed the managed browser away from Chrome stable"
-  assert_not_contains 'google-chrome@beta' "$browser_current" \
-    "a desktop browser manifest selected Chrome Beta"
-  assert_not_contains 'google-chrome@beta' "$browser_preview" \
-    "Personal Preview selected Chrome Beta"
-  assert_not_contains 'google-chrome@beta' "$browser_managed" \
-    "Work Managed selected Chrome Beta"
+    || fail "a retired work-managed config changed the managed browser away from Brave"
+  diff -u "$browser_current" "$browser_xcode" \
+    || fail "Xcode changed the managed browser away from Brave"
+  assert_not_contains 'google-chrome' "$browser_current" \
+    "a desktop browser manifest selected Chrome"
+  assert_not_contains 'google-chrome' "$browser_preview" \
+    "Personal Preview selected Chrome"
+  assert_not_contains 'google-chrome' "$browser_managed" \
+    "a retired work-managed config selected Chrome"
   assert_not_contains '^cask ' "$browser_headless" \
     "a headless Mac selected a GUI browser"
 
-  browser_extensions="$out_dir/browser-extensions"
-  render darwin false arm64 home/dot_local/bin/executable_browser-extensions.tmpl "$browser_extensions" \
-    false false false false bitwarden personal-current personal current
-  /bin/bash -n "$browser_extensions"
-  browser_extensions_out="$(GROUNDWORK_BROWSER_EXTENSIONS_CATALOG="$PWD/home/dot_local/share/groundwork/browser-extensions.tsv" \
-    /bin/bash "$browser_extensions")"
-  grep -qF 'chrome' <<<"$browser_extensions_out" \
-    || fail "the browser extension helper must continue to list Chrome links"
+  /bin/bash -n home/dot_local/bin/executable_browser-extensions
+  browser_extensions_out="$(GROUNDWORK_BRAVE_SPEC="$PWD/core/browser/brave.json" \
+    /bin/bash home/dot_local/bin/executable_browser-extensions)"
+  grep -qF 'brave' <<<"$browser_extensions_out" \
+    || fail "the browser extension helper must list the Brave offer"
+  grep -qF 'nngceckbapebfimnlniiiahkandclblb' <<<"$browser_extensions_out" \
+    || fail "the browser extension helper must list the Bitwarden id from brave.json"
   browser_extensions_rc=0
-  GROUNDWORK_BROWSER_EXTENSIONS_CATALOG="$PWD/home/dot_local/share/groundwork/browser-extensions.tsv" \
-    /bin/bash "$browser_extensions" --browser unsupported >/dev/null 2>&1 || browser_extensions_rc=$?
+  GROUNDWORK_BRAVE_SPEC="$PWD/core/browser/brave.json" \
+    /bin/bash home/dot_local/bin/executable_browser-extensions --browser chrome >/dev/null 2>&1 || browser_extensions_rc=$?
   [[ "$browser_extensions_rc" -eq 2 ]] \
     || fail "the browser extension helper must reject an unsupported browser target"
 
@@ -12322,26 +12725,22 @@ EOF
   # The user's own cask options are preserved, never replaced.
   grep -qF "user_cask_opts=\"\${HOMEBREW_CASK_OPTS-}\"" "$chrome_current" \
     || fail "the user's HOMEBREW_CASK_OPTS must be preserved, not overwritten"
-  grep -qF "HOMEBREW_CASK_OPTS=\"\$user_cask_opts\" brew install --cask \"\$browser_cask\"" "$chrome_current" \
-    || fail "the Chrome exception must run under the USER's cask options"
-  # Ordering: a failed safe lane must never reach the unsafe exception lane.
-  chrome_exit_line="$(grep -n "exit \"\$bundle_status\"" "$chrome_current" | head -n 1 | cut -d: -f1)"
-  chrome_install_line="$(grep -nF "brew install --cask \"\$browser_cask\"" "$chrome_current" | head -n 1 | cut -d: -f1)"
-  ((chrome_exit_line < chrome_install_line)) \
-    || fail "google-chrome is installed BEFORE the bundle-failure exit — a failed safe lane must not trigger the unsafe lane"
-  # A conflicting user policy is a real failure, not a silent skip that never retries.
-  grep -qF 'this apply is incomplete' "$chrome_current" \
-    || fail "a user --require-sha policy conflict must fail explicitly, not disappear"
-  grep -qF 'unsupported browser manifest entry' "$chrome_current" \
-    || fail "the browser installer must reject any manifest entry outside its exact allowlist"
+  assert_not_contains 'browser_cask' "$chrome_current" \
+    "the retired Chrome exception lane is still installing a browser cask"
+  assert_not_contains 'this apply is incomplete' "$chrome_current" \
+    "the retired Chrome checksum conflict is still rendered"
+  assert_not_contains 'unsupported browser manifest entry' "$chrome_current" \
+    "the retired browser-manifest parser is still rendered"
 
-  # Chrome exceptions must never enter the checksum-safe Brewfile.
+  # Brave is in the checksum-safe Brewfile. Chrome is not.
   for chrome_profile in 'false false' 'true false' 'false true'; do
     read -r chrome_work chrome_game <<<"$chrome_profile"
     render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl \
       "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" "$chrome_work"
+    grep -qxF 'cask "brave-browser"' "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" \
+      || fail "desktop Brewfile omitted Brave (work=$chrome_work)"
     assert_not_contains '^cask "google-chrome(@beta)?"' "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" \
-      "a Chrome exception is in the checksum-safe Brewfile (work=$chrome_work)"
+      "Chrome is in the checksum-safe Brewfile (work=$chrome_work)"
   done
 
   # The retired browser contract is repository-wide and red-proven against a
@@ -16211,8 +16610,15 @@ shared = next(surface for surface in inventory["surfaces"] if surface["id"] == "
 if shared.get("classification") != "built-in" or shared.get("manager") != "renovate-config":
     raise SystemExit("the versioned shared preset must remain assigned to Renovate")
 renovate_config = json.loads((root / "renovate.json").read_text(encoding="utf-8"))
-if renovate_config.get("extends") != ["github>jasondockery/renovate-config#1.1.1"]:
-    raise SystemExit("extends must stay on preset 1.1.1")
+if renovate_config.get("extends") != [
+    "github>jasondockery/renovate-config#1.2.0",
+    "github>jasondockery/renovate-config:groundwork-core#1.2.0",
+]:
+    raise SystemExit("extends must stay on preset 1.2.0 plus its groundwork-core named preset")
+if "git-submodules" in renovate_config or any(
+    "git-submodules" in rule.get("matchManagers", []) for rule in renovate_config.get("packageRules", [])
+):
+    raise SystemExit("the core submodule rules live in the groundwork-core preset, not this repo")
 if renovate_config.get("ignorePaths") != [".nvmrc", "mise.toml"]:
     raise SystemExit("Renovate must ignore derived Node mirrors and read the managed mise config")
 if "minimumReleaseAge" in renovate_config:
@@ -16305,7 +16711,7 @@ if python_versioning_rules != [{
 }]:
     raise SystemExit("the Python request must stay on semver-partial so mise can float patches inside the line")
 if python_pin_rules != [{
-    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.15\", \"3.12\"] must stay pinned. Renovate's mise manager (44.23.0) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
+    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.15\", \"3.12\"] must stay pinned. Renovate's mise manager (44.173.1) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
     "matchManagers": ["mise"],
     "matchDepNames": ["python"],
     "matchFileNames": ["home/dot_config/mise/config.toml"],
@@ -16314,7 +16720,7 @@ if python_pin_rules != [{
 }]:
     raise SystemExit("the Python 3.12 pin rule must stay exact and must not add local line-bump approval")
 if any("dependencyDashboardApproval" in rule for rule in python_rules):
-    raise SystemExit("Python line-bump approval belongs to preset 1.1.1, not this repo")
+    raise SystemExit("Python line-bump approval belongs to the shared preset, not this repo")
 gitleaks_age_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
@@ -16359,6 +16765,7 @@ non_major_rules = [
 if len(non_major_rules) != 1 or non_major_rules[0] != {
     "groupName": "non-major dependencies",
     "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+    "matchDepNames": ["!core"],
 }:
     raise SystemExit("ordinary minor, patch, digest, and pin maintenance must remain enabled and grouped")
 if "vulnerabilityAlerts" in renovate_config:
@@ -16422,6 +16829,7 @@ SH
   test -f home/dot_config/lazygit/config.yml
   # Discovery stays dynamic: the managed config configures ROOTS, never names.
   grep -qF 'root = {{ .code_dir }}' home/dot_config/groundwork/repos.conf.tmpl
+  grep -qxF 'optional_root = ~/worktrees' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'max_depth' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'include_worktrees' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'cache_ttl_seconds' home/dot_config/groundwork/repos.conf.tmpl
@@ -16630,6 +17038,62 @@ EOF
   assert_no_matches "symlink-loop paths leaked past canonical dedupe" grep -n '/loop/back/' "$repos_dir/list-out"
   if [[ -n "$(awk -F'\t' '{print $1}' "$repos_dir/list-out" | sort | uniq -d)" ]]; then
     fail "groundwork-repos listed a repository more than once"
+  fi
+
+  # The shipped template: with the code directory and ~/worktrees as roots, a
+  # linked worktree at $HOME/worktrees/<repo>/<slug> is listed as wt, and repos
+  # under the code directory are still listed. HOME is the fixture; the
+  # environment is built from scratch.
+  repos_tpl_home="$repos_dir/tpl-home"
+  mkdir -p "$repos_tpl_home/code" "$repos_tpl_home/.config/groundwork" \
+    "$repos_tpl_home/.cache" "$repos_tpl_home/worktrees/tplrepo"
+  repos_tpl_home="$(cd "$repos_tpl_home" && pwd -P)"
+  repos_mk "$repos_tpl_home/code/tplrepo"
+  repos_git -C "$repos_tpl_home/code/tplrepo" worktree add -q -b tpl-lane \
+    "$repos_tpl_home/worktrees/tplrepo/tpl-lane"
+  sed "s|{{ .code_dir }}|$repos_tpl_home/code|" \
+    home/dot_config/groundwork/repos.conf.tmpl \
+    >"$repos_tpl_home/.config/groundwork/repos.conf"
+  env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null NO_COLOR=1 \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --no-cache list \
+    >"$repos_dir/tpl-list"
+  grep -qF "$repos_tpl_home/code/tplrepo"$'\t' "$repos_dir/tpl-list" \
+    || fail "template roots no longer list repos under the code directory"
+  grep -qF "$repos_tpl_home/worktrees/tplrepo/tpl-lane"$'\t'"wt" "$repos_dir/tpl-list" \
+    || fail "template roots do not list a worktree at ~/worktrees/<repo>/<slug>"
+
+  # A fresh HOME with NO ~/worktrees: the optional root is skipped silently,
+  # including by the strict --no-cache form pnpm maintenance uses, while a
+  # missing required root still fails strict discovery.
+  rm -rf "$repos_tpl_home/worktrees"
+  env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null NO_COLOR=1 \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --strict --no-cache list \
+    >"$repos_dir/tpl-strict" \
+    || fail "strict discovery failed when only the optional ~/worktrees root is absent"
+  grep -qF "$repos_tpl_home/code/tplrepo"$'\t' "$repos_dir/tpl-strict" \
+    || fail "strict discovery without ~/worktrees lost the code directory repos"
+  rm -rf "$repos_tpl_home/code"
+  if env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --strict --no-cache list \
+    >/dev/null 2>&1; then
+    fail "strict discovery must still fail when a required root is absent"
+  fi
+  # A path listed as both root and optional_root stays required.
+  printf 'root = %s/worktrees\n' "$repos_tpl_home" \
+    >>"$repos_tpl_home/.config/groundwork/repos.conf"
+  mkdir -p "$repos_tpl_home/code"
+  if env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --strict --no-cache list \
+    >/dev/null 2>&1; then
+    fail "a path configured as both root and optional_root must stay required"
   fi
 
   # Strict live discovery is all-or-nothing. Even when find emits a valid prefix,
@@ -17152,22 +17616,41 @@ EOF
   # together, right here, rather than in separate places that can drift apart.
   grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
     || fail "groundwork-configure must own mutable role/release preferences and preserve existing baseline settings"
-  # Role and posture are stored separately from the preset PRECISELY so they can
-  # diverge (specs/environment-profiles-and-release-posture.md): a managed
-  # machine may take preview posture without becoming personal. Deriving them on
-  # every render silently reverted a hand-edited posture, so prove independence.
+  # Role and posture are stored separately from the preset so a disposable
+  # machine can take current posture without becoming personal. A retired
+  # managed role migrates to personal and keeps an independent preview posture.
   interview_role_in="$out_dir/interview-role.toml"
   interview_role_out="$out_dir/interview-role-rendered.toml"
   sed 's/profile_preset = "personal-preview"/profile_preset = "work-managed"/' "$interview_in" >"$interview_role_in"
-  printf '    environment_role = "managed"\n    release_posture = "preview"\n' >>"$interview_role_in"
+  printf '    environment_role = "managed"\n    release_posture = "preview"\n    personal_apps = false\n    work_extensions = true\n' >>"$interview_role_in"
   chezmoi --config "$interview_role_in" --source "$repo/home" \
     --persistent-state "$out_dir/interview-role-state.boltdb" --cache "$out_dir/interview-role-cache" \
     init --config-path "$interview_role_out" </dev/null \
-    || fail "the chezmoi interview could not regenerate a divergent role/posture config"
-  grep -qF 'environment_role = "managed"' "$interview_role_out" \
-    || fail "a stored environment_role must survive regeneration, not be re-derived from the preset"
+    || fail "the chezmoi interview failed on a retired work-managed config"
+  grep -qF 'environment_role = "personal"' "$interview_role_out" \
+    || fail "a stored managed role must migrate to personal"
+  grep -qF 'profile_preset = "personal-current"' "$interview_role_out" \
+    || fail "a stored work-managed preset must migrate to personal-current"
   grep -qF 'release_posture = "preview"' "$interview_role_out" \
-    || fail "a stored release_posture must survive regeneration so it can diverge from the preset"
+    || fail "migrating a retired role must keep an independent preview posture"
+  grep -qF 'personal_apps = true' "$interview_role_out" \
+    || fail "the retired work seed must turn personal apps back on"
+  grep -qF 'work_extensions = false' "$interview_role_out" \
+    || fail "the retired work seed must turn infrastructure extensions off"
+  grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' "$interview_role_out" \
+    || fail "a retired work-managed config must record the one-line notice"
+  interview_disposable_in="$out_dir/interview-disposable.toml"
+  interview_disposable_out="$out_dir/interview-disposable-rendered.toml"
+  cp "$interview_in" "$interview_disposable_in"
+  printf '    environment_role = "disposable"\n    release_posture = "current"\n' >>"$interview_disposable_in"
+  chezmoi --config "$interview_disposable_in" --source "$repo/home" \
+    --persistent-state "$out_dir/interview-disposable-state.boltdb" --cache "$out_dir/interview-disposable-cache" \
+    init --config-path "$interview_disposable_out" </dev/null \
+    || fail "the chezmoi interview could not regenerate a disposable role"
+  grep -qF 'environment_role = "disposable"' "$interview_disposable_out" \
+    || fail "a stored disposable role must survive regeneration"
+  grep -qF 'release_posture = "current"' "$interview_disposable_out" \
+    || fail "a stored current posture must survive regeneration beside a disposable role"
   interview_posture_in="$out_dir/interview-posture.toml"
   interview_posture_out="$out_dir/interview-posture-rendered.toml"
   cp "$interview_in" "$interview_posture_in"
@@ -17184,7 +17667,7 @@ EOF
   grep -qF 'environment_role = "personal"' "$interview_out" \
     || fail "an unstored environment_role must be seeded from the preset"
   # groundwork-profile must not send a posture-only change through the preset:
-  # that would move environment_role too and turn a managed machine personal.
+  # that would move environment_role too.
   assert_no_matches "groundwork-profile must not route a posture change through profile_preset" \
     rg -n 'Environment profile  ->|set profile_preset' home/dot_local/bin/executable_groundwork-profile.tmpl
   assert_no_matches "groundwork-profile must not tell users to set release_posture through a promptChoice that does not exist" \
@@ -17626,10 +18109,10 @@ EOF
     }
   done
   check "browser, Raycast, and Anybox link workflow"
-  grep -qF 'Chrome is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.' docs/apps.html \
-    || fail "apps guide must give Chrome, Raycast, and Anybox distinct ownership"
-  grep -qF 'Open With → Google Chrome' docs/apps.html \
-    || fail "apps guide must route Raycast Quicklinks through Google Chrome"
+  grep -qF 'Brave is the working surface, Raycast is the launcher, and Anybox is the durable bookmark library.' docs/apps.html \
+    || fail "apps guide must give Brave, Raycast, and Anybox distinct ownership"
+  grep -qF 'Open With → Brave Browser' docs/apps.html \
+    || fail "apps guide must route Raycast Quicklinks through Brave Browser"
   grep -qF 'global <strong>Prefer Existing Tabs</strong> setting' docs/apps.html \
     || fail "apps guide must describe Prefer Existing Tabs as one global Raycast setting"
   grep -qF 'An Anybox Quick Link is detected when its keyword is typed anywhere outside Anybox.' docs/apps.html \
@@ -17642,8 +18125,8 @@ EOF
     || fail "resources guide must present browser bookmark search as a compatibility bridge"
   grep -qF 'Keep its bookmarks bar as a small visual hot cache; Anybox owns the durable library.' README.md \
     || fail "README finish-up checklist must preserve the link ownership model"
-  grep -qF 'Set them to open with Google Chrome' README.md \
-    || fail "README finish-up checklist must route Quicklinks through Google Chrome"
+  grep -qF 'Set them to open with Brave Browser' README.md \
+    || fail "README finish-up checklist must route Quicklinks through Brave Browser"
   grep -qF 'brew uninstall --cask google-chrome@beta' docs/apps.html \
     || fail "apps guide must document the manual Chrome Beta removal command"
   assert_no_matches "stale Anybox alias, profile, or Quick Link guidance found" \
@@ -17699,9 +18182,66 @@ PY
 
   check "supply-chain guardrails"
   grep -qE '^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$' Dockerfile
+  # The apply layer's cache key is the chezmoi source, not the whole context.
+  # Copying `.` made every docs or script edit rerun a multi-minute apply.
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  grep -qF 'COPY --chown=$USER:$USER .chezmoiroot /opt/groundwork/.chezmoiroot' Dockerfile
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  grep -qF 'COPY --chown=$USER:$USER .chezmoiversion /opt/groundwork/.chezmoiversion' Dockerfile
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  grep -qF 'COPY --chown=$USER:$USER home /opt/groundwork/home' Dockerfile
+  # A source token of "." or "./" copies the whole build context. Whitespace
+  # after the token keeps ".chezmoiroot" a file name.
+  whole_context_copy='^COPY[[:space:]](.*[[:space:]])?\./?[[:space:]]+/opt/groundwork/?$'
+  if grep -Eq "$whole_context_copy" Dockerfile; then
+    echo "Dockerfile must not COPY the whole context into the chezmoi source" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2016 # Dockerfile uses a literal $USER build arg.
+  dockerfile_user_token='$USER'
+  dockerfile_chown="--chown=${dockerfile_user_token}:${dockerfile_user_token}"
+  for whole_context_example in \
+    'COPY ./ /opt/groundwork' \
+    'COPY ./ /opt/groundwork/' \
+    'COPY . /opt/groundwork' \
+    'COPY . /opt/groundwork/' \
+    "COPY ${dockerfile_chown} ./ /opt/groundwork"; do
+    grep -Eq "$whole_context_copy" <<<"$whole_context_example" || {
+      echo "whole-context COPY rejection missed: $whole_context_example" >&2
+      exit 1
+    }
+  done
+  for allowed_copy_example in \
+    "COPY ${dockerfile_chown} .chezmoiroot /opt/groundwork/.chezmoiroot" \
+    "COPY ${dockerfile_chown} home /opt/groundwork/home"; do
+    if grep -Eq "$whole_context_copy" <<<"$allowed_copy_example"; then
+      echo "whole-context COPY rejection matched a file copy: $allowed_copy_example" >&2
+      exit 1
+    fi
+  done
+  dockerfile_before_apply="$(awk '/^RUN chezmoi --source \/opt\/groundwork apply$/ { exit } { print }' Dockerfile)"
+  dockerfile_after_apply="$(awk 'found { print } /^RUN chezmoi --source \/opt\/groundwork apply$/ { found = 1 }' Dockerfile)"
+  if [[ -z "$dockerfile_after_apply" ]]; then
+    echo "Dockerfile must apply chezmoi before copying the smoke scripts" >&2
+    exit 1
+  fi
+  for smoke_copy in \
+    "COPY ${dockerfile_chown} scripts/smoke-docker-image /opt/groundwork/scripts/smoke-docker-image" \
+    "COPY ${dockerfile_chown} scripts/test-developer-tool-visibility /opt/groundwork/scripts/test-developer-tool-visibility" \
+    "COPY ${dockerfile_chown} scripts/.developer-tool-surface-test.zsh /opt/groundwork/scripts/.developer-tool-surface-test.zsh"; do
+    if grep -Fq "$smoke_copy" <<<"$dockerfile_before_apply"; then
+      echo "Dockerfile must not copy a smoke script before chezmoi apply: $smoke_copy" >&2
+      exit 1
+    fi
+    grep -Fq "$smoke_copy" <<<"$dockerfile_after_apply" || {
+      echo "Dockerfile must COPY a smoke script after chezmoi apply: $smoke_copy" >&2
+      exit 1
+    }
+  done
   # Renovate owns dependency updates (renovate.json) through the shared preset; a
   # dependabot.yml would create duplicate PRs, so its absence is the guarded state.
-  grep -q '"github>jasondockery/renovate-config#1.1.1"' renovate.json
+  grep -q '"github>jasondockery/renovate-config#1.2.0"' renovate.json
+  grep -q '"github>jasondockery/renovate-config:groundwork-core#1.2.0"' renovate.json
   grep -Fq 'evaluates routine updates for branch and PR creation on every daily run after the applicable five-day maturity floor' renovate.json
   grep -Fq 'GHCR does not expose a Renovate releaseTimestamp for the Gitleaks tags' renovate.json
   grep -Fq 'Groundwork&apos;s Gitleaks container uses an exact local age-check exception' docs/dependencies.html
@@ -17817,10 +18357,10 @@ PY
       fi
       assert_not_contains '^cask ' "$out_dir/$case_name/Brewfile.browser" "a GUI browser leaked into $case_name"
     else
-      grep -qxF 'cask "google-chrome"' "$out_dir/$case_name/Brewfile.browser" \
-        || fail "$case_name must include Chrome stable"
-      assert_not_contains 'google-chrome@beta' "$out_dir/$case_name/Brewfile.browser" \
-        "$case_name selected Chrome Beta"
+      grep -qxF 'cask "brave-browser"' "$out_dir/$case_name/Brewfile.browser" \
+        || fail "$case_name must include Brave"
+      assert_not_contains 'google-chrome' "$out_dir/$case_name/Brewfile.browser" \
+        "$case_name selected Chrome"
     fi
     # The tap-trust troubleshooting docs name every tap Groundwork adds. That
     # list is exactly one, so any other tap fails closed here rather than
@@ -17867,29 +18407,20 @@ PY
       assert_not_contains 'SSH_AUTH_SOCK' "$out_dir/$case_name/zshrc" "SSH_AUTH_SOCK leaked into $case_name zshrc"
     fi
 
-    # The only Chrome override is PasswordManagerEnabled=false on Stable, and
-    # only on a desktop Mac when a third-party manager is configured. Upstream
-    # leaves the built-in manager on; the write exists so it does not compete
-    # with Bitwarden or 1Password. The darwin first-run backup still records
-    # the Stable key, including when that write is skipped. Headless and Linux
-    # do not write the preference. The Beta domain is never written or backed up.
+    # Brave policy is a configuration profile, not a defaults write. No Chrome
+    # preference is written. The darwin first-run backup still records the old
+    # Stable key so an older backup can restore it. The Beta domain is never
+    # written or backed up.
     chrome_defaults="$out_dir/$case_name/run_onchange_after_30-macos-defaults.sh"
     chrome_backup="$out_dir/$case_name/run_before_05-backup-current-settings.sh"
     manages_chrome=false
     if [[ "$os" == "darwin" && "$headless" == "false" ]]; then
       manages_chrome=true
     fi
-    if [[ "$manages_chrome" == true && "$password_manager" != "none" ]]; then
-      grep -qxF 'defaults write com.google.Chrome PasswordManagerEnabled -bool false' "$chrome_defaults" \
-        || fail "$case_name must disable Stable Chrome's built-in password manager"
-      chrome_domain_writes="$(grep -cE '^defaults write com\.google\.Chrome(\.beta)? ' "$chrome_defaults" || true)"
-      chrome_password_writes="$(grep -cF 'PasswordManagerEnabled -bool false' "$chrome_defaults" || true)"
-      [[ "$chrome_domain_writes" -eq 1 && "$chrome_password_writes" -eq 1 ]] \
-        || fail "$case_name must write only PasswordManagerEnabled on Stable Chrome (domains=$chrome_domain_writes keys=$chrome_password_writes)"
-    else
-      assert_not_contains 'PasswordManagerEnabled' "$chrome_defaults" \
-        "Chrome password-manager override leaked into $case_name"
-    fi
+    assert_not_contains 'defaults write com\.google\.Chrome' "$chrome_defaults" \
+      "a Chrome preference write leaked into $case_name"
+    assert_not_contains 'PasswordManagerEnabled' "$chrome_defaults" \
+      "a browser password-manager defaults write leaked into $case_name"
     assert_not_contains 'com\.google\.Chrome\.beta' "$chrome_defaults" \
       "Chrome Beta preference domain leaked into $case_name"
     assert_not_contains 'com\.google\.Chrome\.beta' "$chrome_backup" \
@@ -17912,18 +18443,24 @@ PY
   check "rendered shell template ShellCheck matrix"
   run_shellcheck "${rendered_shell_scripts[@]}"
 
-  check "rendered work macOS profile"
+  check "rendered retired work flag uses the common Mac setup"
   mkdir -p "$out_dir/darwin-work"
   render darwin false arm64 home/.chezmoiignore "$out_dir/darwin-work/chezmoiignore" true
   render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-work/Brewfile" true
-  assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" "Karabiner was ignored on work macOS"
+  assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" \
+    "Karabiner was ignored for a stored work flag"
   grep -q '^cask "karabiner-elements"$' "$out_dir/darwin-work/Brewfile"
   grep -q '^brew "colima"$' "$out_dir/darwin-work/Brewfile"
+  grep -q '^cask "appcleaner"' "$out_dir/darwin-work/Brewfile" \
+    || fail "a stored work flag dropped the common personal apps"
+  grep -q '^cask "obsidian"' "$out_dir/darwin-work/Brewfile" \
+    || fail "a stored work flag dropped Obsidian from the common Mac setup"
   assert_not_contains '^tap |^(brew|cask) "[^"]*/' "$out_dir/darwin-work/Brewfile" \
-    "a third-party tap entered the work Brewfile — the docs promise Groundwork adds none"
-  assert_not_contains '^cask "docker-desktop"$' "$out_dir/darwin-work/Brewfile" "Docker Desktop leaked into work macOS"
-  assert_not_contains '^cask "appcleaner"' "$out_dir/darwin-work/Brewfile" "AppCleaner leaked into work macOS"
-  assert_not_contains '^mas "Xcode"' "$out_dir/darwin-work/Brewfile" "Xcode leaked into default work macOS"
+    "a third-party tap entered the Brewfile for a stored work flag"
+  assert_not_contains '^cask "docker-desktop"$' "$out_dir/darwin-work/Brewfile" \
+    "Docker Desktop replaced Colima for a stored work flag"
+  assert_not_contains '^mas "Xcode"' "$out_dir/darwin-work/Brewfile" \
+    "Xcode leaked into the default Mac setup"
 
   check "rendered Xcode macOS profile"
   mkdir -p "$out_dir/darwin-no-xcode" "$out_dir/darwin-xcode" "$out_dir/darwin-legacy-no-xcode"
@@ -18436,10 +18973,11 @@ EOF
   render_profile current false false "$profile_dir/xcode-beta" personal personal-current true true
   render_profile current false false "$profile_dir/xcode-beta-inactive" personal personal-current false true
 
-  # The role is derived from the existing `work` answer, never asked twice.
-  # Role is stored, not derived: a bool could not express three roles.
+  # Role is stored, not derived from the retired work flag. A retired managed
+  # role or work-managed preset renders as personal and records the notice.
   grep -q '^role="personal"' "$profile_dir/personal-current"
-  grep -q '^role="managed"' "$profile_dir/managed"
+  grep -q '^role="personal"' "$profile_dir/managed"
+  grep -q '^retired_work_managed=true' "$profile_dir/managed"
   grep -q '^role="disposable"' "$profile_dir/disposable"
   grep -q '^posture="preview"' "$profile_dir/personal-preview"
 
@@ -18468,20 +19006,22 @@ STUB
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Xcode beta        disabled'
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Release posture   current'
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Multiplexer       herdr'
-  profile_out "$profile_dir/managed" show | grep -Fq 'Role              managed'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Role              personal'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Retired work-managed setting ignored; this Mac uses the common setup.'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Bootstrap seed    personal-current'
   profile_out "$profile_dir/disposable" show | grep -Fq 'Role              disposable'
-  # A managed machine must say policy outranks the profile, never imply a bypass.
-  profile_out "$profile_dir/managed" show | grep -Fq 'never works around policy'
+  # Device policy still outranks the profile on every Mac. That is not a role.
+  profile_out "$profile_dir/personal-current" show | grep -Fq 'does not work around it'
   profile_out "$profile_dir/personal-current" show | grep -Fq 'Bootstrap seed    personal-current'
   profile_out "$profile_dir/headless" show | grep -Fq 'no desktop apps, so posture has no effect'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'AI tools (no intentional release delay)'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'release-age floors'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Managed browser   Google Chrome stable'
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Managed browser   Google Chrome stable'
+  profile_out "$profile_dir/personal-current" show | grep -Fq 'Managed browser   Brave'
+  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Managed browser   Brave'
   profile_out "$profile_dir/personal-preview" show | grep -Fq 'Release posture   preview'
   assert_not_contains 'Browser fallback|Google Chrome Beta|google-chrome@beta' "$profile_dir/output" \
     "preview profile still reported a Chrome Beta channel"
-  profile_out "$profile_dir/managed" show | grep -Fq 'Managed browser   Google Chrome stable'
+  profile_out "$profile_dir/managed" show | grep -Fq 'Managed browser   Brave'
   profile_out "$profile_dir/headless" show | grep -Fq 'Managed browser   none (headless)'
 
   # `set` is the narrow shortcut into the same guarded settings transaction.
@@ -18561,55 +19101,74 @@ case " ${INSTALLED_CASKS:-} " in
 esac
 SH
   chmod +x "$browser_doctor/bin/uname" "$browser_doctor/bin/chezmoi" "$browser_doctor/bin/brew"
+  # Seal the host: the doctor also detects apps under GROUNDWORK_APPLICATIONS_DIR
+  # (default /Applications), where the hosted macOS runner preinstalls Chrome.
+  browser_doctor_apps="$browser_doctor/Applications"
+  mkdir -p "$browser_doctor_apps"
   run_browser_doctor() {
     env PATH="$browser_doctor/bin:$PATH" DOCTOR_BROWSER_DATA="$1" INSTALLED_CASKS="$2" \
+      GROUNDWORK_APPLICATIONS_DIR="${3:-$browser_doctor_apps}" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --browser
   }
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
-    'google-chrome')"
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    'brave-browser')"
   grep -qF 'Current release posture: stable' <<<"$browser_doctor_out"
   grep -qF 'Xcode: disabled' <<<"$browser_doctor_out"
   grep -qF 'Xcode beta channel: disabled' <<<"$browser_doctor_out"
-  grep -qF 'ok    Google Chrome stable is installed' <<<"$browser_doctor_out"
+  grep -qF 'ok    Brave Browser is installed' <<<"$browser_doctor_out"
+  grep -qF 'Default browser: unknown (defaultbrowser is not installed)' <<<"$browser_doctor_out"
   assert_not_contains 'no longer Groundwork-managed|google-chrome@beta' <(printf '%s\n' "$browser_doctor_out") \
-    "current browser doctor reported an absent Chrome Beta install"
+    "current browser doctor reported an absent Chrome install"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"preview","environment_role":"personal","xcode":true,"beta":true}' \
-    'google-chrome google-chrome@beta')"
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"preview","environment_role":"personal","xcode":true,"beta":true}' \
+    'brave-browser google-chrome google-chrome@beta')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'Xcode: enabled' <<<"$browser_doctor_out"
   grep -qF 'Xcode beta channel: enabled' <<<"$browser_doctor_out"
-  grep -qF 'ok    Google Chrome stable is installed' <<<"$browser_doctor_out"
+  grep -qF 'ok    Brave Browser is installed' <<<"$browser_doctor_out"
+  grep -qF 'Chrome is still installed and is no longer Groundwork-managed. Import with brave://settings/importData, then remove it by hand with: brew uninstall --cask google-chrome' <<<"$browser_doctor_out"
   grep -qF 'Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta' <<<"$browser_doctor_out"
   assert_not_contains 'primary preview browser|compatibility fallback' <(printf '%s\n' "$browser_doctor_out") \
     "preview doctor still treated Chrome Beta as the managed browser"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
     'google-chrome@beta')"
-  grep -qF 'Google Chrome stable is selected but not installed' <<<"$browser_doctor_out"
+  grep -qF 'Brave Browser is selected but not installed' <<<"$browser_doctor_out"
   grep -qF 'brew uninstall --cask google-chrome@beta' <<<"$browser_doctor_out"
   assert_not_contains 'brew uninstall --cask google-chrome$' <(printf '%s\n' "$browser_doctor_out") \
     "doctor offered to remove Chrome stable while reporting an unmanaged Beta install"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
-    'google-chrome')"
-  grep -qF 'device policy outrank this selection' <<<"$browser_doctor_out"
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
+    'brave-browser google-chrome')"
+  assert_not_contains 'device policy outrank this selection' <(printf '%s\n' "$browser_doctor_out") \
+    "a retired managed role must not get a special doctor note"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
-    'google-chrome')"
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
+    'brave-browser')"
   grep -qF "release_posture is 'broken'" <<<"$browser_doctor_out" \
     || fail "doctor must report an invalid release posture"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out" \
     || fail "invalid posture must not suppress the independent Xcode beta diagnostic"
-  assert_not_contains 'Google Chrome stable is installed' <(printf '%s\n' "$browser_doctor_out") \
+  assert_not_contains 'Brave Browser is installed' <(printf '%s\n' "$browser_doctor_out") \
     "invalid posture must suppress browser-installation claims"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":true,"release_posture":"preview","environment_role":"disposable","xcode":false,"beta":false}' '')"
+    '{"headless":true,"password_manager":"bitwarden","release_posture":"preview","environment_role":"disposable","xcode":false,"beta":false}' '')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'headless profile selects no GUI browser' <<<"$browser_doctor_out"
   grep -qF -- '--browser' < <(/bin/bash home/dot_local/bin/executable_groundwork-doctor --help)
+  # The applications dir is the only non-brew Chrome probe: a fake Chrome app
+  # there must be detected (proves the fixture seam is live), and only there.
+  browser_doctor_fake_apps="$browser_doctor/FakeApplications"
+  mkdir -p "$browser_doctor_fake_apps/Google Chrome.app" "$browser_doctor_fake_apps/Google Chrome Beta.app"
+  browser_doctor_out="$(run_browser_doctor \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    'brave-browser' "$browser_doctor_fake_apps")"
+  grep -qF 'Chrome is still installed and is no longer Groundwork-managed' <<<"$browser_doctor_out" \
+    || fail "doctor must detect Chrome through GROUNDWORK_APPLICATIONS_DIR"
+  grep -qF 'Chrome Beta is still installed' <<<"$browser_doctor_out" \
+    || fail "doctor must detect Chrome Beta through GROUNDWORK_APPLICATIONS_DIR"
 
   check "doctor: a version-alias symlink is one owner, not two"
   # Real-machine regression, 2026-07-27. mise exposes installs/node/lts as a
@@ -19134,6 +19693,25 @@ validate_platform_native_processes() {
       "macOS representative apply smoke requires macOS"
   fi
 
+  check "shipped Bash scripts parse under stock macOS /bin/bash"
+  # macOS ships Bash 3.2, which parses some constructs differently from the
+  # Bash 5 on Linux runners: it ends a $( ) at a case pattern's ")" inside a
+  # quoted heredoc. Every Bash file lint-shell owns must parse under it.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    stock_bash_files="$out_dir/stock-bash-files"
+    scripts/lint-shell --list >"$stock_bash_files"
+    [[ -s "$stock_bash_files" ]] || fail "lint-shell listed no Bash files to parse"
+    while IFS= read -r stock_bash_file; do
+      /bin/bash -n "$stock_bash_file" \
+        || fail "$stock_bash_file does not parse under stock /bin/bash ($(/bin/bash -c 'echo "$BASH_VERSION"'))"
+    done <"$stock_bash_files"
+  elif [[ "$suite" == "platform-macos" && "${GROUNDWORK_FULL_COMPOSITION:-0}" != "1" ]]; then
+    fail "the platform-macos suite must run on a macOS host"
+  else
+    skip_current_check requires-macos-native-host \
+      "stock macOS /bin/bash parsing requires macOS"
+  fi
+
   check "macOS native process and filesystem primitives"
   if [[ "$(uname -s)" != "Darwin" ]]; then
     if [[ "$suite" == "platform-macos" && "${GROUNDWORK_FULL_COMPOSITION:-0}" != "1" ]]; then
@@ -19350,6 +19928,7 @@ validate_platform_macos() {
   validate_external_tool_contracts
 }
 
+# shellcheck disable=SC2031 # The update maintenance subshell redirects its own timing_rows; Full never sees it.
 validate_full() {
   # Full composes the public focused entry points concurrently in fresh Bash
   # processes. Each focused invocation owns a separate temporary state root, so

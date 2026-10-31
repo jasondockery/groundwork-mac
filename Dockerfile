@@ -41,8 +41,20 @@ RUN mkdir -p /home/$USER/.config/chezmoi
 ENV PATH=/home/$USER/.local/bin:/home/$USER/.cargo/bin:/home/$USER/.local/share/mise/shims:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
 
 RUN sh -c "$(curl -fsSL https://get.chezmoi.io)" -- -b /home/$USER/.local/bin
-COPY --chown=$USER:$USER . /opt/groundwork
+# chezmoi --source /opt/groundwork reads .chezmoiroot and then home/. Copy only
+# that source. A docs, script, or workflow change must not rebuild the apply
+# layer: on main's 2026-10-28 docker-build (run 40700178469) `COPY .` missed
+# the cache and `chezmoi apply` took 267s, then exporting the new layer took
+# 175s. The install-headless-tools layer above was already cached.
+COPY --chown=$USER:$USER .chezmoiroot /opt/groundwork/.chezmoiroot
+COPY --chown=$USER:$USER .chezmoiversion /opt/groundwork/.chezmoiversion
+COPY --chown=$USER:$USER home /opt/groundwork/home
 COPY --chown=$USER:$USER docker/chezmoi.headless.toml /home/$USER/.config/chezmoi/chezmoi.toml
 RUN chezmoi --source /opt/groundwork apply
+# The smoke entrypoint is not chezmoi source. Copy it after apply so a script
+# edit does not rebuild the apply layer.
+COPY --chown=$USER:$USER scripts/smoke-docker-image /opt/groundwork/scripts/smoke-docker-image
+COPY --chown=$USER:$USER scripts/test-developer-tool-visibility /opt/groundwork/scripts/test-developer-tool-visibility
+COPY --chown=$USER:$USER scripts/.developer-tool-surface-test.zsh /opt/groundwork/scripts/.developer-tool-surface-test.zsh
 
 CMD ["zsh"]

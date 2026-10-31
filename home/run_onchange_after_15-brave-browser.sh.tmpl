@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Offer Brave after the Brewfile has installed it. Policies come from
+# groundwork-core (core/browser/brave.json). The desktop render hashes
+# that spec when it is already in the worktree, so a spec change re-runs this
+# hook. The hash is skipped when the pinned submodule is not checked out yet:
+# chezmoi status renders this file before an already-installed update-all can
+# run any new code. Headless and Linux renders do not read the spec. update-all
+# sets GROUNDWORK_UPDATE_SCOPE, and --apply then writes the profile without
+# prompting; the update runner prints the one notice.
+set -euo pipefail
+{{ if and (eq .chezmoi.os "darwin") (not .headless) }}
+{{- $specPath := joinPath .chezmoi.workingTree "core/browser/brave.json" }}
+{{- $checkout := joinPath .chezmoi.workingTree "home/dot_local/share/groundwork/lib/checkout-core.sh" }}
+{{- if stat $specPath }}
+# Brave spec hash: {{ output "cat" $specPath | sha256sum }}
+{{- end }}
+# Pass the spec path either way. chezmoi apply still holds its state lock, so
+# this hook must not call chezmoi again. Check out the pinned core submodule
+# before the command reads the spec. Raw chezmoi update renders and applies in
+# one process, so this checkout has to live here as well as in the runner.
+export GROUNDWORK_BRAVE_SPEC={{ $specPath | quote }}
+export GROUNDWORK_BRAVE_PASSWORD_MANAGER={{ .password_manager | quote }}
+export GROUNDWORK_BRAVE_HEADLESS=false
+if [[ -f {{ $checkout | quote }} ]]; then
+  bash {{ $checkout | quote }} {{ .chezmoi.workingTree | quote }}
+fi
+if [[ ! -f {{ $specPath | quote }} ]]; then
+  echo "Groundwork: core/browser/brave.json is not in this checkout, so Brave was not offered." >&2
+  exit 0
+fi
+if [[ ! -x "$HOME/.local/bin/groundwork-brave-browser" ]]; then
+  echo "Groundwork: groundwork-brave-browser is not installed." >&2
+  exit 1
+fi
+exec "$HOME/.local/bin/groundwork-brave-browser" --apply
+{{- else }}
+exit 0
+{{- end }}

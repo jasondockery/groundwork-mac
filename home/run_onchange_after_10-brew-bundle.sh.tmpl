@@ -380,67 +380,6 @@ fi
 # The bundle can replace CLT-only state with a new, unaccepted Xcode.
 # License agreement remains a local human action, never automatic consent.
 groundwork_check_xcode_license
-
-# ---- Chrome checksum exception, and ONLY after the safe lane succeeded ----
-#
-# Chrome stable ships `sha256 :no_check` upstream (Google's own updater owns
-# the binary), so it cannot satisfy the --require-sha policy the main Brewfile
-# is installed under. Brewfile.browser names that one cask, and this lane
-# installs it only after every checksum-verified package succeeded: a failed
-# safe lane must never trigger an unchecked exception lane.
-#
-# Failure is real: `run_onchange` must retry until Chrome stable is present.
-# Validate the rendered manifest completely before the first install, then act
-# on that exact token. This lane never uninstalls a browser or touches browser
-# data. A browser cask that is already installed and is not in the manifest
-# stays installed.
-browser_manifest="$HOME/.config/homebrew/Brewfile.browser"
-[[ -f "$browser_manifest" ]] || {
-  echo "Groundwork: browser manifest is missing: $browser_manifest" >&2
-  exit 1
-}
-browser_casks=()
-while IFS= read -r browser_line; do
-  case "$browser_line" in
-    "" | \#*) ;;
-    'cask "google-chrome"') browser_casks+=(google-chrome) ;;
-    *)
-      printf 'Groundwork: unsupported browser manifest entry: %s\n' "$browser_line" >&2
-      exit 1
-      ;;
-  esac
-done <"$browser_manifest"
-((${#browser_casks[@]} > 0)) || {
-  echo "Groundwork: desktop browser manifest selected no Chrome cask." >&2
-  exit 1
-}
-
-if [[ "$user_cask_opts" == *--require-sha* ]]; then
-  cat >&2 <<'CONFLICT'
-Groundwork selected Google Chrome stable, but your own HOMEBREW_CASK_OPTS
-requires checksummed casks and Google's official Chrome stable cask ships none.
-
-Chrome was NOT installed and this apply is incomplete. Keep your policy and
-manage the browser outside Groundwork, or remove your own --require-sha before
-rerunning chezmoi apply. Groundwork never weakens a user or organization policy.
-CONFLICT
-  exit 1
-fi
-
-browser_installed="$(groundwork_installed_casks)" || {
-  echo "Groundwork: browser inventory failed; no browser installation was attempted." >&2
-  exit 1
-}
-for browser_cask in "${browser_casks[@]}"; do
-  if grep -qxF -- "$browser_cask" <<<"$browser_installed"; then
-    echo "Groundwork: managed browser present: $browser_cask"
-    continue
-  fi
-  echo "Groundwork: installing $browser_cask from Google's official Homebrew cask."
-  echo "  This cask declares 'sha256 :no_check'; Google's updater owns the binary."
-  echo "  The main Groundwork Brewfile remains entirely checksum-verified."
-  HOMEBREW_CASK_OPTS="$user_cask_opts" brew install --cask "$browser_cask"
-done
 {{- end }}
 
 # ---- Optional packages, and ONLY after every required package succeeded ----

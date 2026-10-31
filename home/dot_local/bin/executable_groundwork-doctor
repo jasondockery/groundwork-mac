@@ -13,6 +13,8 @@ Options:
   --runtimes    run only the runtime release-age section
   --node-toolchain  run only the Node/pnpm ownership section
   --ai-tools    run only the Claude Code command-ownership section
+  --commit-identity
+                run only the commit identity guard section
   --browser     run only the managed-browser section
   --karabiner   run only the Karabiner compatibility and process section
   --always-on-apps  run only the always-on-app relaunch section
@@ -36,9 +38,20 @@ Sections (all run by default):
                 and a pnpm global-tool directory is bypassing Groundwork's
                 project-local or mise-managed CLI lanes.
   AI tools      effective Claude Code executable, native/manual ownership, and
-                comparison with the selected Homebrew installation.
-  Browser       whether Google Chrome stable is installed on a desktop Mac.
-                An existing Chrome Beta cask is reported as unmanaged and is
+                comparison with the selected Homebrew installation. Warns,
+                without failing, when both the native ~/.local/bin/claude and
+                the Homebrew claude-code@latest cask are installed, naming the
+                claude_code_owner choice and how to remove the other copy.
+  Commit identity
+                the groundwork-core commit identity guard: whether the user-level
+                hooks are installed and point at the pinned guard, whether a
+                different core.hooksPath or the opt-out flag
+                (~/.config/groundwork/commit-guard-off) is in effect, and the
+                guard's own doctor output (denylist, git identity, Claude Code
+                attribution).
+  Browser       whether Brave is installed on a desktop Mac, whether it is the
+                default browser, and whether its policy profile is installed.
+                An existing Chrome install is reported as unmanaged and is
                 not removed. Device policy remains authoritative.
   Karabiner     installed version, macOS support, and root Core Service PID,
                 owner, elapsed time, RSS, memory footprint, and compressed
@@ -79,6 +92,7 @@ EOF
 heading() { printf '\n== %s ==\n' "$1"; }
 ok() { printf '  ok    %s\n' "$1"; }
 warn() { printf '  warn  %s\n' "$1"; }
+fail_line() { printf '  FAIL  %s\n' "$1"; }
 note() { printf '  note  %s\n' "$1"; }
 
 # Colima treats an omitted disk as 0 and creates a 0-byte data disk. Starting
@@ -103,6 +117,19 @@ gw_doctor_selected_docker_backend() {
   [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] || return 1
   data="$("$chezmoi_bin" data --format=json 2>/dev/null)" || return 1
   printf '%s' "$data" | "$jq_bin" -er '.docker_backend // empty'
+}
+
+# claude_code_owner from the chezmoi profile; homebrew when it cannot be read,
+# matching home/.chezmoi.toml.tmpl for a profile written before the key existed.
+gw_doctor_selected_claude_code_owner() {
+  local data="" chezmoi_bin="" jq_bin="" owner=""
+  chezmoi_bin="$(type -P chezmoi 2>/dev/null || true)"
+  jq_bin="$(type -P jq 2>/dev/null || true)"
+  if [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] \
+    && data="$("$chezmoi_bin" data --format=json 2>/dev/null)"; then
+    owner="$(printf '%s' "$data" | "$jq_bin" -r '.claude_code_owner // empty' 2>/dev/null || true)"
+  fi
+  case "$owner" in native) echo native ;; *) echo homebrew ;; esac
 }
 
 karabiner_section() {
@@ -237,15 +264,16 @@ browser_section() {
     return 0
   fi
 
-  local data headless posture role xcode beta
+  local data headless posture xcode beta password_manager brave_headless
   if ! data="$(chezmoi data --format=json 2>/dev/null)" \
     || ! printf '%s' "$data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     warn "Groundwork could not read the chezmoi profile; browser status is unknown."
     return 0
   fi
   headless="$(printf '%s' "$data" | jq -r '.headless // false')"
+  password_manager="$(printf '%s' "$data" | jq -r '.password_manager // empty')"
+  brave_headless="$(printf '%s' "$data" | jq -r 'if .headless == true then "true" elif .headless == false then "false" else empty end')"
   posture="$(printf '%s' "$data" | jq -r '.release_posture // "current"')"
-  role="$(printf '%s' "$data" | jq -r '.environment_role // (if .work then "managed" else "personal" end)')"
   xcode="$(printf '%s' "$data" | jq -r '.xcode // false')"
   beta="$(printf '%s' "$data" | jq -r '.beta // false')"
 
@@ -279,23 +307,23 @@ browser_section() {
     ok "headless profile selects no GUI browser"
     return 0
   fi
-  if ! command -v brew >/dev/null 2>&1; then
-    warn "Homebrew is not available, so Google Chrome stable cannot be verified."
+  if [[ -z "$password_manager" || -z "$brave_headless" ]]; then
+    warn "Groundwork could not read the Brave profile selection; browser status is unknown."
     return 0
   fi
-
-  if brew list --cask google-chrome >/dev/null 2>&1; then
-    ok "Google Chrome stable is installed"
-  else
-    warn "Google Chrome stable is selected but not installed; rerun update-all."
+  local brave_script
+  brave_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/executable_groundwork-brave-browser"
+  if [[ ! -f "$brave_script" ]]; then
+    brave_script="$HOME/.local/bin/groundwork-brave-browser"
   fi
-  if brew list --cask google-chrome@beta >/dev/null 2>&1; then
-    note "Chrome Beta is still installed but is no longer Groundwork-managed. No app or browser data is removed. Remove it by hand with: brew uninstall --cask google-chrome@beta"
+  if [[ ! -f "$brave_script" ]]; then
+    warn "groundwork-brave-browser is not installed, so Brave status is unknown."
+    return 0
   fi
-  if [[ "$role" == "managed" ]]; then
-    note "organization and device policy outrank this selection; Groundwork never bypasses them."
-  fi
-  note "Groundwork installs Google Chrome stable but does not change the macOS default-browser association."
+  GROUNDWORK_BRAVE_PASSWORD_MANAGER="$password_manager" \
+    GROUNDWORK_BRAVE_HEADLESS="$brave_headless" \
+    GROUNDWORK_BRAVE_PLATFORM=Darwin \
+    /bin/bash "$brave_script" --doctor
 }
 
 docker_section() {
@@ -1347,6 +1375,75 @@ ai_tools_section() {
   # shellcheck source=/dev/null
   . "$ownership_lib"
   gw_claude_ownership_report
+  gw_claude_dual_install_report "$(gw_doctor_selected_claude_code_owner)"
+}
+
+# The pinned core's owner remote pattern list: next to the installed guard's
+# target, or in the chezmoi working tree's core when the guard is not installed.
+gw_doctor_commit_guard_patterns_file() {
+  local guard_link="$1" target working_tree chezmoi_bin jq_bin
+  if [[ -L "$guard_link" ]] && target="$(readlink "$guard_link")" && [[ "$target" == /* ]]; then
+    printf '%s/owner-remote-patterns\n' "$(dirname "$target")"
+    return 0
+  fi
+  chezmoi_bin="$(type -P chezmoi 2>/dev/null || true)"
+  jq_bin="$(type -P jq 2>/dev/null || true)"
+  [[ -n "$chezmoi_bin" && -n "$jq_bin" ]] || return 1
+  working_tree="$("$chezmoi_bin" data --format=json 2>/dev/null | "$jq_bin" -r '.chezmoi.workingTree // empty' 2>/dev/null)" \
+    || return 1
+  [[ "$working_tree" == /* ]] || return 1
+  printf '%s/core/commit-guard/owner-remote-patterns\n' "$working_tree"
+}
+
+commit_identity_section() {
+  heading "Commit identity"
+  local gw="${XDG_CONFIG_HOME:-$HOME/.config}/groundwork" hooks guard
+  local patterns_lib patterns_file patterns_problem
+  hooks="$gw/git-hooks"
+  guard="$hooks/commit-identity-guard.sh"
+  patterns_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../share/groundwork/lib/commit-guard-patterns.sh"
+  [[ -r "$patterns_lib" ]] || patterns_lib="$HOME/.local/share/groundwork/lib/commit-guard-patterns.sh"
+  if [[ ! -r "$patterns_lib" ]]; then
+    fail_line "Groundwork's commit-guard pattern check is missing: $patterns_lib; run groundwork-update."
+  elif patterns_file="$(gw_doctor_commit_guard_patterns_file "$guard")" \
+    && [[ -f "$(dirname "$patterns_file")/commit-identity-guard.sh" ]]; then
+    # A core with no guard at all is the installer's ordinary skip, reported
+    # below as not installed; only a present guard's list is checked here.
+    # shellcheck source=/dev/null
+    . "$patterns_lib"
+    if ! patterns_problem="$(gw_owner_patterns_read "$patterns_file")"; then
+      fail_line "$patterns_problem; the installer wrote nothing, so the guard is not installed or updated. Update the core submodule (git submodule update --init core), then run groundwork-update."
+    fi
+  fi
+  if [[ -e "$gw/commit-guard-off" ]]; then
+    note "opted out: $gw/commit-guard-off exists, so the hooks skip the guard. Remove the file to turn it back on."
+  fi
+  if [[ ! -x "$guard" ]]; then
+    warn "commit identity guard is not installed at $guard; run groundwork-update."
+    return 0
+  fi
+  local xdg_git="${XDG_CONFIG_HOME:-$HOME/.config}/git/config" current includes repo code_dir
+  current="$(cd "$HOME" && git config --get core.hooksPath 2>/dev/null || true)"
+  includes="$(git config --file "$xdg_git" --get-regexp '^includeif\..*\.path$' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -n "$current" ]]; then
+    warn "core.hooksPath is $current for every repository, so the guard hooks are not scoped or active; chain $hooks/commit-msg and $hooks/pre-push from it."
+  elif [[ "${includes:-0}" -ge 4 && -f "$gw/commit-guard.gitconfig" ]]; then
+    ok "hooks apply to repositories with a github.com remote owned by this user; other repositories are untouched"
+  else
+    warn "the owned-repository hook scope is not set up (needs git 2.36 or newer); run groundwork-update."
+  fi
+  note "not guarded: a push straight to an owned URL from a repository with no owned remote, owned repositories with their own core.hooksPath (husky, lefthook), and remote URLs with userinfo (https://user@github.com/...)."
+  code_dir="${GROUNDWORK_CODE_DIR:-$HOME/code}"
+  if [[ -d "$code_dir" ]]; then
+    while IFS= read -r repo; do
+      repo="$(dirname "$repo")"
+      if git -C "$repo" config --local --get core.hooksPath >/dev/null 2>&1 \
+        && git -C "$repo" config --local --get-regexp '^remote\..*\.url$' 2>/dev/null | grep -qiE '[:/]jasondockery/'; then
+        warn "guard bypassed by its own core.hooksPath: $repo"
+      fi
+    done < <(find "$code_dir" -maxdepth 3 -name .git -prune 2>/dev/null | head -200)
+  fi
+  "$guard" doctor 2>&1 | sed 's/^/  /' || true
 }
 
 section=""
@@ -1354,6 +1451,7 @@ section=""
 while (($#)); do
   case "$1" in
     --ai-tools) section="ai-tools" ;;
+    --commit-identity) section="commit-identity" ;;
     --browser) section="browser" ;;
     --docker) section="docker" ;;
     --shell) section="shell" ;;
@@ -1386,6 +1484,7 @@ case "$section" in
     runtimes_section
     node_toolchain_section
     ai_tools_section
+    commit_identity_section
     browser_section
     karabiner_section
     always_on_apps_section
@@ -1396,6 +1495,7 @@ case "$section" in
   runtimes) runtimes_section ;;
   node-toolchain) node_toolchain_section ;;
   ai-tools) ai_tools_section ;;
+  commit-identity) commit_identity_section ;;
   browser) browser_section ;;
   karabiner) karabiner_section ;;
   always-on-apps) always_on_apps_section ;;

@@ -18,16 +18,16 @@
       "lastmod": "2026-08-13"
     },
     "apps.html": {
-      "sha256": "fcae0ca9c64cb95a5e80f9147c785bfc9f9901344b0f1294d7ce74d03f42d91d",
-      "lastmod": "2026-10-28"
+      "sha256": "056cb6ae5372914bc41b5be43307f8f5633e1f8f733096afd79730f94320f0fd",
+      "lastmod": "2026-10-30"
     },
     "cheatsheet.html": {
-      "sha256": "d6e21598793a9abd2be0f91c98035ebbd665a761b42d66e70cea60cf01d3c626",
-      "lastmod": "2026-10-24"
+      "sha256": "21ac2236c9eefd95d72bdfadcce23fa4bcc0df0f34fd9ce62c78740e2c41a915",
+      "lastmod": "2026-10-30"
     },
     "claude.html": {
-      "sha256": "57ff8e1e884e68237849089308a4d2daba9899e45484f397f384fd651134993a",
-      "lastmod": "2026-10-26"
+      "sha256": "01e7b03f275ced40cc11a2911274a3af3f28f20ebd62f4b6c1d06966f297b947",
+      "lastmod": "2026-10-29"
     },
     "codex.html": {
       "sha256": "95352c90f47ee74188d8cac23a5e4c58103c047d7457ec24c4a75aec560f4da4",
@@ -38,28 +38,28 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "cd2d2b1e22b5aa8f0d062cb45c0f6251ea36804d55e2ce9f734ad4dc09568c6e",
-      "lastmod": "2026-10-28"
+      "sha256": "1e77e29c5a801d33b4e1a6ae72907d314e0bec3d0f791a2ff950529de8d14255",
+      "lastmod": "2026-10-31"
     },
     "customizing.html": {
-      "sha256": "b26182c6b8b85a57ff4008086ff53a9b0973e1996b2dc620a37c9392f450a688",
-      "lastmod": "2026-08-11"
+      "sha256": "9322d953bff50cf134ef42c8b3e13119cbfabef2d9a1937ab85a4fec509afe71",
+      "lastmod": "2026-10-29"
     },
     "data.html": {
       "sha256": "dc95b4419f3d6ca924d8089795feca26e230932e95da35f8dd6ca5840ff8c906",
       "lastmod": "2026-08-11"
     },
     "dependencies.html": {
-      "sha256": "f1888a4ddb0347867945f4a1efff807766c93234ba48ea02bd3ddde7ebe89c6b",
-      "lastmod": "2026-10-28"
+      "sha256": "fa9f7b302a1849c31b9a37fd075f84ddfbc764b1c7b33c0d2fd8ff6f04660019",
+      "lastmod": "2026-10-31"
     },
     "development.html": {
       "sha256": "bdf9f7f1313f4e7fe4d8b17e63f8e2f17c5302e87c08d59808368637b55f16bd",
       "lastmod": "2026-08-11"
     },
     "editors-ai.html": {
-      "sha256": "848f3a466f949eca3c457b0504abd3b3b9f82afe45949f095b46e0a157587136",
-      "lastmod": "2026-08-13"
+      "sha256": "40cfd98aeac7036f3845c749f89ff63ed9155d616b5062520f4d0524b7fbe20c",
+      "lastmod": "2026-10-29"
     },
     "game-dev-learn.html": {
       "sha256": "d03ac9f4875712a2c2f890660fa6c55b78595da5b38cb90f99c7ec0703907741",
@@ -98,8 +98,8 @@
       "lastmod": "2026-08-11"
     },
     "grok.html": {
-      "sha256": "4be0e5acc370443428db89d21f0652b7ab2af0613c16af5c3a5a486fe48fcde1",
-      "lastmod": "2026-08-13"
+      "sha256": "ad5b692f207beea905b3bc9e4204850580794be3971b5095ca3077e0508a67f6",
+      "lastmod": "2026-10-29"
     },
     "groundwork-twelve.html": {
       "sha256": "8525f79e82b1ce9fabe59a6c620563fda64f63ac5cfcf29b08daadc06e2668af",
@@ -114,8 +114,8 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "80d83f5f3b87ef5184bf7c1df10d412e00b8f85a000bd8b47d317a14eff7cd58",
-      "lastmod": "2026-10-28"
+      "sha256": "ec8a1344645b0146384ecc027dfa06bb8c8f747d67ff30750e71d276348ae796",
+      "lastmod": "2026-10-30"
     },
     "keyboard.html": {
       "sha256": "de050cec0c5b72215e75f9dea81f4301cef219c5788df609af0aed75e1b60d42",
@@ -130,8 +130,8 @@
       "lastmod": "2026-10-18"
     },
     "macos.html": {
-      "sha256": "0872131668bd9b70fcce170b34679e2cc6e462357d2478a9748c6941cd57c19f",
-      "lastmod": "2026-10-24"
+      "sha256": "7d6150aad65ab30ff56cfecb558a344fd87f47a3b53ec008cca3e170729e85f2",
+      "lastmod": "2026-10-30"
     },
     "neovim.html": {
       "sha256": "d9f8147723522dae0593d3f6b5abc8195d48339449031f35001f1f2bd880257f",
@@ -146,28 +146,28 @@
       "lastmod": "2026-08-13"
     },
     "platforms.html": {
-      "sha256": "0b708a246fb8400798745d151021d4624761ce572cde346870ef0f93bbb23967",
-      "lastmod": "2026-10-26"
+      "sha256": "304a2c8c19dea0a482e3855d7e490c6f34b94c8cf0eb60ed269ccc94208c7afc",
+      "lastmod": "2026-10-31"
     },
     "practice.html": {
       "sha256": "3ea20f48ae146d6c46e74c907a7646073c914466d2f40505114c827217e96fcb",
       "lastmod": "2026-10-16"
     },
     "repo-navigation.html": {
-      "sha256": "46e30f01122f2e51cb83a2e2609da19d17845fb51e7c76ea8763ba61c539a9f3",
-      "lastmod": "2026-10-18"
+      "sha256": "3c80c4c2b96f86cbe06e2c6a916b5e17d29de172633fa338170b85fe063b8b93",
+      "lastmod": "2026-10-31"
     },
     "resources.html": {
-      "sha256": "74b81ee79306538ce009e43697e47804c7d45ce928e11dd412e003f5b3e8322f",
-      "lastmod": "2026-10-24"
+      "sha256": "0fa5ab2cbb8981a0fe89635941aa33c4b984e61a37f13de5ebdb12996879f89c",
+      "lastmod": "2026-10-30"
     },
     "setup.html": {
-      "sha256": "3640ad9d6ced81bfc9e8cb86a878843c4534403e40d54bd6e71cc4c126e00a9c",
-      "lastmod": "2026-10-26"
+      "sha256": "8a7122d99969b848a161ecedd08950a0e379d3fc26971c1c789a104601aa9d3d",
+      "lastmod": "2026-10-29"
     },
     "shell.html": {
-      "sha256": "bdcb199651bbbf1286711279f34105c2b57203f47bd0bd0da55b652b4f582136",
-      "lastmod": "2026-10-28"
+      "sha256": "4eba0bef70f43e29c15a1732c03b1a47527cecbfb67769cd543c27b877286d2e",
+      "lastmod": "2026-10-29"
     },
     "skills-playbooks.html": {
       "sha256": "9dc71c16667678280833d666514121b37f518c76ae5355f42f73e95e14f9f4af",
@@ -186,8 +186,8 @@
       "lastmod": "2026-10-18"
     },
     "troubleshooting.html": {
-      "sha256": "12070fccdd1fce01bded0dbf7758284c036de51e760407be4281561c3a628f59",
-      "lastmod": "2026-10-28"
+      "sha256": "58a9d2a09614fbf9f32b99a702d8223d316d75e5e999bdb8b3ac725c270fdc1a",
+      "lastmod": "2026-10-31"
     },
     "web-dev.html": {
       "sha256": "3d8a3134a4ca5d18cae986e6dcfe41448bcb8110928f85475ea428e94a05877b",

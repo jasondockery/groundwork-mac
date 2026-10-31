@@ -213,8 +213,10 @@ gw_brew_classify_formula_metadata() {
 }
 
 # Classify one Homebrew metadata snapshot before update-all starts a cask
-# replacement. Checksummed self-updating casks enter a separate outdated-driven
-# exact-token lane. Casks whose uninstall stanza removes launchd services or
+# replacement. A cask on the declared vendor-updater list stays with its own
+# updater even when the cask is checksummed (Brave, installed with --require-sha,
+# then updated by Sparkle). Other checksummed self-updating casks enter a
+# separate outdated-driven exact-token lane. Casks whose uninstall stanza removes launchd services or
 # privileged files stay owner-run because those replacements can stop for a
 # password, an application dialog, or helper teardown -- "consent" marks the
 # ones a person may authorize in the run itself, and it is a narrower set than
@@ -311,7 +313,7 @@ gw_brew_classify_cask_metadata() {
        elif $privileged_replacement and $c.sha256 != "no_check" and
          $c.version != "latest" then ["consent", $ownership]
        elif $privileged_replacement then ["review", $ownership]
-       elif $c.sha256 == "no_check" and $c.auto_updates and
+       elif $c.auto_updates and
          (($vendor_tokens | index($c.token)) != null) then ["vendor-covered", "declared-vendor-self-updater"]
        elif $c.sha256 == "no_check" and $c.auto_updates then ["review", "unverified-vendor-updater"]
        elif $c.sha256 == "no_check" and $c.version == "latest" then ["review", "latest-no-checksum"]

@@ -9,6 +9,8 @@
 {{- if hasKey . "beta" }}{{- $beta = .beta -}}{{- end -}}
 {{- $localInference := false -}}
 {{- if and (hasKey . "local_inference") (kindIs "bool" .local_inference) }}{{- $localInference = .local_inference -}}{{- end -}}
+{{- $claudeCodeOwner := "homebrew" -}}
+{{- if hasKey . "claude_code_owner" }}{{- $claudeCodeOwner = toString .claude_code_owner -}}{{- end -}}
 {{- $pwManager := "none" -}}
 {{- if hasKey . "password_manager" }}{{- $pwManager = .password_manager -}}{{- end -}}
 {{- $terminalMultiplexer := includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim -}}
@@ -114,10 +116,10 @@ cask "bitwarden"
 cask "karabiner-elements"
 cask "tailscale-app"          # standalone app owns its service and MagicDNS integration
 brew "defaultbrowser"
-# Chrome stable is installed from Brewfile.browser on every desktop Mac.
-# The official cask ships `sha256 :no_check`, so the main Brewfile stays
-# entirely checksummed and the browser manifest is handled by the explicit
-# exception lane in run_onchange_after_10-brew-bundle.sh.
+# Brave is the managed browser on every desktop Mac. The cask is checksummed,
+# and Sparkle owns later updates, so it stays in this Brewfile under
+# --require-sha and is not a Homebrew upgrade lane.
+{{ includeTemplate "browser-brewfile" . }}
 cask "zoom"
 cask "slack"
 cask "raycast"                # keyboard-first launcher; Quicklinks jump to daily links
@@ -134,7 +136,7 @@ cask "vorssaint"              # Apple Silicon menu-bar toolkit. macOS 14 or newe
 {{- end }}
 
 cask "t3-code@nightly"       # selected T3 Code train; provider sign-in remains local
-# Developer desktop apps are available on personal and managed Macs alike.
+# Developer desktop apps are installed on every desktop Mac.
 cask "claude"
 cask "chatgpt"
 cask "visual-studio-code"
@@ -158,7 +160,11 @@ cask "unity-hub"             # optional game-dev track: installs Unity Hub; inst
 
 # Native coding CLIs use checksummed Homebrew artifacts on macOS and Linux,
 # including WSL2 and headless setups. Provider authentication remains local.
+# claude_code_owner = "native" leaves Claude Code to its native installer, so a
+# removed cask is not reinstalled here.
+{{ if ne $claudeCodeOwner "native" -}}
 cask "claude-code@latest"
+{{ end -}}
 cask "codex"
 cask "grok-build"
 brew "opencode"

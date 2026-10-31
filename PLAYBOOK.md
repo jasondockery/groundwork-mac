@@ -40,7 +40,7 @@ What Renovate manages here:
   that file is extracted and then disabled, so it does not become a numbered
   release. `.nvmrc` and the repository `mise.toml` stay ignored because
   `tools/sync-toolchain.mjs` rewrites them from `.node-version`. With
-  `executionMode: "branch"`, Renovate 44.23.0 runs
+  `executionMode: "branch"`, Renovate (verified on 44.23.0; a 44.173.1 lookup run does not execute post-upgrade tasks) runs
   `node tools/sync-toolchain.mjs` once on any branch that changes a package
   file, including `home/dot_config/mise/config.toml`. `fileFilters` is only
   the allowlist of files committed after the command runs. The command reads
@@ -48,7 +48,7 @@ What Renovate manages here:
   leaves the Python array alone and adds nothing when those already match.
   The allowlist is those three files.
   Python line-bump Dependency Dashboard approval is not a local rule. It
-  comes from preset `github>jasondockery/renovate-config#1.1.1`, which this
+  comes from preset `github>jasondockery/renovate-config#1.2.0`, which this
   repo extends.
 
 `dependency-coverage.json` also records the intentional manual lanes: Homebrew
@@ -85,7 +85,7 @@ Operating notes:
   removed 2026-07-03 when Renovate took over. Dependabot alerts can stay
   enabled as a data source.
 - Policy is defined once in `renovate-config`. This repo pins
-  `github>jasondockery/renovate-config#1.1.1`, so shared policy changes reach it
+  `github>jasondockery/renovate-config#1.2.0` and its `groundwork-core` named preset, so shared policy changes reach it
   through a reviewed preset-version update. The preset repository retains its
   behavior freeze until all of its consumers complete versioned adoption;
   pinning this repo alone does not lift that freeze.

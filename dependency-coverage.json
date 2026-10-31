@@ -101,6 +101,19 @@
       "note": "The reference pins the immutable 1.0.0 release; Renovate can propose later preset versions as reviewable consumer changes."
     },
     {
+      "id": "groundwork-core-submodule",
+      "classification": "built-in",
+      "manager": "git-submodules",
+      "paths": [".gitmodules"],
+      "canonical": ".gitmodules#submodule.core.branch",
+      "agePolicy": "renovate-minimum-release-age",
+      "compensatingControl": "The groundwork-core named preset reads core tags through github-tags, so the shared five-day floor applies. Bumps use their own group, never automerge, and need required CI and owner review.",
+      "extractionMatchers": [
+        { "manager": "git-submodules", "packageFilePattern": "^\\.gitmodules$", "depNamePattern": "^core$" }
+      ],
+      "note": "The core gitlink must equal the commit of the tag named by branch = in .gitmodules. Renovate proposes the next groundwork-core tag; never use git submodule update --remote."
+    },
+    {
       "id": "shell-quality-tools",
       "classification": "intentional-manual",
       "manager": "scripts/update-shell-tool-pins",
@@ -161,7 +174,7 @@
       "paths": ["home/dot_config/mise/config.toml"],
       "canonical": "home/dot_config/mise/config.toml#tools.python",
       "agePolicy": "renovate-minimum-release-age",
-      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval comes from preset 1.1.1, so this repo does not duplicate that rule. The secondary 3.12 array entry is outside mise extraction and is refused if it ever becomes the current value, because Aider still needs audioop.",
+      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval comes from the shared preset, so this repo does not duplicate that rule. The secondary 3.12 array entry is outside mise extraction and is refused if it ever becomes the current value, because Aider still needs audioop.",
       "extractionMatchers": [
         { "manager": "mise", "packageFilePattern": "^home/dot_config/mise/config\\.toml$", "depNamePattern": "^python$" }
       ],
@@ -172,7 +185,7 @@
           "linePattern": "^python\\s*="
         }
       ],
-      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.15\", \"3.12\"] therefore proposes movement of 3.15 to the next minor line and leaves 3.12 pinned for Aider."
+      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.13\", \"3.12\"] therefore proposes movement of 3.13, such as to 3.15, and leaves 3.12 pinned for Aider."
     },
     {
       "id": "corepack-runtime",

@@ -1,14 +1,25 @@
-{{- /* One compatibility boundary for independent developer preferences. */ -}}
+{{- /* One compatibility boundary for independent developer preferences.
+The retired work-managed profile is not a setup switch. A stored work flag,
+environment_role=managed, or profile_preset=work-managed is ignored for new
+choices. The legacy seed (personal apps off, infrastructure extensions on) is
+replaced by the common Mac defaults. An explicit divergence is kept.
+A stored work=true with no git_identity is the old email selector: record
+git_identity=work so regeneration does not switch those commits to the
+personal address. An explicit git_identity still wins. */ -}}
 {{- $legacyWork := and (hasKey . "work") .work -}}
-{{- $identity := "personal" -}}
-{{- if and $legacyWork (hasKey . "email_work") (ne .email_work "") -}}
-{{- $identity = "work" -}}
-{{- end -}}
-{{- $settings := dict "docker_backend" "colima" "git_identity" $identity "personal_apps" (not $legacyWork) "work_extensions" $legacyWork -}}
+{{- $legacyManaged := or $legacyWork (and (hasKey . "environment_role") (eq (toString .environment_role) "managed")) (and (hasKey . "profile_preset") (eq (toString .profile_preset) "work-managed")) -}}
+{{- $settings := dict "docker_backend" "colima" "git_identity" "personal" "personal_apps" true "work_extensions" false -}}
 {{- range $key := list "docker_backend" "git_identity" "personal_apps" "work_extensions" -}}
 {{- if hasKey $ $key -}}
 {{- $_ := set $settings $key (index $ $key) -}}
 {{- end -}}
+{{- end -}}
+{{- if and $legacyWork (not (hasKey . "git_identity")) -}}
+{{- $_ := set $settings "git_identity" "work" -}}
+{{- end -}}
+{{- if and $legacyManaged (not (get $settings "personal_apps")) (get $settings "work_extensions") -}}
+{{- $_ := set $settings "personal_apps" true -}}
+{{- $_ := set $settings "work_extensions" false -}}
 {{- end -}}
 {{- if not (has (get $settings "docker_backend") (list "colima" "docker-desktop" "none")) -}}
 {{- fail "Groundwork: docker_backend must be colima, docker-desktop, or none" -}}

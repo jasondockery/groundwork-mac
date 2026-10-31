@@ -28,9 +28,9 @@ Usage:
 
 Postures:
   current   Latest stable release of each application. The default.
-            Desktop Macs install Google Chrome stable.
+            Desktop Macs install Brave.
   preview   Pre-release posture for families that have a preview channel.
-            The managed browser stays Google Chrome stable.
+            The managed browser stays Brave.
             Expect occasional breakage where a preview channel is selected.
 
 Fixed in every profile, and not settable here:
@@ -98,10 +98,11 @@ fi
 
 # Values rendered from the answers chezmoi already holds, so this command never
 # re-derives policy that the template owns.
-# Role is a STORED field, not derived from the work boolean: a bool cannot
-# express personal / managed / disposable. `work` only seeds its default.
-role={{ if hasKey . "environment_role" }}{{ .environment_role | quote }}{{ else if .work }}"managed"{{ else }}"personal"{{ end }}
-preset={{ if hasKey . "profile_preset" }}{{ .profile_preset | quote }}{{ else }}"legacy"{{ end }}
+# Role is personal or disposable. A retired managed role or work-managed preset
+# is reported as the common personal setup and never fails this command.
+retired_work_managed={{ if or (and (hasKey . "environment_role") (eq (toString .environment_role) "managed")) (and (hasKey . "profile_preset") (eq (toString .profile_preset) "work-managed")) }}true{{ else }}false{{ end }}
+role={{ if or (not (hasKey . "environment_role")) (eq (toString .environment_role) "managed") }}"personal"{{ else }}{{ .environment_role | quote }}{{ end }}
+preset={{ if or (not (hasKey . "profile_preset")) (eq (toString .profile_preset) "work-managed") }}{{ if not (hasKey . "profile_preset") }}"legacy"{{ else }}"personal-current"{{ end }}{{ else }}{{ .profile_preset | quote }}{{ end }}
 posture={{ if hasKey . "release_posture" }}{{ .release_posture | quote }}{{ else }}"current"{{ end }}
 docker_backend={{ $developer := includeTemplate "developer-settings" . | fromJson }}{{ get $developer "docker_backend" | quote }}
 multiplexer={{ includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "tmux") | trim | quote }}
@@ -110,7 +111,7 @@ xcode={{ if and (hasKey . "xcode") .xcode }}true{{ else }}false{{ end }}
 local_inference={{ if and (hasKey . "local_inference") (kindIs "bool" .local_inference) .local_inference }}true{{ else }}false{{ end }}
 local_inference_applies={{ if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") }}true{{ else }}false{{ end }}
 stored_beta={{ if and (hasKey . "beta") .beta }}true{{ else }}false{{ end }}
-browser="Google Chrome stable"
+browser="Brave"
 if [[ "$headless" == "true" ]]; then
   browser="none (headless)"
 fi
@@ -137,6 +138,9 @@ detect_system_channel() {
 
 case "$command" in
   show)
+    if [[ "$retired_work_managed" == "true" ]]; then
+      echo "Retired work-managed setting ignored; this Mac uses the common setup."
+    fi
     echo "Groundwork environment profile"
     printf '  macOS container backend: %s\n' "$docker_backend"
     echo
@@ -163,10 +167,7 @@ case "$command" in
     echo
     echo "Always current, regardless of posture:"
     echo "  AI tools (no intentional release delay)"
-    if [[ "$role" == "managed" ]]; then
-      echo "  ...subject to device policy, which outranks this profile."
-      echo "  Groundwork reports a blocked update; it never works around policy."
-    fi
+    echo "  Organization or device policy can still block an update. Groundwork reports that block and does not work around it."
     echo
     echo "Unchanged by posture:"
     echo "  checksum and provenance policy"

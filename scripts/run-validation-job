@@ -188,7 +188,8 @@ else:
     body = receipt["body"]
     print(
         receipt["result"],
-        f"{body['passedCount']} passed, {body['skippedCount']} skipped, {body['failedCount']} failed",
+        f"{body['passedCount']} passed, {body['skippedCount']} skipped, {body['failedCount']} failed, "
+        f"{body.get('cancelledCount', 0)} cancelled",
         body["failedCount"],
         "",
         sep="\t",

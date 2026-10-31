@@ -10,8 +10,11 @@
 {{- fail "Groundwork supports WSL2, not WSL1: WSL1 filesystem and syscall behavior differ from real Linux. From PowerShell, check with `wsl --list --verbose` and convert with `wsl --set-version <DistributionName> 2`, then rerun setup." -}}
 {{- end -}}
 {{- end -}}
-{{- /* Retain the former profile only as a migration input. New setup has one
-common tool set; independent preferences below own actual behavior. */ -}}
+{{- /* The work flag is a retired setup switch. Read a stored bool so an old
+config still renders and migrates once, but never choose apps, role, or preset
+from it. The render below always writes work = false: developer-settings has
+already captured git_identity, so the migration is finished and later choices
+(and the migration comment) are not reverted or repeated. */ -}}
 {{- $work := and (hasKey . "work") .work -}}
 {{- $headless := false -}}
 {{- if eq .chezmoi.os "darwin" -}}
@@ -50,8 +53,8 @@ question text always matches the real one. */ -}}
 {{- $signingKey := promptStringOnce . "signingkey" "What SSH public key should Git use for signing (leave blank to skip)" "" -}}
 {{- $obsidianVault := promptStringOnce . "obsidian_vault_name" "What should the Obsidian vault be named (leave blank to skip)" "my_obsidian_vault" -}}
 {{- /* Browser migration compatibility. `install_chrome` used to gate an
-unchecked opt-in. Every desktop Mac now installs Chrome stable, and release
-posture does not change that choice, so the field is intentionally ignored.
+unchecked opt-in. Desktop Macs now install Brave, and release posture does
+not change that choice, so the field is intentionally ignored.
 Carry an existing value through unchanged until a deliberate schema migration
 removes it; never make an older config fail or silently rewrite unrelated
 answers. */ -}}
@@ -60,17 +63,18 @@ answers. */ -}}
 {{- $legacyInstallChrome = .install_chrome -}}
 {{- end -}}
 {{- /* Bootstrap establishes a usable machine; mutable application-channel
-preferences belong to groundwork-configure. A fresh install therefore seeds a
-stable profile, preserving a legacy work-machine seed without asking a
-second stable-versus-preview question. Existing stored presets remain valid and
-survive regeneration. See specs/environment-profiles-and-release-posture.md. */ -}}
-{{- $validPresets := list "personal-current" "personal-preview" "work-managed" "disposable-experimental" -}}
+preferences belong to groundwork-configure. A fresh install seeds the common
+stable profile. There is no work-managed profile. A stored work-managed preset
+or managed role migrates to personal/current and never fails the render.
+Existing personal and disposable presets survive regeneration.
+See specs/environment-profiles-and-release-posture.md. */ -}}
+{{- $validPresets := list "personal-current" "personal-preview" "disposable-experimental" -}}
 {{- $defaultPreset := "personal-current" -}}
-{{- if $work -}}
-{{- $defaultPreset = "work-managed" -}}
-{{- end -}}
 {{- $profilePreset := $defaultPreset -}}
-{{- if and (hasKey . "profile_preset") (has (toString .profile_preset) $validPresets) -}}
+{{- $retiredPreset := false -}}
+{{- if and (hasKey . "profile_preset") (eq (toString .profile_preset) "work-managed") -}}
+{{- $retiredPreset = true -}}
+{{- else if and (hasKey . "profile_preset") (has (toString .profile_preset) $validPresets) -}}
 {{- $profilePreset = toString .profile_preset -}}
 {{- end -}}
 {{- /* Role and posture are stored separately so a user can later change one
@@ -79,21 +83,18 @@ without the other, and so a preset is only ever a starting value. */ -}}
 {{- $releasePosture := "current" -}}
 {{- if eq $profilePreset "personal-preview" -}}
 {{- $releasePosture = "preview" -}}
-{{- else if eq $profilePreset "work-managed" -}}
-{{- $environmentRole = "managed" -}}
 {{- else if eq $profilePreset "disposable-experimental" -}}
 {{- $environmentRole = "disposable" -}}
 {{- $releasePosture = "preview" -}}
 {{- end -}}
-{{- /* A STORED role or posture wins over the preset-derived seed above. The
-preset only chooses starting values; what is persisted is the concrete choice,
-and specs/environment-profiles-and-release-posture.md requires role and posture
-to be independently editable so they can diverge from the preset (a managed
-machine may take preview posture without becoming personal). Deriving them on
-every render made that impossible and silently reverted a hand-edited posture on
-the next apply. groundwork-configure drops both keys when the user changes the
-preset, which is exactly what re-seeds them from the new starting value. */ -}}
-{{- if and (hasKey . "environment_role") (has (toString .environment_role) (list "personal" "managed" "disposable")) -}}
+{{- /* A stored role or posture wins over the preset-derived seed above. The
+preset only chooses starting values. personal and disposable stay independent
+of posture. managed is retired: it becomes personal and does not fail. */ -}}
+{{- $retiredRole := false -}}
+{{- if and (hasKey . "environment_role") (eq (toString .environment_role) "managed") -}}
+{{- $retiredRole = true -}}
+{{- $environmentRole = "personal" -}}
+{{- else if and (hasKey . "environment_role") (has (toString .environment_role) (list "personal" "disposable")) -}}
 {{- $environmentRole = toString .environment_role -}}
 {{- end -}}
 {{- if and (hasKey . "release_posture") (has (toString .release_posture) (list "current" "preview")) -}}
@@ -208,12 +209,37 @@ it only on darwin arm64. */ -}}
 {{- end -}}
 {{- end -}}
 
+{{- /* git-filter-repo is an opt-in, per-user history-purge tool. groundwork-configure
+owns the change, so bootstrap never asks. Default false, which is also what an
+existing machine gets before the key exists. A stored bool is copied through on
+every platform; the install script honors it only on macOS. */ -}}
+{{- $gitFilterRepo := false -}}
+{{- if hasKey . "git_filter_repo" -}}
+{{- if kindIs "bool" .git_filter_repo -}}
+{{- $gitFilterRepo = .git_filter_repo -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* claude_code_owner names which Claude Code installation owns `claude`:
+the Homebrew claude-code@latest cask (default) or the native installer under
+~/.local/bin. groundwork-configure owns the change, so bootstrap never asks. An
+unknown stored value falls back to homebrew, which is also what an existing
+machine gets before the key exists. */ -}}
+{{- $claudeCodeOwner := "homebrew" -}}
+{{- if and (hasKey . "claude_code_owner") (has (toString .claude_code_owner) (list "homebrew" "native")) -}}
+{{- $claudeCodeOwner = toString .claude_code_owner -}}
+{{- end -}}
+
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 
 sourceDir = {{ .chezmoi.workingTree | quote }}
+{{- if or $work $retiredRole $retiredPreset }}
+
+# Retired work-managed setting ignored; this Mac uses the common setup.
+{{- end }}
 
 [data]
-    work = {{ $work }}
+    work = false
     docker_backend = {{ get $developer "docker_backend" | quote }}
     git_identity = {{ get $developer "git_identity" | quote }}
     personal_apps = {{ get $developer "personal_apps" }}
@@ -238,6 +264,8 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     beta = {{ $beta }}
     imessage_gateway = {{ $imessageGateway }}
     local_inference = {{ $localInference }}
+    git_filter_repo = {{ $gitFilterRepo }}
+    claude_code_owner = {{ $claudeCodeOwner | quote }}
 
 [edit]
     command = "nvim"
