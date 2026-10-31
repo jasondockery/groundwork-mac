@@ -16710,6 +16710,7 @@ SH
   test -f home/dot_config/lazygit/config.yml
   # Discovery stays dynamic: the managed config configures ROOTS, never names.
   grep -qF 'root = {{ .code_dir }}' home/dot_config/groundwork/repos.conf.tmpl
+  grep -qxF 'root = ~/worktrees' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'max_depth' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'include_worktrees' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'cache_ttl_seconds' home/dot_config/groundwork/repos.conf.tmpl
@@ -16919,6 +16920,30 @@ EOF
   if [[ -n "$(awk -F'\t' '{print $1}' "$repos_dir/list-out" | sort | uniq -d)" ]]; then
     fail "groundwork-repos listed a repository more than once"
   fi
+
+  # The shipped template: with the code directory and ~/worktrees as roots, a
+  # linked worktree at $HOME/worktrees/<repo>/<slug> is listed as wt, and repos
+  # under the code directory are still listed. HOME is the fixture; the
+  # environment is built from scratch.
+  repos_tpl_home="$repos_dir/tpl-home"
+  mkdir -p "$repos_tpl_home/code" "$repos_tpl_home/.config/groundwork" \
+    "$repos_tpl_home/.cache" "$repos_tpl_home/worktrees/tplrepo"
+  repos_tpl_home="$(cd "$repos_tpl_home" && pwd -P)"
+  repos_mk "$repos_tpl_home/code/tplrepo"
+  repos_git -C "$repos_tpl_home/code/tplrepo" worktree add -q -b tpl-lane \
+    "$repos_tpl_home/worktrees/tplrepo/tpl-lane"
+  sed "s|{{ .code_dir }}|$repos_tpl_home/code|" \
+    home/dot_config/groundwork/repos.conf.tmpl \
+    >"$repos_tpl_home/.config/groundwork/repos.conf"
+  env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null NO_COLOR=1 \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --no-cache list \
+    >"$repos_dir/tpl-list"
+  grep -qF "$repos_tpl_home/code/tplrepo"$'\t' "$repos_dir/tpl-list" \
+    || fail "template roots no longer list repos under the code directory"
+  grep -qF "$repos_tpl_home/worktrees/tplrepo/tpl-lane"$'\t'"wt" "$repos_dir/tpl-list" \
+    || fail "template roots do not list a worktree at ~/worktrees/<repo>/<slug>"
 
   # Strict live discovery is all-or-nothing. Even when find emits a valid prefix,
   # a nonzero traversal status produces no list and names the failed root.
