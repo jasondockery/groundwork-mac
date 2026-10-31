@@ -97,6 +97,9 @@ cache_file="$cache_home/groundwork/repos.list"
 
 # Defaults; repos.conf normally restates them, so a missing config still works.
 roots=()
+# Roots declared with `optional_root`: skipped silently when absent, even in
+# strict mode. Newline-delimited so paths with spaces survive.
+optional_roots=$'\n'
 max_depth=4
 include_worktrees=true
 cache_ttl_seconds=30
@@ -135,6 +138,11 @@ parse_config_file() {
     [[ -n "$key" && -n "$value" ]] || continue
     case "$key" in
       root) roots+=("$(expand_home "$value")") ;;
+      optional_root)
+        value="$(expand_home "$value")"
+        roots+=("$value")
+        optional_roots="$optional_roots$value"$'\n'
+        ;;
       max_depth) max_depth="$value" ;;
       include_worktrees) include_worktrees="$value" ;;
       cache_ttl_seconds) cache_ttl_seconds="$value" ;;
@@ -217,7 +225,7 @@ discover() {
   prune_expr+=(-name '')
   for root in "${roots[@]}"; do
     if [[ ! -d "$root" ]]; then
-      if [[ "$strict" -eq 1 ]]; then
+      if [[ "$strict" -eq 1 && "$optional_roots" != *$'\n'"$root"$'\n'* ]]; then
         printf 'groundwork-repos: strict discovery requires configured root: %q\n' "$root" >&2
         return 1
       fi

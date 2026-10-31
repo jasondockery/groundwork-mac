@@ -28,10 +28,10 @@ root = {{ .code_dir }}
 # own root to be listed. <repo>/<slug> is two levels deep, well inside
 # max_depth. This only makes those lanes visible: it does not move any tool's
 # own worktrees here (Cursor, Claude Code, Codex, Herdr, T3 Code keep theirs).
-# Create the directory (mkdir -p ~/worktrees) if it does not exist yet:
-# strict discovery, used by automatic pnpm maintenance, requires every
-# configured root to exist.
-root = ~/worktrees
+# It is an optional_root: a machine that has no ~/worktrees yet is fine, even
+# for strict discovery (automatic pnpm maintenance), which otherwise requires
+# every configured root to exist.
+optional_root = ~/worktrees
 
 # How many directory levels below a root a repository may sit.
 max_depth = 4

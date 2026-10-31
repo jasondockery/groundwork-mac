@@ -16710,7 +16710,7 @@ SH
   test -f home/dot_config/lazygit/config.yml
   # Discovery stays dynamic: the managed config configures ROOTS, never names.
   grep -qF 'root = {{ .code_dir }}' home/dot_config/groundwork/repos.conf.tmpl
-  grep -qxF 'root = ~/worktrees' home/dot_config/groundwork/repos.conf.tmpl
+  grep -qxF 'optional_root = ~/worktrees' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'max_depth' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'include_worktrees' home/dot_config/groundwork/repos.conf.tmpl
   grep -qF 'cache_ttl_seconds' home/dot_config/groundwork/repos.conf.tmpl
@@ -16944,6 +16944,27 @@ EOF
     || fail "template roots no longer list repos under the code directory"
   grep -qF "$repos_tpl_home/worktrees/tplrepo/tpl-lane"$'\t'"wt" "$repos_dir/tpl-list" \
     || fail "template roots do not list a worktree at ~/worktrees/<repo>/<slug>"
+
+  # A fresh HOME with NO ~/worktrees: the optional root is skipped silently,
+  # including by the strict --no-cache form pnpm maintenance uses, while a
+  # missing required root still fails strict discovery.
+  rm -rf "$repos_tpl_home/worktrees"
+  env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null NO_COLOR=1 \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --strict --no-cache list \
+    >"$repos_dir/tpl-strict" \
+    || fail "strict discovery failed when only the optional ~/worktrees root is absent"
+  grep -qF "$repos_tpl_home/code/tplrepo"$'\t' "$repos_dir/tpl-strict" \
+    || fail "strict discovery without ~/worktrees lost the code directory repos"
+  rm -rf "$repos_tpl_home/code"
+  if env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --strict --no-cache list \
+    >/dev/null 2>&1; then
+    fail "strict discovery must still fail when a required root is absent"
+  fi
 
   # Strict live discovery is all-or-nothing. Even when find emits a valid prefix,
   # a nonzero traversal status produces no list and names the failed root.
