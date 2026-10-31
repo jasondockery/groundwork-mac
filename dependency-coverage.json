@@ -174,7 +174,7 @@
       "paths": ["home/dot_config/mise/config.toml"],
       "canonical": "home/dot_config/mise/config.toml#tools.python",
       "agePolicy": "renovate-minimum-release-age",
-      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval comes from the shared preset, so this repo does not duplicate that rule. The secondary 3.12 array entry is outside mise extraction and is refused if it ever becomes the current value, because Aider still needs audioop.",
+      "compensatingControl": "The shared preset's five-day floor applies to timestamped Python tags. Required CI and owner review gate the PR. Line-bump Dependency Dashboard approval comes from the shared preset, so this repo does not duplicate that rule.",
       "extractionMatchers": [
         { "manager": "mise", "packageFilePattern": "^home/dot_config/mise/config\\.toml$", "depNamePattern": "^python$" }
       ],
@@ -185,7 +185,7 @@
           "linePattern": "^python\\s*="
         }
       ],
-      "note": "Renovate's mise manager updates only the first array entry and, with semver-partial, writes that request as major.minor. python = [\"3.13\", \"3.12\"] therefore proposes movement of 3.13, such as to 3.15, and leaves 3.12 pinned for Aider."
+      "note": "python = \"3.15\" is a single major.minor request. With semver-partial, Renovate proposes the next line, such as 3.16, and writes it back as major.minor so mise keeps floating patches."
     },
     {
       "id": "corepack-runtime",
@@ -199,19 +199,6 @@
         { "pathPattern": "^(?:home/dot_local/share/groundwork/node-toolchain\\.env|home/run_after_15-pnpm-corepack\\.sh)$", "pattern": "version-assignment" }
       ],
       "note": "Corepack compatibility is reviewed deliberately rather than updated as an isolated version token."
-    },
-    {
-      "id": "aider-python-compatibility",
-      "classification": "intentional-manual",
-      "manager": "compatibility-review",
-      "paths": ["home/run_after_20-tools.sh.tmpl", "home/dot_config/mise/config.toml"],
-      "canonical": "home/run_after_20-tools.sh.tmpl#aider_python",
-      "agePolicy": "external-tool-policy",
-      "compensatingControl": "The validator requires the intentional Python 3.12 compatibility pin to remain explicit and compatible.",
-      "scanMatchers": [
-        { "pathPattern": "^home/run_after_20-tools\\.sh\\.tmpl$", "pattern": "version-assignment", "linePattern": "aider_python=" }
-      ],
-      "note": "Aider's compatibility runtime is a deliberate exception to the general Python channel."
     },
     {
       "id": "karabiner-compatibility-floor",

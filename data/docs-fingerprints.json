@@ -50,16 +50,16 @@
       "lastmod": "2026-08-11"
     },
     "dependencies.html": {
-      "sha256": "a80626724d93178d6112871f589d8440ccb99bfc51bc8888de07084dabd9e41c",
-      "lastmod": "2026-10-30"
+      "sha256": "3724e6f3b7a7ce9fcfaa3727ddd87e65a56e9817efaf83d6af8fa16f6f9ec1fa",
+      "lastmod": "2026-10-31"
     },
     "development.html": {
       "sha256": "bdf9f7f1313f4e7fe4d8b17e63f8e2f17c5302e87c08d59808368637b55f16bd",
       "lastmod": "2026-08-11"
     },
     "editors-ai.html": {
-      "sha256": "40cfd98aeac7036f3845c749f89ff63ed9155d616b5062520f4d0524b7fbe20c",
-      "lastmod": "2026-10-29"
+      "sha256": "054674a597cbe74584cf0e042d64c1718a51c4225d64c003cb9c9e6bed52985c",
+      "lastmod": "2026-10-31"
     },
     "game-dev-learn.html": {
       "sha256": "d03ac9f4875712a2c2f890660fa6c55b78595da5b38cb90f99c7ec0703907741",
@@ -114,8 +114,8 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "ec8a1344645b0146384ecc027dfa06bb8c8f747d67ff30750e71d276348ae796",
-      "lastmod": "2026-10-30"
+      "sha256": "4fec20758ea854adec079c3b880cd2ec87a2d1d85338efa3c486af0da3a053a8",
+      "lastmod": "2026-10-31"
     },
     "keyboard.html": {
       "sha256": "de050cec0c5b72215e75f9dea81f4301cef219c5788df609af0aed75e1b60d42",
@@ -182,11 +182,11 @@
       "lastmod": "2026-10-18"
     },
     "tmux.html": {
-      "sha256": "3862cdddfa7be81390a84e9e65630fabd54e3b3efa557c7bfa579112fb5d0bb6",
-      "lastmod": "2026-10-18"
+      "sha256": "d3708db1a58856436577d202a8b9e07e111cae850871d04f15be0510f2920ca2",
+      "lastmod": "2026-10-31"
     },
     "troubleshooting.html": {
-      "sha256": "18c829adcd510defbd1371aca9104062b9761de53cf3d5cea7fbb54a014ba5f1",
+      "sha256": "8371d484f57d437017cae4ad4ba1849ac52cc65baaa115cd273c4d61783a3ae3",
       "lastmod": "2026-10-31"
     },
     "web-dev.html": {

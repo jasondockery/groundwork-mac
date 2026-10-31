@@ -16502,7 +16502,6 @@ required_ids = {
     "mise-node-alias",
     "mise-python",
     "corepack-runtime",
-    "aider-python-compatibility",
     "tmux-plugin-release",
     "workflow-policy-fixtures",
     "headless-release-assets",
@@ -16633,48 +16632,37 @@ if post_upgrade != {
 mise_config = tomllib.loads((root / "home/dot_config/mise/config.toml").read_text(encoding="utf-8"))
 if mise_config.get("tools", {}).get("node") != "lts":
     raise SystemExit("the managed mise config must keep node on the lts alias")
-aider_python = re.compile(r"^3\.12(?:\..*)?$")
+python_request = re.compile(r"^[0-9]+\.[0-9]+$")
 
-def python_array_error(versions):
-    # The first entry is whatever managed line the owner has approved. Pinning
-    # it here would make every Renovate line bump fail static until someone
-    # edited this file. 3.12 stays second so Aider's pin is not the one mise
-    # updates.
-    if (
-        not isinstance(versions, list)
-        or len(versions) != 2
-        or not all(isinstance(version, str) for version in versions)
-        or aider_python.fullmatch(versions[1]) is None
-        or aider_python.fullmatch(versions[0]) is not None
-    ):
-        return "python must be two strings, with 3.12 or 3.12.* only in the second entry"
+def python_version_error(version):
+    # One managed Python, written as a major.minor request so mise floats
+    # patches. The line itself is not pinned here: Renovate line bumps must
+    # pass static without anyone editing this file (issue #59).
+    if not isinstance(version, str) or python_request.fullmatch(version) is None:
+        return "python must be a single major.minor string such as \"3.15\""
     return None
 
-python_array_negative_cases = (
-    (["3.12", "3.13"], "3.12 first"),
-    (["3.12.1", "3.12"], "3.12.1 first"),
-    (["3.13"], "missing 3.12"),
-    (["3.13", "3.12", "3.11"], "extra entry"),
-    (["3.15", "3.13"], "second entry is not 3.12"),
-    ("3.13", "not a list"),
+python_version_negative_cases = (
+    (["3.15", "3.12"], "two-entry array"),
+    (["3.15"], "one-element array"),
+    ("", "empty string"),
+    ("3", "major only"),
+    ("3.15.1", "exact patch pin"),
+    ("latest", "alias"),
+    (3.15, "not a string"),
 )
-for python_array_case, python_array_label in python_array_negative_cases:
-    if python_array_error(python_array_case) is None:
-        raise SystemExit(f"python array negative control did not fail: {python_array_label}")
-python_array_acceptance_cases = (
-    ["3.15", "3.12"],
-    ["3.13.1", "3.12.9"],
-)
-for python_array_case in python_array_acceptance_cases:
-    python_array_failure = python_array_error(python_array_case)
-    if python_array_failure:
+for python_version_case, python_version_label in python_version_negative_cases:
+    if python_version_error(python_version_case) is None:
+        raise SystemExit(f"python version negative control did not fail: {python_version_label}")
+for python_version_case in ("3.15", "3.16", "4.0"):
+    python_version_failure = python_version_error(python_version_case)
+    if python_version_failure:
         raise SystemExit(
-            f"python array acceptance control failed for {python_array_case}: {python_array_failure}"
+            f"python version acceptance control failed for {python_version_case!r}: {python_version_failure}"
         )
-python_versions = mise_config.get("tools", {}).get("python")
-python_array_failure = python_array_error(python_versions)
-if python_array_failure:
-    raise SystemExit(python_array_failure)
+python_version_failure = python_version_error(mise_config.get("tools", {}).get("python"))
+if python_version_failure:
+    raise SystemExit(python_version_failure)
 node_alias_rules = [
     rule
     for rule in renovate_config.get("packageRules", [])
@@ -16695,13 +16683,8 @@ python_rules = [
     if rule.get("matchDepNames") == ["python"]
 ]
 python_versioning_rules = [rule for rule in python_rules if rule.get("versioning") == "semver-partial"]
-python_pin_rules = [
-    rule
-    for rule in python_rules
-    if rule.get("matchCurrentValue") == r"/^3\.12(?:\..*)?$/"
-]
-if python_rules != python_versioning_rules + python_pin_rules:
-    raise SystemExit("Python package rules must be the semver-partial request rule and the 3.12 pin rule")
+if python_rules != python_versioning_rules:
+    raise SystemExit("the only Python package rule must be the semver-partial request rule")
 if python_versioning_rules != [{
     "description": "Keep the managed Python request at major.minor. semver-partial writes the two-component request 3.15 when the selected release is 3.15.0, so mise still treats the request as fuzzy and update-all's five-day floor can float patches inside the line. An exact pin would skip that floor.",
     "matchManagers": ["mise"],
@@ -16710,15 +16693,6 @@ if python_versioning_rules != [{
     "versioning": "semver-partial",
 }]:
     raise SystemExit("the Python request must stay on semver-partial so mise can float patches inside the line")
-if python_pin_rules != [{
-    "description": "Aider still imports audioop, which Python 3.13 removed, so the 3.12 entry in python = [\"3.13\", \"3.12\"] must stay pinned. Renovate's mise manager (44.173.1) updates only the first array entry and does not read 3.12 while it stays second. If 3.12 is ever extracted as the current value, do not propose a bump.",
-    "matchManagers": ["mise"],
-    "matchDepNames": ["python"],
-    "matchFileNames": ["home/dot_config/mise/config.toml"],
-    "matchCurrentValue": "/^3\\.12(?:\\..*)?$/",
-    "enabled": False,
-}]:
-    raise SystemExit("the Python 3.12 pin rule must stay exact and must not add local line-bump approval")
 if any("dependencyDashboardApproval" in rule for rule in python_rules):
     raise SystemExit("Python line-bump approval belongs to the shared preset, not this repo")
 gitleaks_age_rules = [
@@ -17817,11 +17791,27 @@ EOF
     exit 1
   fi
   assert_no_matches "personal snippet filename found" rg -n 'jason-snippets' home docs README.md
-  # The managed Python array's shape is checked structurally above, including
-  # negative controls. An exact ["3.13", "3.12"] grep here failed every
-  # Renovate line bump (issue #59).
-  grep -Eq '^[[:space:]]*aider_python="3\.12"[[:space:]]*$' home/run_after_20-tools.sh.tmpl
-  grep -qF "uv tool install --python \"\$aider_python\" --reinstall aider-chat" home/run_after_20-tools.sh.tmpl
+  # The managed Python version is checked structurally above, including
+  # negative controls. An exact-version grep here failed every Renovate line
+  # bump (issue #59).
+  # Groundwork no longer ships Aider. The only aider reference allowed on an
+  # install surface is the guarded, one-shot cleanup of the uv tool earlier
+  # versions installed. It lives in a run_once_ script so an Aider the user
+  # reinstalls later survives every later apply, and it must never touch the
+  # user's ~/.aider* config.
+  assert_no_matches "an install surface still installs aider" rg -n -i \
+    -e '\b(uv tool|pipx|pip3?|brew|mise|npm|pnpm)\b[^#]*\b(install|use|add)\b[^#]*aider' \
+    -e '^[[:space:]]*(brew|cask)[[:space:]]+"aider' \
+    -e 'uvx[[:space:]]+[^#]*aider' \
+    home bootstrap-mac.sh Dockerfile docker scripts/ci-install-linux-tools
+  aider_cleanup=home/run_once_after_26-remove-aider.sh
+  test -x "$aider_cleanup"
+  grep -Eq "^[[:space:]]*if uv tool list 2>/dev/null \| grep -Eq '\^aider-chat\(\[\[:space:\]\]\|\\\$\)'; then\$" "$aider_cleanup"
+  grep -Eq '^[[:space:]]*if uv tool uninstall aider-chat; then$' "$aider_cleanup"
+  assert_no_matches "the Aider cleanup must run once, not on every apply" \
+    rg -n -F -e 'uv tool uninstall aider-chat' --glob '!run_once_*' home
+  assert_no_matches "the Aider cleanup must not touch user config" rg -n -e '\b(rm|trash|mv|unlink)\b[^#]*\.aider' home
+  assert_no_matches "the managed mise config must not pin a second Python" rg -n -F '3.12' home/dot_config/mise/config.toml
   grep -qF "tmux_plugin_dir=\"\$HOME/.config/tmux/plugins\"" home/run_after_20-tools.sh.tmpl
   grep -qF "tmux_conf=\"\$HOME/.config/tmux/tmux.conf\"" home/run_after_20-tools.sh.tmpl
   test -f home/dot_config/tmux/tmux.conf.tmpl

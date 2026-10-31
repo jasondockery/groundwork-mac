@@ -75,16 +75,6 @@ if command -v mise >/dev/null 2>&1; then
   mise install || true
 fi
 
-if command -v uv >/dev/null 2>&1; then
-  # Aider's voice dependency still imports audioop/pyaudioop on startup. Python
-  # 3.13 removed audioop, so keep Aider's isolated uv tool runtime on 3.12 until
-  # that upstream dependency path is fixed.
-  aider_python="3.12"
-  if ! command -v aider >/dev/null 2>&1 || ! aider --version >/dev/null 2>&1; then
-    uv tool install --python "$aider_python" --reinstall aider-chat || true
-  fi
-fi
-
 # Docker CLI zsh completion, generated into the same location Docker Desktop's
 # "Configure shell completions -> Install" button uses. The button edits
 # ~/.zshrc directly, which chezmoi owns and would revert on the next apply;

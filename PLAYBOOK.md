@@ -29,14 +29,13 @@ What Renovate manages here:
   only `ghcr.io/gitleaks/gitleaks`; its tag and digest, required CI, and owner
   review remain the delivery controls. Without that exception, strict age
   checking would leave every newer Gitleaks tag pending forever.
-- The primary Python version in `home/dot_config/mise/config.toml`. Renovate's
-  mise manager updates only the first array entry, so `python = ["3.13", "3.12"]`
-  can move `3.13` and leave `3.12` pinned for Aider (`audioop`). A local rule
+- The Python version in `home/dot_config/mise/config.toml`. It is a single
+  version, `python = "3.15"`, and Renovate's mise manager proposes line bumps
+  for it. A local rule
   sets `versioning` to `semver-partial`, so the written request stays two
   components, such as `3.15`. mise treats that request as fuzzy, and a later
   patch stays under the five-day machine floor. An exact tag is exempt from that
-  floor. A local rule also refuses a bump if `3.12` is ever the extracted
-  value. `node = "lts"` in
+  floor. `node = "lts"` in
   that file is extracted and then disabled, so it does not become a numbered
   release. `.nvmrc` and the repository `mise.toml` stay ignored because
   `tools/sync-toolchain.mjs` rewrites them from `.node-version`. With
@@ -45,7 +44,7 @@ What Renovate manages here:
   file, including `home/dot_config/mise/config.toml`. `fileFilters` is only
   the allowlist of files committed after the command runs. The command reads
   `.node-version` and rewrites `.nvmrc`, `mise.toml`, and `package.json`. It
-  leaves the Python array alone and adds nothing when those already match.
+  leaves the Python version alone and adds nothing when those already match.
   The allowlist is those three files.
   Python line-bump Dependency Dashboard approval is not a local rule. It
   comes from preset `github>jasondockery/renovate-config#1.2.0`, which this
@@ -53,7 +52,7 @@ What Renovate manages here:
 
 `dependency-coverage.json` also records the intentional manual lanes: Homebrew
 packages, checksum-coupled ShellCheck/shfmt assets, the Corepack compatibility
-pin, Aider's Python compatibility choice, the tmux theme release, and headless
+pin, the tmux theme release, and headless
 install-time release discovery. `update-all` still applies the five-day mise
 floor to fuzzy machine requests, including the `node = "lts"` alias and a
 two-component Python line. The `semver-partial` rule keeps that line fuzzy,
