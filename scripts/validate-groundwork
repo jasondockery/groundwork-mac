@@ -1186,6 +1186,7 @@ validate_static_foundation() {
   python3 -B tests/test_imessage_gateway.py
   python3 -B tests/test_local_inference.py
   python3 -B tests/test_git_filter_repo.py
+  python3 -B tests/test_claude_code_owner.py
   python3 -B tests/test_commit_identity_guard.py
   python3 -B tests/test_core_pin.py
 

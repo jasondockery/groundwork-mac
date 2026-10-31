@@ -99,3 +99,36 @@ gw_claude_ownership_report() {
   fi
   return 0
 }
+
+# Groundwork's claude_code_owner names which installation should own `claude`.
+# Two copies are not a failure: report the chosen owner and how to remove the
+# other one, and never change either installation here.
+gw_claude_dual_install_report() {
+  local owner="${1:-homebrew}" native="$HOME/.local/bin/claude" brew_bin prefix
+  local managed managed_real native_version managed_version chosen
+  case "$owner" in homebrew | native) ;; *) owner=homebrew ;; esac
+  [[ -e "$native" || -L "$native" ]] || return 0
+  brew_bin="${GROUNDWORK_BREW_BIN:-}"
+  [[ -n "$brew_bin" ]] || brew_bin="$(command -v brew || true)"
+  [[ -n "$brew_bin" ]] || return 0
+  prefix="$(gw_cli_bounded "$brew_bin" --prefix 2>/dev/null)" || return 0
+  [[ "$prefix" == /* && "$prefix" != *$'\n'* && "$prefix" != *$'\t'* ]] || return 0
+  managed="$prefix/bin/claude"
+  managed_real="$(gw_cli_resolve "$managed")" || return 0
+  case "$managed_real" in "$prefix/Caskroom/claude-code@latest/"*) ;; *) return 0 ;; esac
+  native_version="$(gw_cli_version "$native")" || native_version=unknown
+  managed_version="$(gw_cli_version "$managed")" || managed_version=unknown
+  printf 'Claude Code warning: two copies are installed: native %s (version %s) and Homebrew claude-code@latest %s (version %s).\n' \
+    "$native" "$native_version" "$managed" "$managed_version"
+  chosen="$managed"
+  if [[ "$owner" == native ]]; then
+    chosen="$native"
+    echo 'Claude Code chosen owner: native (claude_code_owner = "native"; change it with groundwork-configure).'
+    echo 'Remove the Homebrew copy: brew uninstall --cask claude-code@latest'
+  else
+    echo 'Claude Code chosen owner: homebrew (claude_code_owner = "homebrew"; change it with groundwork-configure).'
+    echo 'Remove the native copy, with a private rollback backup: groundwork-claude-owner homebrew --yes'
+  fi
+  printf 'Point the T3 Code Claude provider Binary path at the chosen owner: %s\n' "$chosen"
+  return 0
+}
