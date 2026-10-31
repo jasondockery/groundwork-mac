@@ -16965,6 +16965,17 @@ EOF
     >/dev/null 2>&1; then
     fail "strict discovery must still fail when a required root is absent"
   fi
+  # A path listed as both root and optional_root stays required.
+  printf 'root = %s/worktrees\n' "$repos_tpl_home" \
+    >>"$repos_tpl_home/.config/groundwork/repos.conf"
+  mkdir -p "$repos_tpl_home/code"
+  if env -i HOME="$repos_tpl_home" PATH="$repos_path" \
+    XDG_CONFIG_HOME="$repos_tpl_home/.config" XDG_CACHE_HOME="$repos_tpl_home/.cache" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+    /bin/bash home/dot_local/bin/executable_groundwork-repos --strict --no-cache list \
+    >/dev/null 2>&1; then
+    fail "a path configured as both root and optional_root must stay required"
+  fi
 
   # Strict live discovery is all-or-nothing. Even when find emits a valid prefix,
   # a nonzero traversal status produces no list and names the failed root.

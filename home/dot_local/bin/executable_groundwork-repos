@@ -100,6 +100,8 @@ roots=()
 # Roots declared with `optional_root`: skipped silently when absent, even in
 # strict mode. Newline-delimited so paths with spaces survive.
 optional_roots=$'\n'
+# Roots declared with plain `root`; a path in both lists stays required.
+required_roots=$'\n'
 max_depth=4
 include_worktrees=true
 cache_ttl_seconds=30
@@ -137,7 +139,11 @@ parse_config_file() {
     value="$(trim "${line#*=}")"
     [[ -n "$key" && -n "$value" ]] || continue
     case "$key" in
-      root) roots+=("$(expand_home "$value")") ;;
+      root)
+        value="$(expand_home "$value")"
+        roots+=("$value")
+        required_roots="$required_roots$value"$'\n'
+        ;;
       optional_root)
         value="$(expand_home "$value")"
         roots+=("$value")
@@ -225,7 +231,7 @@ discover() {
   prune_expr+=(-name '')
   for root in "${roots[@]}"; do
     if [[ ! -d "$root" ]]; then
-      if [[ "$strict" -eq 1 && "$optional_roots" != *$'\n'"$root"$'\n'* ]]; then
+      if [[ "$strict" -eq 1 && ( "$optional_roots" != *$'\n'"$root"$'\n'* || "$required_roots" == *$'\n'"$root"$'\n'* ) ]]; then
         printf 'groundwork-repos: strict discovery requires configured root: %q\n' "$root" >&2
         return 1
       fi
