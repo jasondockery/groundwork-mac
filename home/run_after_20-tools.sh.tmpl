@@ -75,13 +75,17 @@ if command -v mise >/dev/null 2>&1; then
   mise install || true
 fi
 
+# Groundwork no longer ships Aider. Earlier versions installed it as a uv tool,
+# so remove only that tool environment on machines that still have it. User
+# config such as ~/.aider* is left alone; it is safe to delete by hand.
 if command -v uv >/dev/null 2>&1; then
-  # Aider's voice dependency still imports audioop/pyaudioop on startup. Python
-  # 3.13 removed audioop, so keep Aider's isolated uv tool runtime on 3.12 until
-  # that upstream dependency path is fixed.
-  aider_python="3.12"
-  if ! command -v aider >/dev/null 2>&1 || ! aider --version >/dev/null 2>&1; then
-    uv tool install --python "$aider_python" --reinstall aider-chat || true
+  if uv tool list 2>/dev/null | grep -Eq '^aider-chat([[:space:]]|$)'; then
+    echo "Removing aider-chat (installed by an earlier Groundwork version)..."
+    if uv tool uninstall aider-chat; then
+      echo "Removed aider-chat. Leftover ~/.aider* files are yours; delete them by hand if unused."
+    else
+      echo "Could not remove aider-chat; run: uv tool uninstall aider-chat" >&2
+    fi
   fi
 fi
 
