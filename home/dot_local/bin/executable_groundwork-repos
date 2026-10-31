@@ -231,7 +231,7 @@ discover() {
   prune_expr+=(-name '')
   for root in "${roots[@]}"; do
     if [[ ! -d "$root" ]]; then
-      if [[ "$strict" -eq 1 && ( "$optional_roots" != *$'\n'"$root"$'\n'* || "$required_roots" == *$'\n'"$root"$'\n'* ) ]]; then
+      if [[ "$strict" -eq 1 && ("$optional_roots" != *$'\n'"$root"$'\n'* || "$required_roots" == *$'\n'"$root"$'\n'*) ]]; then
         printf 'groundwork-repos: strict discovery requires configured root: %q\n' "$root" >&2
         return 1
       fi
