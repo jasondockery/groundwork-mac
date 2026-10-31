@@ -60,6 +60,35 @@ if [[ ! -f "$guard" ]]; then
   exit 0
 fi
 
+# The owner-scoped remote URL patterns come only from the pinned core, next to
+# the guard (core/commit-guard/owner-remote-patterns). Read and validate them
+# before anything is written: a missing, empty, or comment-only list, or a line
+# without <owner> (which would guard repositories this user does not own),
+# fails closed with nothing installed or changed.
+owner="jasondockery"
+owner_glob=""
+for ((i = 0; i < ${#owner}; i++)); do
+  ch="${owner:i:1}"
+  upper="$(printf '%s' "$ch" | tr '[:lower:]' '[:upper:]')"
+  if [[ "$upper" == "$ch" ]]; then owner_glob+="$ch"; else owner_glob+="[$ch$upper]"; fi
+done
+patterns_file="$(dirname "$guard")/owner-remote-patterns"
+patterns_fail() {
+  echo "Groundwork commit identity guard: $1; nothing was installed or changed. Update the core submodule (git submodule update --init core), then run groundwork-update." >&2
+  exit 1
+}
+[[ -f "$patterns_file" && -r "$patterns_file" ]] \
+  || patterns_fail "the owner remote pattern list is missing ($patterns_file)"
+owner_patterns=()
+while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+  case "$pattern" in '' | '#'*) continue ;; esac
+  [[ "$pattern" == *"<owner>"* ]] \
+    || patterns_fail "a pattern in $patterns_file has no <owner>: $pattern"
+  owner_patterns+=("${pattern//<owner>/$owner_glob}")
+done <"$patterns_file"
+[[ "${#owner_patterns[@]}" -gt 0 ]] \
+  || patterns_fail "the owner remote pattern list has no patterns ($patterns_file)"
+
 # Hook names that forward to the repository's own hooks.
 hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge post-rewrite pre-push pre-auto-gc reference-transaction push-to-checkout sendemail-validate fsmonitor-watchman post-index-change p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit pre-receive update proc-receive post-receive post-update"
 
@@ -143,29 +172,8 @@ for hook in $hook_names; do
   fi
 done
 
-# core.hooksPath, scoped to repositories with an owned GitHub remote.
-owner="jasondockery"
-owner_glob=""
-for ((i = 0; i < ${#owner}; i++)); do
-  ch="${owner:i:1}"
-  upper="$(printf '%s' "$ch" | tr '[:lower:]' '[:upper:]')"
-  if [[ "$upper" == "$ch" ]]; then owner_glob+="$ch"; else owner_glob+="[$ch$upper]"; fi
-done
-# The owner-scoped remote URL patterns come from the pinned core, next to the
-# guard (core/commit-guard/owner-remote-patterns). A core without that file
-# gets the same five patterns built in.
-owner_patterns=()
-patterns_file="$(dirname "$guard")/owner-remote-patterns"
-if [[ -r "$patterns_file" ]]; then
-  while IFS= read -r pattern || [[ -n "$pattern" ]]; do
-    case "$pattern" in '' | '#'*) continue ;; esac
-    owner_patterns+=("${pattern//<owner>/$owner_glob}")
-  done <"$patterns_file"
-fi
-if [[ "${#owner_patterns[@]}" -eq 0 ]]; then
-  owner_patterns=("https://github.com/$owner_glob/**" "git@github.com:$owner_glob/**"
-    "ssh://git@github.com/$owner_glob/**" "*:$owner_glob/**" "ssh://*/$owner_glob/**")
-fi
+# core.hooksPath, scoped to repositories with an owned GitHub remote; the
+# patterns were read and validated before anything was written.
 include_file="$gw/commit-guard.gitconfig"
 cwd_safe="$(mktemp -d)"
 trap 'rmdir "$cwd_safe" 2>/dev/null || true' EXIT

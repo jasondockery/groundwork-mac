@@ -277,21 +277,35 @@ class CommitIdentityInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(self.git("config", "--get", "core.hooksPath", cwd=repo).stdout.strip(), "")
 
-    def test_a_core_without_the_patterns_file_gets_the_same_five(self):
-        bare = Path(self.temp.name) / "old-core"
-        bare.mkdir()
-        guard = bare / GUARD.name
+    def install_with_patterns(self, patterns):
+        core = Path(self.temp.name) / "fixture-core"
+        core.mkdir()
+        guard = core / GUARD.name
         shutil.copy2(GUARD, guard)
-        result = subprocess.run(["bash", str(INSTALL), "--guard", str(guard)],
-                                env=self.env, text=True, capture_output=True, timeout=30)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        built_in = self.git("config", "--file", str(self.home / ".config/git/config"),
-                            "--get-regexp", r"^includeif\..*\.path$").stdout
-        (self.home / ".config/git/config").unlink()
-        self.run_install()
-        from_core = self.git("config", "--file", str(self.home / ".config/git/config"),
-                             "--get-regexp", r"^includeif\..*\.path$").stdout
-        self.assertEqual(built_in, from_core)
+        if patterns is not None:
+            (core / PATTERNS.name).write_text(patterns)
+        return subprocess.run(["bash", str(INSTALL), "--guard", str(guard)],
+                              env=self.env, text=True, capture_output=True, timeout=30)
+
+    def test_a_bad_pattern_list_fails_closed_and_writes_nothing(self):
+        cases = {
+            "missing": (None, "is missing"),
+            "empty": ("", "has no patterns"),
+            "comment-only": ("# only comments\n\n# here\n", "has no patterns"),
+            "line without owner": ("https://github.com/<owner>/**\n**\n", "has no <owner>: **"),
+        }
+        for name, (patterns, message) in cases.items():
+            with self.subTest(name):
+                before = self.snapshot()
+                result = self.install_with_patterns(patterns)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertIn("nothing was installed or changed", result.stderr)
+                self.assertEqual(self.snapshot(), before, "a rejected pattern list wrote files")
+                self.assertFalse(self.gw.exists())
+                self.assertFalse((self.home / ".config/git").exists())
+                self.assertFalse(self.settings.exists())
+                shutil.rmtree(Path(self.temp.name) / "fixture-core")
 
     def test_userinfo_urls_are_not_matched(self):
         self.run_install()
