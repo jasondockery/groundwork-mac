@@ -56,8 +56,28 @@ wider.
   markers are rejected through read-only Git inspection, worktree policy is
   honored, hooks/fsmonitor are disabled, and no discovery cache is written.
   Every configured root must exist and each `find` traversal must finish
-  successfully; partial output is discarded and acting mode records incomplete
-  pnpm inventory without touching a store.
+  successfully; partial output is discarded and no store is touched.
+- **Incomplete discovery is a warning, not a failed repair** (issue #111).
+  Discovery is read-only, so a timeout, a failed strict traversal, or an
+  unusable jq skips pnpm store cleanup for that run: the helper says why,
+  records no pending repair, leaves the cadence state alone, returns the
+  `discovery-incomplete` receipt status, and `update-all` lists it under
+  Warning. A pnpm record from a real earlier failure (a prune that started or
+  failed) stays pending and still fails the run. Earlier releases recorded a
+  pending reminder for incomplete discovery alone; acting mode retires exactly
+  that reminder because it never described a touched store.
+- **Discovery scales by bounded parallel probes, never by shared results.**
+  Each repository still resolves its own store and version, because store
+  configuration can differ per worktree (`.npmrc`, workspace `storeDir`, mise
+  environment, filesystem). Up to `GROUNDWORK_PNPM_DISCOVERY_JOBS` (default 4,
+  at most 16) probes run at once inside the one supervised process group, so
+  the cumulative deadline still cancels all of them. The same-run uncached
+  observation is preserved by probing one leader per Corepack context key
+  before its followers. Lockfile or worktree dedupe, skipping records without
+  `node_modules`, and cross-run caching were rejected: each would let an
+  unobserved selector hide a conflicting pnpm major. A partial inventory is
+  still discarded rather than kept as incomplete candidates, because it cannot
+  prove the absence of a conflicting selector.
   Exact stable `packageManager` pins are resolved with Corepack networking
   disabled. Integrity suffixes are accepted, but prerelease pins are
   review-only for unattended maintenance. Ambient HOME selection is

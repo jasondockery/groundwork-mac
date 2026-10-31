@@ -8036,6 +8036,29 @@ SH
   test ! -e "$helper_pending" \
     || fail "a successful maintenance helper did not clear generic pending state"
 
+  # Incomplete read-only pnpm discovery touched no store: the transaction
+  # succeeds, records no repair, and names the skip under Warning.
+  mv "$update_all_bin/groundwork-cleanup" "$update_all_fixture/groundwork-cleanup.real"
+  cat >"$update_all_bin/groundwork-cleanup" <<'SH'
+#!/usr/bin/env bash
+printf 'homebrew\tcompleted\nnpm\tcompleted\npnpm\tdiscovery-incomplete\nowner-review\t0\n' \
+  >&"$GROUNDWORK_CLEANUP_RECEIPT_FD"
+SH
+  chmod +x "$update_all_bin/groundwork-cleanup"
+  run_cleanup_case_keeping_state "$update_all_fixture/cleanup-discovery-incomplete" \
+    || fail "incomplete pnpm discovery failed update-all although no store was touched"
+  grep -qF 'pnpm                    skipped · discovery incomplete, no store touched' \
+    "$update_all_fixture/cleanup-discovery-incomplete" \
+    || fail "incomplete pnpm discovery was not named in the maintenance receipt"
+  grep -qF 'pnpm                    store cleanup skipped · repository discovery did not finish' \
+    "$update_all_fixture/cleanup-discovery-incomplete" \
+    || fail "incomplete pnpm discovery was not reported under Warning"
+  grep -qF '1 WARNING(S)' "$update_all_fixture/cleanup-discovery-incomplete" \
+    || fail "incomplete pnpm discovery was not counted in the result warnings"
+  test ! -e "$helper_pending" \
+    || fail "incomplete pnpm discovery left generic helper pending state"
+  mv "$update_all_fixture/groundwork-cleanup.real" "$update_all_bin/groundwork-cleanup"
+
   unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
   for update_all_xdg_name in ${update_all_xdg_saved_names[@]+"${update_all_xdg_saved_names[@]}"}; do
     update_all_xdg_saved_ref="update_all_xdg_saved_${update_all_xdg_name}"
@@ -9284,6 +9307,7 @@ SH
 
   # Exact-pin discovery fails closed when the ambient jq command cannot parse:
   # the fixture replaces jq through PATH, never through an installed override.
+  # Discovery is read-only, so the run warns and skips pnpm instead of failing.
   cat >"$cleanup_bin/jq" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -9293,12 +9317,13 @@ SH
   env "${cleanup_env[@]}" "$cleanup_command" >"$cleanup_fixture/jq-failure-report"
   grep -qF 'Automatic candidates: 0' "$cleanup_fixture/jq-failure-report"
   grep -qF 'jq failed its bounded self-check' "$cleanup_fixture/jq-failure-report"
-  set +e
   env "${cleanup_env[@]}" "$cleanup_command" --yes --force \
-    >"$cleanup_fixture/jq-failure-run" 2>&1
-  cleanup_status=$?
-  set -e
-  [[ "$cleanup_status" -ne 0 ]] || fail "failed exact-pin parsing was reported as complete"
+    >"$cleanup_fixture/jq-failure-run" 2>&1 \
+    || fail "failed exact-pin parsing failed maintenance although no store was touched"
+  grep -qF 'Warning: pnpm store cleanup skipped this run' "$cleanup_fixture/jq-failure-run" \
+    || fail "failed exact-pin parsing did not warn that pnpm cleanup was skipped"
+  test ! -e "$cleanup_home/.local/state/groundwork/update-all-pending/pnpm" \
+    || fail "failed exact-pin parsing recorded a pnpm repair although no store was touched"
   assert_not_contains '^pnpm store prune' "$cleanup_log" \
     "pnpm mutated a store while exact-pin parsing failed"
   rm -f "$cleanup_bin/jq"
@@ -9306,7 +9331,7 @@ SH
 
   # Strict maintenance discovery rejects a partial repository stream whose
   # traversal exits nonzero. The partial row cannot create a candidate, pnpm is
-  # untouched, and acting mode records the incomplete inventory durably.
+  # untouched, and acting mode warns without recording a repair.
   mv "$cleanup_bin/groundwork-repos" "$cleanup_fixture/groundwork-repos.strict-real"
   cat >"$cleanup_bin/groundwork-repos" <<'SH'
 #!/usr/bin/env bash
@@ -9315,18 +9340,16 @@ exit 7
 SH
   chmod +x "$cleanup_bin/groundwork-repos"
   : >"$cleanup_log"
-  set +e
   env "${cleanup_env[@]}" STRICT_PARTIAL_REPO="$cleanup_code/repo-a" \
-    "$cleanup_command" --yes --force >"$cleanup_fixture/strict-partial-discovery" 2>&1
-  cleanup_status=$?
-  set -e
-  [[ "$cleanup_status" -ne 0 ]] \
-    || fail "partial strict repository discovery returned success"
+    "$cleanup_command" --yes --force >"$cleanup_fixture/strict-partial-discovery" 2>&1 \
+    || fail "partial strict repository discovery failed maintenance although no store was touched"
   assert_not_contains '^pnpm store prune' "$cleanup_log" \
     "partial strict repository discovery produced an automatic pnpm mutation"
-  grep -qF 'exact repository discovery is unavailable' \
-    "$cleanup_home/.local/state/groundwork/update-all-pending/pnpm" \
-    || fail "partial strict discovery did not record incomplete pnpm inventory"
+  grep -qF 'pnpm store cleanup skipped this run because repository discovery did not complete' \
+    "$cleanup_fixture/strict-partial-discovery" \
+    || fail "partial strict discovery did not warn that pnpm cleanup was skipped"
+  test ! -e "$cleanup_home/.local/state/groundwork/update-all-pending/pnpm" \
+    || fail "partial strict discovery recorded a pnpm repair although no store was touched"
   mv "$cleanup_fixture/groundwork-repos.strict-real" "$cleanup_bin/groundwork-repos"
   env "${cleanup_env[@]}" "$cleanup_command" --yes --force >/dev/null
 
