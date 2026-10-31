@@ -75,20 +75,6 @@ if command -v mise >/dev/null 2>&1; then
   mise install || true
 fi
 
-# Groundwork no longer ships Aider. Earlier versions installed it as a uv tool,
-# so remove only that tool environment on machines that still have it. User
-# config such as ~/.aider* is left alone; it is safe to delete by hand.
-if command -v uv >/dev/null 2>&1; then
-  if uv tool list 2>/dev/null | grep -Eq '^aider-chat([[:space:]]|$)'; then
-    echo "Removing aider-chat (installed by an earlier Groundwork version)..."
-    if uv tool uninstall aider-chat; then
-      echo "Removed aider-chat. Leftover ~/.aider* files are yours; delete them by hand if unused."
-    else
-      echo "Could not remove aider-chat; run: uv tool uninstall aider-chat" >&2
-    fi
-  fi
-fi
-
 # Docker CLI zsh completion, generated into the same location Docker Desktop's
 # "Configure shell completions -> Install" button uses. The button edits
 # ~/.zshrc directly, which chezmoi owns and would revert on the next apply;

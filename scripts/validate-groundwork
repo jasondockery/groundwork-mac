@@ -17795,15 +17795,21 @@ EOF
   # negative controls. An exact-version grep here failed every Renovate line
   # bump (issue #59).
   # Groundwork no longer ships Aider. The only aider reference allowed on an
-  # install surface is the guarded cleanup of the uv tool earlier versions
-  # installed; it must never touch the user's ~/.aider* config.
+  # install surface is the guarded, one-shot cleanup of the uv tool earlier
+  # versions installed. It lives in a run_once_ script so an Aider the user
+  # reinstalls later survives every later apply, and it must never touch the
+  # user's ~/.aider* config.
   assert_no_matches "an install surface still installs aider" rg -n -i \
     -e '\b(uv tool|pipx|pip3?|brew|mise|npm|pnpm)\b[^#]*\b(install|use|add)\b[^#]*aider' \
     -e '^[[:space:]]*(brew|cask)[[:space:]]+"aider' \
     -e 'uvx[[:space:]]+[^#]*aider' \
     home bootstrap-mac.sh Dockerfile docker scripts/ci-install-linux-tools
-  grep -qF "if uv tool list 2>/dev/null | grep -Eq '^aider-chat([[:space:]]|\$)'; then" home/run_after_20-tools.sh.tmpl
-  grep -qF "    if uv tool uninstall aider-chat; then" home/run_after_20-tools.sh.tmpl
+  aider_cleanup=home/run_once_after_26-remove-aider.sh
+  test -x "$aider_cleanup"
+  grep -Eq "^[[:space:]]*if uv tool list 2>/dev/null \| grep -Eq '\^aider-chat\(\[\[:space:\]\]\|\\\$\)'; then\$" "$aider_cleanup"
+  grep -Eq '^[[:space:]]*if uv tool uninstall aider-chat; then$' "$aider_cleanup"
+  assert_no_matches "the Aider cleanup must run once, not on every apply" \
+    rg -n -F -e 'uv tool uninstall aider-chat' --glob '!run_once_*' home
   assert_no_matches "the Aider cleanup must not touch user config" rg -n -e '\b(rm|trash|mv|unlink)\b[^#]*\.aider' home
   assert_no_matches "the managed mise config must not pin a second Python" rg -n -F '3.12' home/dot_config/mise/config.toml
   grep -qF "tmux_plugin_dir=\"\$HOME/.config/tmux/plugins\"" home/run_after_20-tools.sh.tmpl
