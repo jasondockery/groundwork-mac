@@ -71,18 +71,10 @@ fi
 # Install the tools declared in mise's global config (Node LTS, pnpm, Python).
 # `mise activate` only puts tools on PATH — it never installs them — so without this they're
 # declared but missing. Idempotent: already-installed versions are skipped.
-if command -v mise >/dev/null 2>&1; then
+# A full update-all installs and upgrades in its one mise lane after this
+# apply, so it is skipped here to keep that section to a single run.
+if [[ "${GROUNDWORK_UPDATE_SCOPE:-}" != maintenance ]] && command -v mise >/dev/null 2>&1; then
   mise install || true
-fi
-
-if command -v uv >/dev/null 2>&1; then
-  # Aider's voice dependency still imports audioop/pyaudioop on startup. Python
-  # 3.13 removed audioop, so keep Aider's isolated uv tool runtime on 3.12 until
-  # that upstream dependency path is fixed.
-  aider_python="3.12"
-  if ! command -v aider >/dev/null 2>&1 || ! aider --version >/dev/null 2>&1; then
-    uv tool install --python "$aider_python" --reinstall aider-chat || true
-  fi
 fi
 
 # Docker CLI zsh completion, generated into the same location Docker Desktop's

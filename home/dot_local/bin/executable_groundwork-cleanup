@@ -37,7 +37,10 @@ only artifact availability; every usable repository still resolves its own
 store configuration. Discovery runs a bounded number of probes in parallel under
 one cumulative deadline and reports progress. If it cannot finish, pnpm store
 cleanup is skipped for that run with a warning: no store is touched, no repair
-is recorded, and the next run tries again.
+is recorded, and the next run tries again. Completed records keep their review
+notes and private probe diagnostics. After three consecutive incomplete runs,
+the skip also becomes an owner-review item. Discovery never lets Corepack or
+mise download or install a tool.
 
 Every observation is bounded. Each mutating package-manager command runs in
 its own process group with a hard deadline, visible heartbeat, and cancellation
@@ -120,6 +123,7 @@ state_dir="$HOME/.local/state/groundwork"
 pending_dir="$state_dir/update-all-pending"
 pnpm_success="$state_dir/pnpm-prune-last-success"
 pnpm_attempt="$state_dir/pnpm-prune-last-attempt"
+pnpm_discovery_incomplete_runs="$state_dir/pnpm-discovery-incomplete-runs"
 legacy_pending="$state_dir/homebrew-cleanup-pending"
 deadline="${GROUNDWORK_MAINTENANCE_DEADLINE_SECONDS:-1800}"
 observe_deadline="${GROUNDWORK_MAINTENANCE_OBSERVE_DEADLINE_SECONDS:-120}"
@@ -453,14 +457,21 @@ trusted_store_base() {
   return 1
 }
 
+# Offline discovery may launch pnpm through a mise shim or `mise exec`, and runs
+# several probes at once. Neither Corepack nor mise may download or install a
+# missing tool while it only observes.
+offline_probe_env=(env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  MISE_OFFLINE=1 MISE_AUTO_INSTALL=0 MISE_EXEC_AUTO_INSTALL=0
+  MISE_NOT_FOUND_AUTO_INSTALL=0 MISE_TASK_RUN_AUTO_INSTALL=0)
+
 pnpm_store_path_at() {
   cd "$1"
-  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm store path
+  exec "${offline_probe_env[@]}" pnpm store path
 }
 
 pnpm_version_at() {
   cd "$1"
-  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --version
+  exec "${offline_probe_env[@]}" pnpm --version
 }
 
 mise_npm_path_at_home() {
@@ -525,7 +536,7 @@ pnpm_artifact_key_at() {
   launcher="$(command -v pnpm || true)"
   if [[ "$launcher" == */mise/shims/pnpm ]]; then
     # shellcheck disable=SC2016 # Resolve only these fields inside mise's effective environment.
-    fields="$(cd "$repo" && mise exec -- /bin/bash -c \
+    fields="$(cd "$repo" && "${offline_probe_env[@]}" mise exec -- /bin/bash -c \
       'printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "${COREPACK_HOME+x}:${COREPACK_HOME-}" "${XDG_CACHE_HOME+x}:${XDG_CACHE_HOME-}" "${LOCALAPPDATA+x}:${LOCALAPPDATA-}" "$HOME" "${COREPACK_ENV_FILE+x}:${COREPACK_ENV_FILE-}" "$(command -v pnpm)" "$(command -v node || true)"' 2>/dev/null)" || return 1
   else
     fields="$(pnpm_context_fields)"
@@ -643,6 +654,13 @@ probe_store_selection() {
   printf '%s\t%s\t%s\t%s\n' "$canonical" "$repo" "$version" "$package_manager" >>"$store_selections"
 }
 
+# A pinned record is complete only when its worker returns. Its notes and
+# diagnostics are then whole, so they survive even an incomplete discovery.
+probe_record() {
+  probe_store_selection "$@"
+  : >"$discovery_work/$1.done"
+}
+
 record_artifact_key() {
   local index="$1" repo="$2" package_manager="$3" key
   key="$(pnpm_artifact_key_at "$repo" "$package_manager")" || key=''
@@ -679,6 +697,7 @@ classify_record() {
           return 1
         fi
         printf '%s\t%s\t%s\n' "$index" "$repo" "$package_manager" >>"$discovery_work/tasks"
+        : >"$discovery_work/$index.task"
       elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
         append_review "$repo/package.json" "prerelease pnpm pins are review-only for unattended maintenance: $package_manager"
       else
@@ -776,7 +795,7 @@ queue_store_probes() {
   while IFS=$'\t' read -r index repo package_manager; do
     [[ "$discovery_pool_failed" -eq 0 ]] || return 0
     IFS= read -r key <"$discovery_work/$index.key" || key=''
-    discovery_pool_start probe_store_selection "$index" "$repo" "$package_manager" "$key"
+    discovery_pool_start probe_record "$index" "$repo" "$package_manager" "$key"
   done <"$discovery_work/leaders"
   while [[ "$discovery_pool_tail" -gt "$discovery_pool_head" ]]; do
     discovery_pool_reap
@@ -787,11 +806,12 @@ queue_store_probes() {
       printf '%s\t%s\n' "$repo" "$package_manager is uncached in this Corepack context (same-run observation); cleanup is intentionally offline, not a connectivity test; no store was touched" \
         >>"$discovery_work/$index.review"
       : >"$discovery_work/$index.reused"
+      : >"$discovery_work/$index.done"
       discovery_pool_done=$((discovery_pool_done + 1))
       continue
     fi
     IFS= read -r key <"$discovery_work/$index.key" || key=''
-    discovery_pool_start probe_store_selection "$index" "$repo" "$package_manager" "$key"
+    discovery_pool_start probe_record "$index" "$repo" "$package_manager" "$key"
   done <"$discovery_work/followers"
 }
 
@@ -841,17 +861,32 @@ discover_exact_selections() {
   discovery_pool_run 'resolved Corepack contexts' "$task_count" queue_artifact_keys || return 1
   plan_probe_waves
   discovery_pool_run 'probed pinned records' "$task_count" queue_store_probes || return 1
-  # Merge per-record results in inventory order so reports stay deterministic.
   index=0
   while [[ "$index" -lt "$count" ]]; do
     index=$((index + 1))
-    [[ ! -f "$discovery_work/$index.review" ]] || cat "$discovery_work/$index.review" >>"$review_records"
-    [[ ! -f "$discovery_work/$index.selection" ]] || cat "$discovery_work/$index.selection" >>"$store_selections"
-    [[ ! -f "$discovery_work/$index.errors" ]] || cat "$discovery_work/$index.errors" >>"$probe_errors"
     [[ ! -e "$discovery_work/$index.probed" ]] || probe_count=$((probe_count + 1))
     [[ ! -e "$discovery_work/$index.reused" ]] || cache_hits=$((cache_hits + 1))
   done
   printf '  Offline pnpm discovery: inspected %s/%s repository records; %s store probes, %s known misses reused; complete.\n' "$count" "$total" "$probe_count" "$cache_hits"
+}
+
+# Merge per-record results in inventory order so reports stay deterministic.
+# Only complete records contribute: one never queued for a probe, or one whose
+# worker finished. Store selections are merged only from a complete discovery,
+# because a partial inventory cannot prove the absence of a conflicting selector.
+merge_discovery_records() {
+  local include_selections="$1" discovery_work="$probe_dir/discovery" index=0 total
+  [[ -d "$discovery_work" ]] || return 0
+  total="$(awk 'END {print NR + 0}' "$repository_records")"
+  while [[ "$index" -lt "$total" ]]; do
+    index=$((index + 1))
+    [[ ! -e "$discovery_work/$index.task" || -e "$discovery_work/$index.done" ]] || continue
+    [[ ! -f "$discovery_work/$index.review" ]] || cat "$discovery_work/$index.review" >>"$review_records"
+    [[ ! -f "$discovery_work/$index.errors" ]] || cat "$discovery_work/$index.errors" >>"$probe_dir/errors"
+    if [[ "$include_selections" -eq 1 && -f "$discovery_work/$index.selection" ]]; then
+      cat "$discovery_work/$index.selection" >>"$store_selections"
+    fi
+  done
 }
 
 select_representative() {
@@ -935,8 +970,18 @@ if [[ "$act" -eq 1 && -f "$pending_dir/pnpm" ]]; then
   fi
 fi
 
+# Consecutive incomplete discoveries escalate from a per-run warning to an
+# owner-review item, so a discovery that always times out is not a silent
+# permanent skip.
+discovery_escalation_runs=3
 pnpm_discovery_failed=0
 pnpm_discovery_reason=""
+incomplete_discovery_runs=0
+if [[ -f "$pnpm_discovery_incomplete_runs" ]]; then
+  IFS= read -r incomplete_discovery_runs <"$pnpm_discovery_incomplete_runs" || incomplete_discovery_runs=0
+  # No leading zeros: Bash arithmetic would read 08 or 09 as invalid octal.
+  [[ "$incomplete_discovery_runs" =~ ^(0|[1-9][0-9]{0,5})$ ]] || incomplete_discovery_runs=0
+fi
 if command -v pnpm >/dev/null 2>&1; then
   # All observation children share one supervised group and cumulative deadline.
   # A partial inventory cannot prove absence of conflicting selectors.
@@ -950,12 +995,27 @@ if command -v pnpm >/dev/null 2>&1; then
   if [[ "$discovery_status" -ne 0 ]]; then
     pnpm_discovery_failed=1
     : >"$store_selections"
+    merge_discovery_records 0
     if [[ "$discovery_status" -eq 124 ]]; then
       pnpm_discovery_reason="repository discovery exceeded its ${discovery_deadline}s deadline"
     else
       pnpm_discovery_reason="repository discovery did not complete (exit $discovery_status)"
     fi
-    append_review 'Repository discovery' "offline selection incomplete (exit $discovery_status); partial candidates discarded; pnpm store cleanup skipped; no store was touched; independent maintenance continues"
+    append_review 'Repository discovery' "offline selection incomplete (exit $discovery_status); completed records' notes and diagnostics kept; partial candidates discarded; pnpm store cleanup skipped; no store was touched; independent maintenance continues"
+    # Report mode shows the recorded count; only an acting run adds itself.
+    if [[ "$act" -eq 1 ]]; then
+      incomplete_discovery_runs=$((incomplete_discovery_runs + 1))
+      write_state "$pnpm_discovery_incomplete_runs" "$incomplete_discovery_runs"
+    fi
+    if [[ "$incomplete_discovery_runs" -ge "$discovery_escalation_runs" ]]; then
+      append_review 'Repository discovery' "pnpm stores have not been cleaned for $incomplete_discovery_runs runs: offline discovery has been incomplete $incomplete_discovery_runs consecutive times; raise GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS (now $discovery_deadline) or GROUNDWORK_PNPM_DISCOVERY_JOBS (now $discovery_jobs, at most 16), or fix the reported discovery failure"
+    fi
+  else
+    merge_discovery_records 1
+    incomplete_discovery_runs=0
+    if [[ "$act" -eq 1 ]]; then
+      rm -f -- "$pnpm_discovery_incomplete_runs"
+    fi
   fi
   if [[ -s "$probe_dir/errors" ]]; then
     if [[ "$act" -eq 1 ]]; then
@@ -1359,14 +1419,14 @@ prune_pnpm_store() {
   local directory="$1" expected_store="$2" expected_version="$3" store_base="$4"
   local actual_store actual_version
   cd "$directory"
-  actual_store="$(COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --store-dir "$store_base" store path 2>/dev/null)" || return 1
+  actual_store="$("${offline_probe_env[@]}" pnpm --store-dir "$store_base" store path 2>/dev/null)" || return 1
   actual_store="$(canonical_dir "$actual_store" || printf '%s' "$actual_store")"
-  actual_version="$(COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --version 2>/dev/null)" || return 1
+  actual_version="$("${offline_probe_env[@]}" pnpm --version 2>/dev/null)" || return 1
   if [[ "$actual_store" != "$expected_store" || "$actual_version" != "$expected_version" ]]; then
     echo "groundwork-cleanup: pnpm selection changed before prune (expected $expected_version at $expected_store; found $actual_version at $actual_store)." >&2
     return 1
   fi
-  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --store-dir "$store_base" store prune
+  exec "${offline_probe_env[@]}" pnpm --store-dir "$store_base" store prune
 }
 
 echo
@@ -1386,6 +1446,15 @@ elif [[ "$pnpm_discovery_failed" -ne 0 ]]; then
   pnpm_receipt_status="discovery-incomplete"
   echo "  Warning: pnpm store cleanup skipped this run because $pnpm_discovery_reason."
   echo "  No pnpm store was touched, no repair is pending, and the pnpm cadence is unchanged; the next run retries discovery."
+  printf '  Discovery limits: GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS=%s, GROUNDWORK_PNPM_DISCOVERY_JOBS=%s (at most 16).\n' \
+    "$discovery_deadline" "$discovery_jobs"
+  if [[ "$incomplete_discovery_runs" -ge "$discovery_escalation_runs" ]]; then
+    printf '  Warning: pnpm stores have not been cleaned for %s runs; discovery has been incomplete every time. See Review recommended.\n' \
+      "$incomplete_discovery_runs"
+  else
+    printf '  Consecutive incomplete discoveries: %s (owner review after %s).\n' \
+      "$incomplete_discovery_runs" "$discovery_escalation_runs"
+  fi
 elif [[ "$pnpm_due" -eq 0 ]]; then
   pnpm_receipt_status="not-due"
   echo "  Maintenance not due: $pnpm_due_reason"
