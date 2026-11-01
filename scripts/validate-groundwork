@@ -15835,16 +15835,16 @@ EOF
   # variable; GH_TOKEN wins, and the value never appears in Docker's argv.
   for build_token_case in 'GH_TOKEN:GH_TOKEN' 'GITHUB_TOKEN:GITHUB_TOKEN' 'both:GH_TOKEN' 'none:'; do
     docker_state_init "$build_state"
-    (
-      unset GH_TOKEN GITHUB_TOKEN
-      case "${build_token_case%%:*}" in
-        GH_TOKEN) export GH_TOKEN=fixture-build-token ;;
-        GITHUB_TOKEN) export GITHUB_TOKEN=fixture-build-token ;;
-        both) export GH_TOKEN=fixture-build-token GITHUB_TOKEN=fixture-other-token ;;
-      esac
+    build_gh_token=""
+    build_github_token=""
+    case "${build_token_case%%:*}" in
+      GH_TOKEN) build_gh_token=fixture-build-token ;;
+      GITHUB_TOKEN) build_github_token=fixture-build-token ;;
+      both) build_gh_token=fixture-build-token build_github_token=fixture-other-token ;;
+    esac
+    GH_TOKEN="$build_gh_token" GITHUB_TOKEN="$build_github_token" \
       docker_run "$build_state" "$docker_stub_bin:$PATH" groundwork-docker-build-scratch \
-        review "$build_ctx" >/dev/null
-    )
+      review "$build_ctx" >/dev/null
     if [[ -n "${build_token_case#*:}" ]]; then
       grep -qF -- "--secret id=github_token,env=${build_token_case#*:} " "$build_state/argv.log" \
         || fail "scratch build did not forward the ${build_token_case%%:*} token as a BuildKit secret"
@@ -15854,7 +15854,7 @@ EOF
     assert_no_matches "scratch build exposed a GitHub token in Docker argv" \
       grep -n 'fixture-build-token\|fixture-other-token' "$build_state/argv.log"
   done
-  unset build_token_case
+  unset build_token_case build_gh_token build_github_token
   docker_state_init "$build_state"
   GH_TOKEN=fixture-build-token docker_run "$build_state" "$docker_stub_bin:$PATH" \
     groundwork-docker-build-scratch review "$build_ctx" -- --secret id=github_token,src=/dev/null >/dev/null
@@ -16093,11 +16093,8 @@ SH
   # Local verification builds pass a GitHub token through the scratch builder
   # as a BuildKit secret, never as an argument value.
   docker_state_init "$build_state"
-  (
-    unset GH_TOKEN
-    export GITHUB_TOKEN=fixture-verify-token
+  GH_TOKEN="" GITHUB_TOKEN=fixture-verify-token \
     verify_docker_run --purpose validator-token >"$out_dir/verify-docker-token" 2>&1
-  )
   grep -qF -- '--secret id=github_token,env=GITHUB_TOKEN ' "$build_state/argv.log" \
     || fail "repository Docker verification did not forward the GitHub token secret"
   assert_no_matches "repository Docker verification exposed a GitHub token in Docker argv" \

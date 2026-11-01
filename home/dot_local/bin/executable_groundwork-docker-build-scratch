@@ -173,9 +173,9 @@ for arg in ${forward[@]+"${forward[@]}"}; do
 done
 if [[ "$github_secret_forwarded" -eq 0 ]]; then
   if [[ -n "${GH_TOKEN:-}" ]]; then
-    forward+=(--secret id=github_token,env=GH_TOKEN)
+    forward+=(--secret "id=github_token,env=GH_TOKEN")
   elif [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    forward+=(--secret id=github_token,env=GITHUB_TOKEN)
+    forward+=(--secret "id=github_token,env=GITHUB_TOKEN")
   fi
 fi
 unset github_secret_forwarded
