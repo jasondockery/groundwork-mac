@@ -316,17 +316,36 @@ class AutoHandoverTests(Sandbox):
         before = self.state()
         self.assert_skipped(self.run_helper("auto", "homebrew"), before, "not a verified native symlink")
 
-    def test_failed_login_verification_puts_the_native_link_back(self):
+    def test_failed_login_verification_is_undone_once_per_version_pair(self):
         native = self.install("2.4.1", native=True)
         link = os.readlink(native)
         self.install("2.4.2")
+        failed = self.root / "state/groundwork/claude-handover-failed"
         result = self.run_helper("auto", "homebrew", extra={"LOGIN_SHELL_FAIL": "1"})
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("Rollback:", result.stdout)
-        self.assertIn("The native link was put back; the backup was kept.", result.stderr)
+        self.assertEqual(result.returncode, 76, result.stdout + result.stderr)
+        self.assertIn("the handover was undone", result.stdout)
+        self.assertIn("Check shell overrides", result.stdout)
+        self.assertIn("is no longer needed and was removed", result.stdout)
         self.assertNotIn("ownership verified", result.stdout)
         self.assertEqual(os.readlink(native), link)
-        self.assertTrue((next(self.backups.iterdir()) / "claude").is_symlink())
+        self.assertEqual(list(self.backups.iterdir()), [])
+        self.assertEqual(failed.read_text(), "native 2.4.1 homebrew 2.4.2\n")
+        # The same versions pause with one line instead of repeating the attempt.
+        before = self.state()
+        checks = self.pgrep_log.read_text()
+        again = self.run_helper("auto", "homebrew", extra={"LOGIN_SHELL_FAIL": "1"})
+        self.assertEqual(again.returncode, 75, again.stdout + again.stderr)
+        self.assertEqual(len(again.stdout.splitlines()), 1, again.stdout)
+        self.assertIn("automatic handover paused", again.stdout)
+        self.assertEqual(before, self.state())
+        self.assertEqual(checks, self.pgrep_log.read_text())
+        # A new Homebrew version tries again; success clears the record.
+        (self.prefix / "bin/claude").unlink()
+        self.install("2.4.3")
+        result = self.run_helper("auto", "homebrew")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(os.path.lexists(native))
+        self.assertFalse(failed.exists())
 
     def test_failed_login_with_an_occupied_native_path_keeps_the_backup(self):
         native = self.install("2.4.1", native=True)
@@ -359,9 +378,92 @@ class AutoHandoverTests(Sandbox):
                                  extra={"FAKE_PGREP_SWITCH_AT": "5", "FAKE_PROCS_LATE": str(late)})
         self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
         self.assertIn("Claude Code is running (PID 4242)", result.stdout)
-        self.assertIn("The native link was put back; the private backup remains.", result.stdout)
+        self.assertIn("Native link put back", result.stdout)
         self.assertEqual(os.readlink(native), link)
-        self.assertEqual(os.readlink(next(self.backups.iterdir()) / "claude"), link)
+        self.assertEqual(list(self.backups.iterdir()), [])
+        self.assertFalse((self.root / "state/groundwork/claude-handover-failed").exists())
+
+    def run_main(self, args, **patches):
+        main = runpy.run_path(str(HELPER))["main"]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.dict(main.__globals__, **patches), \
+                mock.patch("os.isatty", return_value=True), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                status = main(args)
+            except (OSError, RuntimeError) as error:
+                status = error
+        return main, status, stdout.getvalue(), stderr.getvalue()
+
+    def test_entry_replaced_during_the_move_is_kept_and_never_relinked(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        original = os.rename
+
+        def replacing_rename(source, destination):
+            native.unlink()
+            self.script(native, "echo replacement-command")
+            original(source, destination)
+        with mock.patch("os.rename", side_effect=replacing_rename):
+            _, status, stdout, _ = self.run_main(["auto", "homebrew"])
+        self.assertIsInstance(status, RuntimeError)
+        self.assertIn("changed during preview", str(status))
+        self.assertFalse(os.path.lexists(native))
+        backup = next(self.backups.iterdir())
+        self.assertEqual((backup / "claude").read_text(), "#!/bin/bash\necho replacement-command\n")
+        self.assertIn("Rollback:", stdout)
+
+    def test_failure_before_the_move_leaves_no_backup_directory(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        with mock.patch("os.rename", side_effect=OSError("rename refused")):
+            _, status, stdout, _ = self.run_main(["auto", "homebrew"])
+        self.assertEqual(status, 75, stdout)
+        self.assertIn("rename refused", stdout)
+        self.assertTrue(native.is_symlink())
+        self.assertEqual(list(self.backups.iterdir()), [])
+
+    def test_failed_marker_write_leaves_no_temporary_file(self):
+        self.install("2.4.1", native=True)
+        with mock.patch("os.replace", side_effect=OSError("replace refused")):
+            _, status, _, _ = self.run_main(["native"])
+        self.assertIsInstance(status, OSError)
+        self.assertEqual(list((self.root / "state/groundwork").iterdir()), [])
+
+    def test_interrupted_login_check_exits_130_without_a_traceback(self):
+        self.install("2.4.1", native=True)
+        self.install("2.4.2")
+
+        def interrupted(expected):
+            raise KeyboardInterrupt
+        _, status, stdout, stderr = self.run_main(["auto", "homebrew"], fresh_command=interrupted)
+        self.assertEqual(status, 130)
+        self.assertEqual(stderr.count("\n"), 1, stderr)
+        self.assertIn("handover interrupted", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertIn("Rollback:", stdout)
+
+    def test_manual_handover_refuses_while_claude_runs(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        self.procs.write_text("4242\tclaude\tclaude --resume\n5151\t2.4.1\t"
+                              f"{self.home}/.local/share/claude/versions/2.4.1\n")
+        before = self.state()
+        result = self.run_helper("homebrew", "--yes")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Claude Code is running (PID 4242, 5151); quit every session, then repeat this command",
+                      result.stderr)
+        self.assertTrue(native.is_symlink())
+        self.assertEqual(before, self.state())
+        self.assertFalse(self.backups.exists())
+        # Preview stays available, and an uncertain check also refuses.
+        self.assertEqual(self.run_helper("homebrew").returncode, 0)
+        self.procs.write_text("")
+        result = self.run_helper("homebrew", "--yes", extra={"FAKE_PGREP_STATUS": "2"})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ambiguous", result.stderr)
+        self.assertTrue(native.is_symlink())
 
     def test_session_seen_by_the_last_check_before_the_move_creates_no_backup(self):
         self.install("2.4.1", native=True)
@@ -475,7 +577,7 @@ class UpdateRunSectionTests(Sandbox):
         config = self.root / "empty.toml"
         config.write_text("")
         source = UPDATE_RUN.read_text(encoding="utf-8")
-        start = source.index("claude_handover_unfinished=0\n")
+        start = source.index('claude_handover_warning=""\n')
         end = source.index("# Installation success alone cannot prove")
         data = {"claude_code_owner": owner} if owner else {}
         rendered = subprocess.run(
@@ -497,7 +599,7 @@ class UpdateRunSectionTests(Sandbox):
         script = ("set -euo pipefail\n"
                   f"groundwork_interactive_tty_available={1 if interactive else 0}\n"
                   + ("exec 7<&0\n" if interactive else "")
-                  + block + 'echo "unfinished=$claude_handover_unfinished"\n')
+                  + block + 'echo "warning=$claude_handover_warning"\n')
         leader, follower = pty.openpty()
         try:
             result = subprocess.run(["/bin/bash", "-c", script], env=self.env, stdin=follower,
@@ -512,29 +614,35 @@ class UpdateRunSectionTests(Sandbox):
     def test_owner_and_terminal_reach_the_helper(self):
         result, calls = self.run_block(None, 0, interactive=True)
         self.assertEqual(calls, ["auto homebrew stdin-tty=1"])
-        self.assertIn("unfinished=0", result.stdout)
+        self.assertIn("warning=\n", result.stdout)
         result, calls = self.run_block("native", 0, interactive=False)
         self.assertEqual(calls, ["auto native stdin-tty=0"])
 
-    def test_skip_is_quiet_and_failure_or_interrupt_is_surfaced(self):
+    def test_skip_is_quiet_and_undone_failure_or_interrupt_is_surfaced(self):
         result, _ = self.run_block("homebrew", 75, interactive=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("unfinished=0", result.stdout)
+        self.assertIn("warning=\n", result.stdout)
+        # Undone: the link is already back, so no Rollback advice.
+        result, _ = self.run_block("homebrew", 76, interactive=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("warning=handover undone · the login shell did not resolve Homebrew's claude; "
+                      "check shell overrides", result.stdout)
+        self.assertNotIn("Rollback", result.stdout + result.stderr)
         result, _ = self.run_block("homebrew", 1, interactive=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("unfinished=1", result.stdout)
+        self.assertIn("warning=automatic handover did not finish · see the Rollback line above", result.stdout)
         self.assertIn("automatic handover did not finish (exit 1)", result.stderr)
         for status in (129, 130, 143):
             result, _ = self.run_block("homebrew", status, interactive=False)
             self.assertEqual(result.returncode, status, result.stderr)
-            self.assertNotIn("unfinished=", result.stdout)
+            self.assertNotIn("warning=", result.stdout)
 
     def test_no_native_link_never_calls_the_helper(self):
         self.install("2.4.2")
         self.script(self.bin / "claude", 'echo "2.4.1 (Claude Code)"')  # not a symlink
         result, calls = self.run_block("homebrew", 0, interactive=False)
         self.assertEqual(calls, [])
-        self.assertIn("unfinished=0", result.stdout)
+        self.assertIn("warning=\n", result.stdout)
 
 
 class T3ResolutionTests(Sandbox):

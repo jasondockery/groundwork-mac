@@ -192,6 +192,8 @@ class HandoverTests(unittest.TestCase):
         # Outside HOME so file snapshots stay exact; native and rollback write here.
         self.env['XDG_STATE_HOME'] = str(self.root / 'state')
         self.decline = self.root / 'state/groundwork/claude-handover-declined'
+        # No Claude Code runs here; the manual handover refuses without pgrep.
+        self.script(self.bin / 'pgrep', 'exit 1')
         self.helper = REPO / 'home/dot_local/bin/executable_groundwork-claude-owner'
 
     def run_owner(self, *args):

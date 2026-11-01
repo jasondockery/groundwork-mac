@@ -33,13 +33,22 @@ auto is the step update-all runs with the saved claude_code_owner. It hands
 over only when OWNER is homebrew, there is no decline, stdin is a terminal,
 the native command is a verified symlink, Homebrew's version is the same or
 newer, no Claude Code process is running, and the deadline leaves time to
-verify. Otherwise it changes nothing, prints why, and exits 75.
+verify. Otherwise it changes nothing, prints why, and exits 75. When the
+fresh login shell does not select Homebrew's claude, it puts the native link
+back, exits 76, and pauses until the native or Homebrew version changes.
+
+homebrew --yes, like auto, refuses while any Claude Code process is running;
+there is no override.
 """
 DEADLINE = time.monotonic() + 45
 # The automatic handover starts only with this much of the deadline left, so
 # the fresh login-shell verification is not cut short after the move.
 AUTO_RESERVE = 20
 SKIPPED = 75
+# The handover moved the link, the fresh login shell did not select Homebrew's
+# claude, and the native link was put back: distinct from a skip and from an
+# unfinished handover, because no rollback is needed.
+UNDONE = 76
 # A Claude Code process is any process, of any user, that matches either rule:
 #   1. its process name is exactly "claude" (pgrep -x): the Homebrew cask, and
 #      a native copy on Linux, which names a process after the path it was
@@ -72,7 +81,11 @@ class HandoverIncomplete(RuntimeError):
 
 
 class RestoredNative(RuntimeError):
-    """The native link moved and was put back unchanged; the backup remains."""
+    """A session started during the move; the native link was put back."""
+
+
+class VerificationUndone(RuntimeError):
+    """The login shell did not select Homebrew; the native link was put back."""
 
 
 def fail(message):
@@ -150,10 +163,23 @@ def private_directory(path):
         fail(f"Expected a private directory owned by you: {path}")
 
 
-def decline_marker(home):
+def state_file(home, name):
     state = os.environ.get("XDG_STATE_HOME", "")
     root = Path(state) if state.startswith("/") else home / ".local/state"
-    return root / "groundwork/claude-handover-declined"
+    return root / "groundwork" / name
+
+
+def decline_marker(home):
+    return state_file(home, "claude-handover-declined")
+
+
+def failed_marker(home):
+    """Versions whose automatic handover was undone by a failed login check."""
+    return state_file(home, "claude-handover-failed")
+
+
+def dotted(version_tuple):
+    return ".".join(map(str, version_tuple))
 
 
 def create_parents(directory):
@@ -166,20 +192,40 @@ def create_parents(directory):
     plain_parents(directory / "placeholder")
 
 
+def write_state(path, text):
+    create_parents(path.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix=".claude-handover-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
+def remove_state(path):
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return True
+    return False
+
+
 def record_decline(marker, reason):
-    create_parents(marker.parent)
-    descriptor, temporary = tempfile.mkstemp(prefix=".claude-handover-", dir=marker.parent)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(f"{reason} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
-    os.replace(temporary, marker)
+    write_state(marker, f"{reason} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
     print(f"Recorded the decline in {marker}; update-all will not hand Claude Code to Homebrew.")
     print("To select Homebrew later, run groundwork-claude-owner homebrew --yes; it clears the decline.")
 
 
 def clear_decline(marker):
-    if marker.is_symlink() or marker.is_file():
-        marker.unlink()
+    if remove_state(marker):
         print(f"Cleared the earlier decline: {marker}")
+
+
+def require_no_claude(again):
+    running = claude_processes()
+    if running:
+        fail(f"Claude Code is running (PID {', '.join(running)}); quit every session, then {again}")
 
 
 def pgrep_arguments(platform, pgrep):
@@ -231,13 +277,24 @@ def homebrew_copy():
     return managed, managed_real
 
 
-def restore_native(native, snapshot):
-    """Put the native link back after a move; True when this restored it."""
+def put_back(native, saved, snapshot):
+    """Restore the moved native link; True when this restored it.
+
+    The backup's copy is removed only after the restore succeeded and only
+    while it is still the exact entry that was moved.
+    """
     try:
         # Exclusive link creation cannot overwrite a concurrently created path.
         os.symlink(snapshot[1], native)
     except OSError:
         return False
+    try:
+        unchanged(saved, snapshot)
+        saved.unlink()
+        saved.parent.rmdir()
+        print(f"Native link put back: {native}. The backup {saved.parent} is no longer needed and was removed.")
+    except (OSError, RuntimeError):
+        print(f"Native link put back: {native}. The backup {saved.parent} was kept.")
     return True
 
 
@@ -248,13 +305,18 @@ def hand_over(native, snapshot, managed_real, backups, ready=lambda: None,
     private_directory(backups)
     backup = Path(tempfile.mkdtemp(prefix="native-", dir=backups))
     saved = backup / "claude"
-    unchanged(native, snapshot)
-    print(f"Backup directory: {backup}", flush=True)
-    print(f"Rollback: groundwork-claude-owner rollback {shlex.quote(str(backup))} --yes", flush=True)
-    unchanged(native, snapshot)
-    # Rename preserves the actual entry even if an updater replaced it after
-    # the last check. Never unlink a command selected only by its pathname.
-    os.rename(native, saved)
+    try:
+        unchanged(native, snapshot)
+        print(f"Backup directory: {backup}", flush=True)
+        print(f"Rollback: groundwork-claude-owner rollback {shlex.quote(str(backup))} --yes", flush=True)
+        unchanged(native, snapshot)
+        # Rename preserves the actual entry even if an updater replaced it after
+        # the last check. Never unlink a command selected only by its pathname.
+        os.rename(native, saved)
+    except BaseException:
+        if not os.path.lexists(saved):
+            backup.rmdir()
+        raise
     try:
         # A different entry moved into the backup is preserved, never relinked.
         unchanged(saved, snapshot)
@@ -264,14 +326,14 @@ def hand_over(native, snapshot, managed_real, backups, ready=lambda: None,
         moved()
     except RuntimeError as error:
         # A session that started during the move keeps the native copy.
-        if restore_native(native, snapshot):
+        if put_back(native, saved, snapshot):
             raise RestoredNative(str(error)) from error
         raise HandoverIncomplete(f"{error}; {native} is occupied, so the backup was kept") from error
     try:
         fresh_command(managed_real)
     except (OSError, RuntimeError) as error:
-        if restore_on_failure and restore_native(native, snapshot):
-            raise HandoverIncomplete(f"{error} The native link was put back; the backup was kept.") from error
+        if restore_on_failure and put_back(native, saved, snapshot):
+            raise VerificationUndone(str(error)) from error
         raise HandoverIncomplete(str(error)) from error
 
 
@@ -310,15 +372,22 @@ def auto(owner, home, native, versions, backups):
     except (OSError, RuntimeError) as error:
         return skip(str(error))
     if managed_version < native_version:
-        return skip(f"Homebrew {'.'.join(map(str, managed_version))} is older than native "
-                    f"{'.'.join(map(str, native_version))}")
+        return skip(f"Homebrew {dotted(managed_version)} is older than native {dotted(native_version)}")
+    failed = failed_marker(home)
+    attempt = f"native {dotted(native_version)} homebrew {dotted(managed_version)}\n"
+    try:
+        repeated = failed.is_file() and failed.read_text(encoding="utf-8") == attempt
+    except OSError:
+        repeated = True
+    if repeated:
+        print(f"Claude Code: automatic handover paused; the login shell did not select Homebrew's claude "
+              f"for these versions ({failed}). It retries when either version changes.")
+        return SKIPPED
     if not os.isatty(0):
         return skip("no interactive terminal; run groundwork-claude-owner homebrew --yes")
 
     def processes_absent():
-        running = claude_processes()
-        if running:
-            fail(f"Claude Code is running (PID {', '.join(running)}); quit it, then run update-all again")
+        require_no_claude("run update-all again")
 
     def ready():
         if DEADLINE - time.monotonic() < AUTO_RESERVE:
@@ -331,14 +400,26 @@ def auto(owner, home, native, versions, backups):
               f"(claude_code_owner = \"homebrew\").", flush=True)
         hand_over(native, snapshot, managed_real, backups, ready, moved=processes_absent,
                   restore_on_failure=True)
+    except KeyboardInterrupt:
+        print("Claude Code: handover interrupted. Inspect claude; use the Rollback line above if one was printed.",
+              file=sys.stderr)
+        return 130
     except HandoverIncomplete:
         raise
     except RestoredNative as error:
-        print(f"Claude Code warning: automatic handover to Homebrew skipped: {error}. "
-              "The native link was put back; the private backup remains.")
+        print(f"Claude Code warning: automatic handover to Homebrew skipped: {error}.")
         return SKIPPED
+    except VerificationUndone as error:
+        try:
+            write_state(failed, attempt)
+        except OSError as state_error:
+            print(f"Could not record the failed attempt ({state_error}); the next update-all tries again.")
+        print(f"Claude Code warning: the handover was undone: {error}")
+        print("Check shell overrides that put another claude first; it retries when either version changes.")
+        return UNDONE
     except (OSError, RuntimeError) as error:
         return skip(str(error))
+    remove_state(failed)
     print("Homebrew ownership verified. To keep the native copy instead, run the Rollback line above;")
     print("it also turns the automatic handover off.")
     return 0
@@ -442,8 +523,12 @@ def main(args):
     if not confirmed:
         print("Preview only. Repeat with --yes to select Homebrew explicitly.")
         return 0
-    hand_over(native, snapshot, managed_real, backups)
+    # The same absolute rule as the automatic handover; there is no override.
+    hand_over(native, snapshot, managed_real, backups,
+              ready=lambda: require_no_claude("repeat this command"),
+              moved=lambda: require_no_claude("repeat this command"))
     clear_decline(marker)
+    remove_state(failed_marker(home))
     print("Homebrew ownership verified. Update through update-all or Homebrew.")
     return 0
 

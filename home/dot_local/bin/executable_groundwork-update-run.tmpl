@@ -1315,9 +1315,10 @@ fi
 
 # With claude_code_owner = homebrew, hand a native ~/.local/bin/claude over to
 # the Homebrew cask through the same backup and login-shell check as the manual
-# command. The helper decides every other condition and exits 75 when it skips;
+# command. The helper decides every other condition and exits 75 when it skips
+# and 76 when a failed login-shell check made it put the native link back;
 # stdin is the caller's terminal only in an interactive run.
-claude_handover_unfinished=0
+claude_handover_warning=""
 claude_owner_helper="$HOME/.local/bin/groundwork-claude-owner"
 claude_code_owner={{ get . "claude_code_owner" | default "homebrew" | toString | quote }}
 if [[ -L "$HOME/.local/bin/claude" && -x "$claude_owner_helper" ]]; then
@@ -1331,9 +1332,10 @@ if [[ -L "$HOME/.local/bin/claude" && -x "$claude_owner_helper" ]]; then
   fi
   case "$claude_handover_status" in
     0 | 75) ;;
+    76) claude_handover_warning="handover undone · the login shell did not resolve Homebrew's claude; check shell overrides" ;;
     129 | 130 | 143) exit "$claude_handover_status" ;;
     *)
-      claude_handover_unfinished=1
+      claude_handover_warning="automatic handover did not finish · see the Rollback line above"
       echo "Claude Code warning: the automatic handover did not finish (exit $claude_handover_status). Inspect claude, then run the Rollback line above if one was printed." >&2
       ;;
   esac
@@ -2852,7 +2854,7 @@ if [[ "$owner_review_count" -gt 0 || "$brew_cask_action_review_count" -gt 0 \
   fi
 fi
 if [[ "$brew_warning_count" -gt 0 || "$pnpm_discovery_warning_count" -gt 0 \
-  || "$claude_handover_unfinished" -gt 0 ]]; then
+  || -n "$claude_handover_warning" ]]; then
   printf '\nWarning\n'
 fi
 if [[ "$brew_warning_count" -gt 0 ]]; then
@@ -2862,9 +2864,11 @@ fi
 if [[ "$pnpm_discovery_warning_count" -gt 0 ]]; then
   echo "  pnpm                    store cleanup skipped · repository discovery did not finish; the next run retries"
 fi
-if [[ "$claude_handover_unfinished" -gt 0 ]]; then
-  echo "  Claude Code             automatic handover did not finish · see the Rollback line above"
+if [[ -n "$claude_handover_warning" ]]; then
+  echo "  Claude Code             $claude_handover_warning"
 fi
+claude_handover_warning_count=0
+[[ -z "$claude_handover_warning" ]] || claude_handover_warning_count=1
 result_suffix=""
 total_owner_review_count=$((owner_review_count + brew_cask_action_review_count \
   + machine_app_action_count + brew_deprecated_count + brew_disabled_count))
@@ -2874,8 +2878,8 @@ fi
 if [[ "$brew_deferred_running_count" -gt 0 ]]; then
   result_suffix="$result_suffix · $brew_deferred_running_count DEFERRED-RUNNING"
 fi
-if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_unfinished)) -gt 0 ]]; then
-  result_suffix="$result_suffix · $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_unfinished)) WARNING(S)"
+if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) -gt 0 ]]; then
+  result_suffix="$result_suffix · $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) WARNING(S)"
 fi
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."
