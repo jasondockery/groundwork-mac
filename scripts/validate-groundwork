@@ -1504,6 +1504,9 @@ validate_update() {
   check "offline pnpm discovery contexts, progress, and cumulative deadline"
   python3 -B scripts/test-offline-discovery
 
+  check "one update-all runs the Claude Code, mise, and pnpm sections once"
+  python3 -B scripts/test-update-sections-once
+
   run_fixture_pty() { # output input-file command [args...]
     local output="$1" input_file="$2"
     shift 2
@@ -4145,7 +4148,7 @@ EOF
   set -e
   [[ "$update_all_status" -ne 0 ]] \
     || fail "update-all accepted an injection-like installed Homebrew token"
-  diff -u <(printf 'chezmoi apply color=0\nmise upgrade --minimum-release-age 5d\n') \
+  diff -u <(printf 'chezmoi apply color=0\nmise install\nmise upgrade --minimum-release-age 5d\n') \
     "$update_all_log" \
     || fail "an invalid Homebrew inventory suppressed an independent safe lane"
   assert_not_contains '^brew-update$|^brew upgrade' "$update_all_log" \
@@ -4165,7 +4168,7 @@ EOF
   update_all_status=$?
   set -e
   [[ "$update_all_status" -ne 0 ]] || fail "a failed Homebrew refresh produced a false complete result"
-  diff -u <(printf 'chezmoi apply color=0\nbrew-update\nmise upgrade --minimum-release-age 5d\n') "$update_all_log"
+  diff -u <(printf 'chezmoi apply color=0\nbrew-update\nmise install\nmise upgrade --minimum-release-age 5d\n') "$update_all_log"
   grep -qF 'Package-manager maintenance skipped because Homebrew inventory or update failed' \
     "$update_all_fixture/failure-output" \
     || fail "Homebrew failure did not explain why later package-manager mutation was skipped"
@@ -4199,6 +4202,15 @@ EOF
   assert_not_contains 'Errors: none observed' \
     "$update_all_fixture/silent-brew-failure" \
     "an authoritative Homebrew failure claimed that no error was observed"
+  # Installing declared mise tools is configuration convergence and survives a
+  # failed Homebrew upgrade; only the release-floored mise upgrade is skipped.
+  grep -qxF 'mise install' "$update_all_log" \
+    || fail "a failed Homebrew upgrade suppressed mise install of declared tools"
+  assert_not_contains '^mise upgrade' "$update_all_log" \
+    "a failed Homebrew upgrade still ran the mise upgrade"
+  grep -qF 'mise upgrades were skipped because Homebrew mutation failed' \
+    "$update_all_fixture/silent-brew-failure" \
+    || fail "a failed Homebrew upgrade did not say why mise upgrades were skipped"
   test ! -e "$update_all_stamp"
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
@@ -4231,6 +4243,7 @@ EOF
 chezmoi apply color=0
 brew-update
 brew upgrade --formula git auto=1 casks=unset hb-color=unset
+mise install
 mise upgrade --minimum-release-age 5d
 brew autoremove
 brew cleanup --prune=all
@@ -4416,7 +4429,7 @@ EOF
   update_all_status=$?
   set -e
   [[ "$update_all_status" -ne 0 ]] || fail "update-all runner recorded success after mise upgrade failed"
-  diff -u <(printf 'chezmoi apply color=0\nbrew-update\nbrew upgrade --formula git auto=1 casks=unset hb-color=unset\nmise upgrade --minimum-release-age 5d\nbrew autoremove\nbrew cleanup --prune=all\ndocker-tidy --automatic\n') \
+  diff -u <(printf 'chezmoi apply color=0\nbrew-update\nbrew upgrade --formula git auto=1 casks=unset hb-color=unset\nmise install\nmise upgrade --minimum-release-age 5d\nbrew autoremove\nbrew cleanup --prune=all\ndocker-tidy --automatic\n') \
     "$update_all_log"
   grep -qxF 'previous-success' "$update_all_stamp"
 
@@ -4562,6 +4575,7 @@ brew upgrade --formula git auto=1 casks=unset hb-color=unset
 brew upgrade --cask --require-sha ghostty auto=1 casks=unset hb-color=unset
 brew-repair
 apps-start
+mise install
 mise upgrade --minimum-release-age 5d
 brew autoremove
 brew cleanup --prune=all
@@ -6947,7 +6961,7 @@ EOF
   update_all_status=$?
   set -e
   [[ "$update_all_status" -ne 0 ]] || fail "the darwin runner reported a failed metadata refresh as complete"
-  diff -u <(printf 'chezmoi apply color=0\nbrew-update\nmise upgrade --minimum-release-age 5d\n') "$update_all_log"
+  diff -u <(printf 'chezmoi apply color=0\nbrew-update\nmise install\nmise upgrade --minimum-release-age 5d\n') "$update_all_log"
   grep -qF 'Package-manager maintenance skipped because Homebrew inventory or update failed' \
     "$update_all_fixture/darwin-brew-fail" \
     || fail "Homebrew failure did not isolate later package-manager mutation on macOS"
@@ -7559,6 +7573,7 @@ SH
 chezmoi apply color=0
 brew-update
 brew upgrade --formula git auto=1 casks=unset hb-color=unset
+mise install
 mise upgrade --minimum-release-age 5d
 brew autoremove
 brew cleanup --prune=all

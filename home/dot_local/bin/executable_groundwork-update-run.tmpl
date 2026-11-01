@@ -1994,6 +1994,21 @@ if [[ "$mas_status" -ne 0 && "$update_status" -eq 0 ]]; then
 fi
 mise_lane_status="skipped"
 mise_status=0
+# Installing declared tools is configuration convergence, not an upgrade, so
+# it runs whatever happened to Homebrew. The tools hook skips `mise install`
+# under this scope so the mise section runs once, here. Earlier hard exits
+# still skip it: a brew update timeout or cancel, or a missing Homebrew output
+# library. Install stays best-effort as it is in the hook: a missing tool is
+# retried by the next run and never blocks the upgrade.
+mise_install_status=0
+if command -v mise >/dev/null 2>&1; then
+  mise install || mise_install_status=$?
+  case "$mise_install_status" in
+    0) ;;
+    129 | 130 | 143) exit "$mise_install_status" ;;
+    *) echo "Groundwork: mise install exited $mise_install_status; a declared tool may be missing until the next run." >&2 ;;
+  esac
+fi
 if [[ "$homebrew_mutation_failed" -eq 1 ]]; then
   echo "Groundwork: mise upgrades were skipped because Homebrew mutation failed." >&2
 elif command -v mise >/dev/null 2>&1; then
@@ -2028,6 +2043,9 @@ EOF
     mise_lane_status="failed"
     [[ "$update_status" -ne 0 ]] || update_status="$mise_status"
   fi
+fi
+if [[ "$mise_install_status" -ne 0 ]]; then
+  mise_lane_status="$mise_lane_status · install incomplete (exit $mise_install_status)"
 fi
 
 # Supported package-manager cleanup is one stage with one receipt and durable
