@@ -130,6 +130,14 @@ wider.
     in the environment (any case), and a `userconfig` or `globalconfig` key
     in a fingerprinted config file;
   - `DESTDIR` set, or `PREFIX` and an npm or pnpm prefix setting that differ;
+  - a `prefix` setting in any fingerprinted config file (pnpm 10 and earlier
+    derive global paths from it);
+  - a `pnpm-workspace.yaml` in an ancestor directory, because workspace
+    membership then depends on the record's path, or one in the record that
+    mentions `include` (pnpm 12.15 and later can include other YAML files,
+    and the `"*"` form passes `storeDir` through);
+  - a record path that differs from its canonical path, which would need
+    both paths walked;
   - a relative or computed (`${...}`) store-dir, or a relative explicit
     prefix;
   - a manifest that mentions any of these settings;

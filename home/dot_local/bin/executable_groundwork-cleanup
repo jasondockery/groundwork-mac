@@ -619,7 +619,8 @@ path_device() {
 # could depend on something not fingerprinted here: a relative or computed
 # store-dir, any configured pnpmfile or global-pnpmfile (pnpm runs their
 # updateConfig hooks even for `store path`), configDependencies (their plugin
-# pnpmfiles load the same way), or a userconfig/globalconfig redirect.
+# pnpmfiles load the same way), a userconfig/globalconfig redirect, or a
+# prefix setting (pnpm 10 and earlier derive global paths from it).
 # Lockfiles configure nothing, so they are only hashed. A manifest is not
 # hashed, because branches edit scripts and dependencies without changing
 # store selection; any such setting mentioned in it refuses sharing.
@@ -639,6 +640,7 @@ fingerprint_input() {
     awk '
       { line = tolower($0) }
       line ~ /pnpmfile|configdependencies|userconfig|globalconfig/ { exit 1 }
+      line ~ /^[[:space:]]*["\047]?prefix["\047]?[[:space:]]*[=:]/ { exit 1 }
       line ~ /store[-_]?dir/ {
         if (line !~ /^[[:space:]]*["\047]?store[-_]?dir["\047]?[[:space:]]*[=:][[:space:]]*["\047]?\// || line ~ /\$\{/) exit 1
       }' "$path" || return 1
@@ -710,6 +712,16 @@ store_dedupe_key_at() {
       [[ ! -e "$directory/.pnpmfile.cjs" && ! -L "$directory/.pnpmfile.cjs" ]] || return 1
       [[ ! -e "$directory/.pnpmfile.mjs" && ! -L "$directory/.pnpmfile.mjs" ]] || return 1
       [[ ! -e "$directory/node_modules/.pnpm-config" && ! -L "$directory/node_modules/.pnpm-config" ]] || return 1
+      if [[ -e "$directory/pnpm-workspace.yaml" || -L "$directory/pnpm-workspace.yaml" ]]; then
+        # Workspace membership of a nested record depends on its path, and a
+        # workspace file can include other YAML files (pnpm 12.15+) that may
+        # carry storeDir; neither is fingerprinted, so both refuse.
+        [[ "$directory" == "$repo" ]] || return 1
+        [[ -f "$directory/pnpm-workspace.yaml" && -r "$directory/pnpm-workspace.yaml" ]] || return 1
+        if grep -qi 'include' "$directory/pnpm-workspace.yaml"; then
+          return 1
+        fi
+      fi
       for name in .npmrc pnpm-workspace.yaml package.json pnpm-lock.yaml; do
         label="$directory/$name"
         [[ "$directory" != "$repo" ]] || label="record/$name"
@@ -791,8 +803,10 @@ record_probe_keys() {
   rm -f -- "$discovery_work/$index.material"
   [[ -n "$dedupe" ]] || return 0
   # Device numbers can be reused by another volume across runs, so the
-  # cross-run key also binds the canonical record path.
+  # cross-run key also binds the canonical record path. A record reached
+  # through a symlink would need both paths walked, so it simply refuses.
   canonical="$(canonical_dir "$repo")" || return 0
+  [[ "$canonical" == "$repo" ]] || return 0
   printf '%s\n' "$dedupe" >"$discovery_work/$index.dedupe"
   printf '%s\n%s\n' "$dedupe" "$canonical" | sha256_stream >"$discovery_work/$index.cachekey" || : >"$discovery_work/$index.cachekey"
 }

@@ -555,6 +555,49 @@ exit 1""")
         self.env['npm_config_prefix'] = str(self.root / 'prefix-b')
         self.assert_refused(repos)
 
+    def test_workspace_includes_ancestor_workspaces_prefix_and_symlinked_paths_refuse_sharing(self):
+        def include(repos):
+            for repo in repos:
+                (repo / 'pnpm-workspace.yaml').write_text('include:\n  - "*"\n')
+
+        def ancestor_workspace(repos):
+            (self.root / 'pnpm-workspace.yaml').write_text('packages:\n  - "wt*"\n')
+
+        def record_prefix(repos):
+            for repo in repos:
+                with (repo / '.npmrc').open('a') as config:
+                    config.write('prefix=/elsewhere\n')
+
+        def user_prefix(repos):
+            (self.home / '.npmrc').write_text('prefix = /elsewhere\n')
+
+        def symlinked(repos):
+            links = []
+            for repo in repos:
+                link = self.root / f'link-{repo.name}'
+                link.symlink_to(repo)
+                links.append(f'{link}\tfixture\n')
+            self.records.write_text(''.join(links))
+
+        for label, setup in (('workspace include', include), ('ancestor workspace', ancestor_workspace),
+                             ('prefix in record .npmrc', record_prefix), ('prefix in ~/.npmrc', user_prefix),
+                             ('symlinked record path', symlinked)):
+            with self.subTest(label=label):
+                self.reset_records()
+                for stray in [self.root / 'pnpm-workspace.yaml', self.home / '.npmrc', *self.root.glob('link-*')]:
+                    stray.unlink(missing_ok=True)
+                repos = self.worktrees(2)
+                setup(repos)
+                self.assert_refused(repos)
+        # A plain workspace file in the record itself still shares.
+        self.reset_records()
+        for stray in [self.root / 'pnpm-workspace.yaml', self.home / '.npmrc', *self.root.glob('link-*')]:
+            stray.unlink(missing_ok=True)
+        for repo in self.worktrees(2):
+            (repo / 'pnpm-workspace.yaml').write_text('packages:\n  - "packages/*"\n')
+        result = self.run_cleanup()
+        self.assertIn('1 store probes for 2 pinned records; 1 shared in this run', result.stdout)
+
     @unittest.skipIf(os.geteuid() == 0, 'root can write a read-only directory')
     def test_repository_writability_splits_the_store_context(self):
         repos = self.worktrees(2)
