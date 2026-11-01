@@ -217,11 +217,15 @@ gw_brew_classify_formula_metadata() {
 # failure, a malformed answer, or a spent time budget is printed as a note and
 # returns 0; only cancellation (125, 129, 130, 143) is returned to the caller.
 #
+# autoremove-runs means update-all's package-manager maintenance will run
+# brew autoremove after this report; autoremove-skipped means it will not.
+#
 # Usage: gw_brew_report_formula_dependents <runner-lib> <metadata-json> \
-#          <formula-full-name> <budget-end-epoch> <scratch-dir>
+#          <formula-full-name> <budget-end-epoch> <scratch-dir> \
+#          <autoremove-runs|autoremove-skipped>
 gw_brew_report_formula_dependents() {
   local runner_lib="$1" metadata_file="$2" formula="$3" budget_end="$4"
-  local scratch_dir="$5"
+  local scratch_dir="$5" autoremove_mode="$6"
   local now remaining dependents_file errors_file status=0 dependents=""
   local on_request="" brew_error=""
   now="$(date +%s)"
@@ -299,9 +303,13 @@ gw_brew_report_formula_dependents() {
   if [[ "$on_request" == true ]]; then
     printf '  Nothing installed depends on it, but it was installed on request, so brew autoremove keeps it.\n'
     printf '  Optional owner action: brew uninstall --formula %s\n' "$formula"
+  elif [[ "$autoremove_mode" == autoremove-runs && "$on_request" == false ]]; then
+    printf '  Nothing installed depends on it; update-all maintenance runs brew autoremove next, which removes it.\n'
+  elif [[ "$autoremove_mode" == autoremove-runs ]]; then
+    printf '  Nothing installed depends on it; update-all maintenance runs brew autoremove next, which removes it if it was installed as a dependency.\n'
   else
-    printf '  Nothing installed depends on it.\n'
-    printf '  Optional owner action: brew autoremove\n'
+    printf '  Nothing installed depends on it; update-all maintenance does not run brew autoremove in this run.\n'
+    printf '  Preview removal: brew autoremove --dry-run\n'
   fi
 }
 
