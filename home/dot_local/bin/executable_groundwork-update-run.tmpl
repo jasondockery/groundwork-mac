@@ -596,6 +596,15 @@ if command -v brew >/dev/null 2>&1; then
       homebrew_status=1
     fi
   fi
+  # One cumulative bound covers every dependent lookup below, so many
+  # deprecated formulae cannot multiply the time this report-only step takes.
+  brew_dependents_budget="${GROUNDWORK_BREW_DEPENDENTS_BUDGET_SECONDS:-120}"
+  if [[ ! "$brew_dependents_budget" =~ ^[0-9]+$ || "$brew_dependents_budget" -lt 1 \
+    || "$brew_dependents_budget" -gt 3600 ]]; then
+    echo "Groundwork: the Homebrew dependent lookup budget must be an integer from 1 through 3600 seconds." >&2
+    exit 64
+  fi
+  brew_dependents_end=""
   if [[ "$homebrew_status" -eq 0 ]]; then
     while IFS=$'\t' read -r formula_token formula_disposition formula_reason \
       formula_installed _formula_available formula_extra; do
@@ -617,6 +626,14 @@ if command -v brew >/dev/null 2>&1; then
           brew_deprecated_count=$((brew_deprecated_count + 1))
           printf 'Groundwork owner action: formula %s is %s; review its replacement before removal.\n' \
             "$formula_token" "$formula_reason"
+          [[ -n "$brew_dependents_end" ]] \
+            || brew_dependents_end=$(($(date +%s) + brew_dependents_budget))
+          # Report only; a nonzero return here is cancellation, never a
+          # failed lookup.
+          gw_brew_report_formula_dependents \
+            "$HOME/.local/share/groundwork/lib/maintenance-runner.sh" \
+            "$formula_metadata" "$formula_token" "$brew_dependents_end" \
+            "$runner_receipt_dir" || exit "$?"
           ;;
         *)
           echo "Groundwork: the classified Homebrew formula disposition is unknown; no Homebrew upgrade was attempted." >&2

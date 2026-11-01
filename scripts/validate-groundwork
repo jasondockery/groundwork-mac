@@ -1881,6 +1881,100 @@ EOF
     fail "duplicate formula identities were accepted"
   fi
 
+  # A deprecated or disabled formula names what still keeps it installed. The
+  # lookup is read-only, bounded by one cumulative budget, and its failure is a
+  # note rather than a failed update. Nothing is ever removed.
+  dependents_fixture="$brew_output_fixture/dependents"
+  mkdir -p "$dependents_fixture/bin" "$dependents_fixture/scratch"
+  cat >"$dependents_fixture/bin/brew" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$BREW_CALL_LOG"
+[[ "${1:-}" == uses && "${2:-}" == --installed && "$#" -eq 3 ]] || exit 64
+[[ "${HOMEBREW_NO_AUTO_UPDATE:-}" == 1 ]] || exit 65
+[[ -z "${BREW_USES_SLEEP:-}" ]] || sleep "$BREW_USES_SLEEP"
+if [[ "${BREW_USES_STATUS:-0}" != 0 ]]; then
+  echo "Error: No available formula with the name \"$3\"." >&2
+  exit "$BREW_USES_STATUS"
+fi
+printf '%s' "${BREW_USES_OUTPUT:-}"
+SH
+  chmod +x "$dependents_fixture/bin/brew"
+  cat >"$dependents_fixture/metadata.json" <<'EOF'
+{
+  "formulae": [
+    {"full_name":"icu4c@78","installed":[{"version":"78.1","installed_on_request":false}],"deprecated":true},
+    {"full_name":"owner/tap/old","installed":[{"version":"1.0","installed_on_request":true}],"disabled":true},
+    {"full_name":"mystery","installed":[{"version":"1.0"}],"deprecated":true}
+  ],
+  "casks": []
+}
+EOF
+  run_dependents_case() { # name formula budget-seconds [env assignments...]
+    local name="$1" formula="$2" budget="$3" case_status=0
+    shift 3
+    : >"$dependents_fixture/$name.calls"
+    # shellcheck disable=SC2016 # The inner script expands its own arguments.
+    env "$@" PATH="$dependents_fixture/bin:$PATH" \
+      BREW_CALL_LOG="$dependents_fixture/$name.calls" \
+      bash -c '. "$1"; gw_brew_report_formula_dependents "$2" "$3" "$4" "$(($(date +%s) + $5))" "$6"' \
+      _ "$PWD/home/dot_local/share/groundwork/lib/brew-output.sh" \
+      "$PWD/home/dot_local/share/groundwork/lib/maintenance-runner.sh" \
+      "$dependents_fixture/metadata.json" "$formula" "$budget" \
+      "$dependents_fixture/scratch" \
+      >"$dependents_fixture/$name.out" 2>"$dependents_fixture/$name.err" \
+      || case_status=$?
+    [[ "$case_status" -eq 0 ]] \
+      || fail "the $name dependent report returned $case_status instead of a note"
+    assert_not_contains 'uninstall|autoremove|upgrade|reinstall|link' \
+      "$dependents_fixture/$name.calls" \
+      "the $name dependent report invoked a mutating Homebrew command"
+  }
+  run_dependents_case required icu4c@78 30 BREW_USES_OUTPUT=$'php\nnode\n'
+  grep -qxF '  Still required by installed: node php' "$dependents_fixture/required.out" \
+    || fail "installed dependents of a deprecated formula were not named"
+  grep -qxF 'uses --installed icu4c@78' "$dependents_fixture/required.calls" \
+    || fail "the dependent lookup did not ask brew uses --installed for the exact formula"
+  assert_not_contains 'Optional owner action' "$dependents_fixture/required.out" \
+    "a removal action was offered while installed formulae still depend on it"
+  run_dependents_case orphan icu4c@78 30
+  if ! grep -qxF '  Nothing installed depends on it.' "$dependents_fixture/orphan.out" \
+    || ! grep -qxF '  Optional owner action: brew autoremove' "$dependents_fixture/orphan.out"; then
+    fail "an orphaned dependency formula did not suggest brew autoremove"
+  fi
+  run_dependents_case on-request owner/tap/old 30
+  if ! grep -qF 'installed on request, so brew autoremove keeps it' "$dependents_fixture/on-request.out" \
+    || ! grep -qxF '  Optional owner action: brew uninstall --formula owner/tap/old' \
+      "$dependents_fixture/on-request.out"; then
+    fail "a requested formula with no dependents suggested autoremove, which keeps it"
+  fi
+  run_dependents_case unknown-request mystery 30
+  grep -qxF '  Optional owner action: brew autoremove' "$dependents_fixture/unknown-request.out" \
+    || fail "a formula without request metadata did not fall back to brew autoremove"
+  run_dependents_case brew-error icu4c@78 30 BREW_USES_STATUS=1
+  if ! grep -qxF '  Note: installed dependents of icu4c@78 could not be checked (brew uses exit 1).' \
+    "$dependents_fixture/brew-error.out" \
+    || ! grep -qxF '  Error: No available formula with the name "icu4c@78".' \
+      "$dependents_fixture/brew-error.out" \
+    || ! grep -qxF '  Check by hand: brew uses --installed icu4c@78' \
+      "$dependents_fixture/brew-error.out"; then
+    fail "a failed dependent lookup was not reported as a note"
+  fi
+  run_dependents_case malformed icu4c@78 30 BREW_USES_OUTPUT=$'==> Formulae\nnode php\n'
+  grep -qF 'are unknown; brew uses returned an unexpected answer' "$dependents_fixture/malformed.out" \
+    || fail "malformed brew uses output was trusted as a dependent list"
+  dependents_started="$(date +%s)"
+  run_dependents_case slow icu4c@78 1 BREW_USES_SLEEP=30
+  [[ $(($(date +%s) - dependents_started)) -lt 15 ]] \
+    || fail "a hung dependent lookup outlived its time budget"
+  grep -qxF '  Note: installed dependents of icu4c@78 were not checked; brew uses did not finish within 1s.' \
+    "$dependents_fixture/slow.out" \
+    || fail "a timed-out dependent lookup was not reported as a note"
+  run_dependents_case spent icu4c@78 -1
+  grep -qF 'the dependent lookup time budget is spent' "$dependents_fixture/spent.out" \
+    || fail "a spent dependent lookup budget was not reported"
+  test ! -s "$dependents_fixture/spent.calls" \
+    || fail "a dependent lookup started after its budget was spent"
+
   cat >"$brew_output_fixture/cask-expected" <<'EOF'
 ordinary-outdated
 ordinary-current
@@ -3132,8 +3226,13 @@ case "${1:-}" in
         for outdated in ${BREW_FORMULA_OUTDATED-$token}; do
           [[ "$outdated" == "$token" ]] && formula_outdated=true
         done
-        printf '{"full_name":"%s","installed":[{"version":"1.0.0"}],"versions":{"stable":"1.1.0"},"pinned":%s,"outdated":%s,"deprecated":false,"disabled":false}' \
-          "$token" "$formula_pinned" "$formula_outdated"
+        formula_deprecated=false
+        for deprecated in ${BREW_FORMULA_DEPRECATED:-}; do
+          [[ "$deprecated" == "$token" ]] && formula_deprecated=true
+        done
+        printf '{"full_name":"%s","installed":[{"version":"1.0.0","installed_on_request":%s}],"versions":{"stable":"1.1.0"},"pinned":%s,"outdated":%s,"deprecated":%s,"disabled":false}' \
+          "$token" "${BREW_FORMULA_ON_REQUEST:-false}" "$formula_pinned" "$formula_outdated" \
+          "$formula_deprecated"
       done
       printf '],"casks":[]}\n'
       exit 0
@@ -3346,6 +3445,17 @@ case "${1:-}" in
       exit "${brew_bundle_status:-0}"
     fi
     exit "${BREW_BUNDLE_STATUS:-0}"
+    ;;
+  uses)
+    # Read-only dependent lookup. It stays out of the ordered stage log; the
+    # optional BREW_CALL_LOG records it for cases that pin exact calls.
+    [[ "${2:-}" == "--installed" && "$#" -eq 3 ]] || exit 64
+    if [[ "${BREW_USES_STATUS:-0}" != 0 ]]; then
+      echo "Error: fixture cannot compute dependents of $3" >&2
+      exit "$BREW_USES_STATUS"
+    fi
+    for dependent in ${BREW_USES_OUTPUT:-}; do printf '%s\n' "$dependent"; done
+    exit 0
     ;;
   autoremove)
     if [[ "${ASSERT_UPDATE_LOCK_DURING_MAINTENANCE:-0}" == "1" ]]; then
@@ -4757,6 +4867,68 @@ EOF
   grep -qF 'Pinned                  1' \
     "$update_all_fixture/darwin-pinned-formula" \
     || fail "the formula pin was counted outside the pinned outcome"
+
+  # A deprecated formula names its installed dependents from inside the real
+  # Homebrew lane; a failed lookup stays a note and the rest of the run goes on.
+  rm -f "$update_all_stamp"
+  : >"$update_all_log"
+  : >"$update_all_fixture/deprecated-formula-calls"
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_CALL_LOG="$update_all_fixture/deprecated-formula-calls" \
+    BREW_FORMULAE='git icu4c@78' BREW_FORMULA_DEPRECATED='icu4c@78' \
+    BREW_FORMULA_OUTDATED='git' BREW_USES_OUTPUT='php' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    >"$update_all_fixture/darwin-deprecated-formula" 2>&1 \
+    || fail "a deprecated formula with installed dependents failed the update"
+  grep -qF 'Groundwork owner action: formula icu4c@78 is deprecated; review its replacement before removal.' \
+    "$update_all_fixture/darwin-deprecated-formula" \
+    || fail "the deprecated formula lost its owner action"
+  grep -qxF '  Still required by installed: php' "$update_all_fixture/darwin-deprecated-formula" \
+    || fail "update-all did not name what still depends on the deprecated formula"
+  grep -qxF 'uses --installed icu4c@78' "$update_all_fixture/deprecated-formula-calls" \
+    || fail "update-all did not look up installed dependents of the deprecated formula"
+  assert_not_contains 'uses --installed git' "$update_all_fixture/deprecated-formula-calls" \
+    "update-all looked up dependents of a supported formula"
+  assert_not_contains '^(uninstall|remove|rm)( |$)|icu4c@78.*(uninstall|upgrade)|upgrade .*icu4c@78' \
+    "$update_all_fixture/deprecated-formula-calls" \
+    "the deprecated formula report changed the formula instead of reporting it"
+  test -f "$update_all_stamp" \
+    || fail "a reported deprecated formula withheld the success timestamp"
+
+  rm -f "$update_all_stamp"
+  : >"$update_all_log"
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULAE='git icu4c@78' BREW_FORMULA_DEPRECATED='icu4c@78' \
+    BREW_FORMULA_OUTDATED='git' BREW_USES_STATUS=1 \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    >"$update_all_fixture/darwin-deprecated-formula-uses-error" 2>&1 \
+    || fail "a failed dependent lookup failed the update"
+  grep -qxF '  Note: installed dependents of icu4c@78 could not be checked (brew uses exit 1).' \
+    "$update_all_fixture/darwin-deprecated-formula-uses-error" \
+    || fail "a failed dependent lookup was not reported as a note"
+  grep -qxF 'brew upgrade --formula git auto=1 casks=unset hb-color=unset' "$update_all_log" \
+    || fail "a failed dependent lookup stopped an unrelated formula upgrade"
+  test -f "$update_all_stamp" \
+    || fail "a failed dependent lookup withheld the success timestamp"
+
+  rm -f "$update_all_stamp"
+  : >"$update_all_log"
+  deprecated_cancel_status=0
+  HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
+    NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
+    BREW_FORMULAE='git icu4c@78' BREW_FORMULA_DEPRECATED='icu4c@78' \
+    BREW_FORMULA_OUTDATED='git' GROUNDWORK_TEST_RUNNER_125_MATCH='brew uses' \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-runner" \
+    >"$update_all_fixture/darwin-deprecated-formula-cancel" 2>&1 \
+    || deprecated_cancel_status=$?
+  [[ "$deprecated_cancel_status" -eq 125 ]] \
+    || fail "an uncontained dependent lookup returned $deprecated_cancel_status instead of 125"
+  assert_not_contains '^brew upgrade' "$update_all_log" \
+    "Homebrew mutation continued after the dependent lookup could not be contained"
+  test ! -f "$update_all_stamp" \
+    || fail "an uncontained dependent lookup recorded update success"
 
   rm -f "$update_all_home"/.mas-updated-* "$update_all_stamp"
   : >"$update_all_log"
