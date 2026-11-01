@@ -34,11 +34,55 @@ if [[ "${GROUNDWORK_UPDATE_SCOPE:-}" == configuration && -x "$installed_t3" ]] &
   fi
 fi
 installer="$(mktemp)"
-trap 'rm -f "$installer"' EXIT
+releases="$(mktemp)"
+release_headers="$(mktemp)"
+trap 'rm -f "$installer" "$releases" "$release_headers"' EXIT
+# The official installer finds Nightly through the GitHub REST API without a
+# token, so shared runners and busy networks hit the 60-request hourly limit.
+# Resolve the release here, authenticated when GH_TOKEN or GITHUB_TOKEN is set,
+# and pin it for the installer. curl reads the header from stdin so the token
+# never appears in a process listing.
+github_token="${GH_TOKEN:-}"
+[[ -n "$github_token" ]] || github_token="${GITHUB_TOKEN:-}"
+fetch_release_page() {
+  local authorization=""
+  [[ -z "$github_token" ]] || authorization="header = \"Authorization: Bearer $github_token\""
+  printf '%s\n' "$authorization" | curl --config - --proto '=https' --tlsv1.2 \
+    --connect-timeout 10 --max-time 30 -sS \
+    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    -D "$release_headers" -o "$releases" -w '%{http_code}' \
+    "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=$1"
+}
+is_rate_limited() {
+  [[ "$1" == 429 ]] && return 0
+  [[ "$1" == 403 ]] || return 1
+  grep -qiE '^x-ratelimit-remaining:[[:space:]]*0[[:space:]]*$' "$release_headers" ||
+    grep -qi 'rate limit' "$releases"
+}
+t3_release=""
+# Same ten-page bound as the official installer; each request has its own
+# 30-second deadline, and a network failure fails the apply so it retries.
+for page in 1 2 3 4 5 6 7 8 9 10; do
+  status="$(fetch_release_page "$page")"
+  if is_rate_limited "$status"; then
+    printf 'Warning: skipping the T3 Code install because the GitHub API rate limit was reached (HTTP %s) while finding the Nightly release.\n' "$status" >&2
+    printf 'Set GH_TOKEN or GITHUB_TOKEN to authenticate the lookup, or reapply after the limit resets.\n' >&2
+    exit 0
+  fi
+  [[ "$status" == 200 ]] || {
+    printf 'GitHub API returned HTTP %s while finding the T3 Code Nightly release.\n' "$status" >&2
+    exit 1
+  }
+  t3_release="$(awk -F'"' '/"tag_name": *"v[0-9][^"]*-nightly\.[0-9]+\.[0-9]+"/ { print substr($4, 2); exit }' "$releases")"
+  [[ -z "$t3_release" ]] || break
+  grep -q '"tag_name"' "$releases" || break
+done
+unset github_token
+[[ -n "$t3_release" ]] || { echo "No T3 Code Nightly release was found on GitHub." >&2; exit 1; }
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
   -fsSL https://t3.codes/install.sh -o "$installer"
-echo "Installing T3 Code Nightly (five-minute deadline; installer output follows)."
-env -u T3CODE_VERSION T3CODE_CHANNEL=nightly "$deadline" --kill-after=5s 300 sh "$installer"
+echo "Installing T3 Code Nightly $t3_release (five-minute deadline; installer output follows)."
+T3CODE_VERSION="$t3_release" T3CODE_CHANNEL=nightly "$deadline" --kill-after=5s 300 sh "$installer"
 [[ -x "$installed_t3" ]] || { echo "The official installer did not create $installed_t3." >&2; exit 1; }
 hash -r
 effective_t3="$(command -v t3 || true)"

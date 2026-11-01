@@ -22,6 +22,9 @@ class HabitsTests(unittest.TestCase):
         self.bin.mkdir()
         self.env = dict(os.environ, HOME=str(self.home), PATH=f"{self.bin}:/usr/bin:/bin")
         self.env.pop("T3CODE_INSTALL_BIN_DIR", None)
+        # A host token must never reach a fixture; tests that need one set it.
+        self.env.pop("GH_TOKEN", None)
+        self.env.pop("GITHUB_TOKEN", None)
         self.env.pop("TMUX", None)
         self.config = self.root / "empty.toml"
         self.config.touch()
@@ -52,11 +55,31 @@ class HabitsTests(unittest.TestCase):
 
     def t3_stubs(self, os_name="Linux"):
         self.stub("uname", f'case "$1" in -s) echo {os_name};; -m) echo arm64;; esac')
-        self.stub("curl", '''while [[ $1 != -o ]]; do shift; done
+        # The release lookup reads its optional auth header from stdin
+        # (--config -); the fixture records that config and argv separately.
+        self.env["FIXTURE_ROOT"] = str(self.root)
+        self.stub("curl", '''if [[ " $* " == *" --config - "* ]]; then
+  cat > "$FIXTURE_ROOT/curl-config"
+  printf '%s\\n' "$*" >> "$FIXTURE_ROOT/curl-argv"
+  while (($#)); do
+    case "$1" in -D) headers="$2"; shift ;; -o) body="$2"; shift ;; esac
+    shift
+  done
+  status="${RELEASES_STATUS:-200}"
+  printf 'HTTP/2 %s\\r\\nx-ratelimit-remaining: %s\\r\\n\\r\\n' "$status" "${RATE_REMAINING:-59}" > "$headers"
+  if [[ "$status" == 200 ]]; then
+    printf '[\\n  {\\n    "tag_name": "v0.1.6",\\n  },\\n  {\\n    "tag_name": "v0.0.0-nightly.20261018.1",\\n  }\\n]\\n' > "$body"
+  else
+    printf '%s\\n' "${RELEASES_BODY:-Forbidden}" > "$body"
+  fi
+  printf '%s' "$status"
+  exit 0
+fi
+while [[ $1 != -o ]]; do shift; done
 cat > "$2" <<'INSTALL'
 set -eu
 test "$T3CODE_CHANNEL" = nightly
-test -z "${T3CODE_VERSION:-}"
+test "$T3CODE_VERSION" = 0.0.0-nightly.20261018.1
 test "${INSTALL_FAIL:-0}" = 0
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$bin_dir"
@@ -91,6 +114,51 @@ INSTALL''')
         result = self.run_script(self.render_t3("linux"))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.home / ".local/bin/t3").exists())
+
+    def test_t3_release_lookup_sends_token_only_through_stdin(self):
+        for variable in ("GH_TOKEN", "GITHUB_TOKEN"):
+            with self.subTest(variable=variable):
+                self.t3_stubs()
+                (self.root / "curl-argv").unlink(missing_ok=True)
+                self.env.pop("GH_TOKEN", None)
+                self.env.pop("GITHUB_TOKEN", None)
+                self.env[variable] = "fixture-token-123"
+                result = self.run_script(self.render_t3("linux"))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.root / "curl-config").read_text(),
+                                 'header = "Authorization: Bearer fixture-token-123"\n')
+                self.assertIn("api.github.com/repos/pingdotgg/t3code/releases", (self.root / "curl-argv").read_text())
+                self.assertNotIn("fixture-token-123", (self.root / "curl-argv").read_text())
+                self.assertNotIn("fixture-token-123", result.stdout + result.stderr)
+        self.env.pop("GITHUB_TOKEN", None)
+        result = self.run_script(self.render_t3("linux"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Authorization", (self.root / "curl-config").read_text())
+
+    def test_t3_rate_limit_skips_install_with_warning(self):
+        for status, remaining, body in (("403", "0", "Forbidden"),
+                                        ("403", "12", "You have exceeded a secondary rate limit."),
+                                        ("429", "12", "Too Many Requests")):
+            with self.subTest(status=status, remaining=remaining):
+                self.t3_stubs()
+                self.env.update(RELEASES_STATUS=status, RATE_REMAINING=remaining, RELEASES_BODY=body)
+                result = self.run_script(self.render_t3("linux"))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("rate limit", result.stderr)
+                self.assertIn(f"HTTP {status}", result.stderr)
+                self.assertIn("GH_TOKEN or GITHUB_TOKEN", result.stderr)
+                self.assertFalse((self.home / ".local/bin/t3").exists())
+
+    def test_t3_other_release_lookup_errors_fail(self):
+        for status, remaining in (("403", "59"), ("404", "59"), ("500", "59")):
+            with self.subTest(status=status):
+                self.t3_stubs()
+                self.env.update(RELEASES_STATUS=status, RATE_REMAINING=remaining, RELEASES_BODY="Forbidden")
+                result = self.run_script(self.render_t3("linux"))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"HTTP {status}", result.stderr)
+                self.assertNotIn("rate limit", result.stderr)
+                self.assertFalse((self.home / ".local/bin/t3").exists())
 
     def test_existing_stable_cli_migrates_to_nightly_on_desktop_macs(self):
         target = self.home / ".local/bin/t3"
