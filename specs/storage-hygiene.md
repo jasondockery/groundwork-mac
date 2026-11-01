@@ -76,7 +76,9 @@ wider.
   `GROUNDWORK_PNPM_DISCOVERY_JOBS` with their current values. Acting mode
   counts consecutive incomplete discoveries in
   `~/.local/state/groundwork/pnpm-discovery-incomplete-runs` and removes the
-  count when discovery completes; an unreadable count restarts at zero. From
+  count when discovery completes. A count that is not a plain decimal of at
+  most six digits without leading zeros (so `08` too) is invalid and restarts
+  at zero. Report mode shows the recorded count without adding itself. From
   the third consecutive incomplete run the helper says plainly that pnpm
   stores have not been cleaned for that many runs and adds an owner-review
   item, which the receipt's `owner-review` count carries to `update-all`. The
@@ -86,7 +88,8 @@ wider.
   probe sets `MISE_OFFLINE=1` and turns off `MISE_AUTO_INSTALL`,
   `MISE_EXEC_AUTO_INSTALL`, `MISE_NOT_FOUND_AUTO_INSTALL`, and
   `MISE_TASK_RUN_AUTO_INSTALL`, alongside Corepack's network and prompt
-  switches, so up to 16 parallel probes cannot start installs.
+  switches, so up to 16 parallel probes cannot start installs. The pre-prune
+  revalidation and the prune itself use the same environment.
 - **Discovery scales by bounded parallel probes and by sharing an observation
   only across an identical store context** (issue #121). Up to
   `GROUNDWORK_PNPM_DISCOVERY_JOBS` (default 4, at most 16) probes run at once

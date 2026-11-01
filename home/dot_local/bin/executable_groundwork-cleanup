@@ -1243,7 +1243,8 @@ fi
 incomplete_discovery_runs=0
 if [[ -f "$pnpm_discovery_incomplete_runs" ]]; then
   IFS= read -r incomplete_discovery_runs <"$pnpm_discovery_incomplete_runs" || incomplete_discovery_runs=0
-  [[ "$incomplete_discovery_runs" =~ ^[0-9]{1,6}$ ]] || incomplete_discovery_runs=0
+  # No leading zeros: Bash arithmetic would read 08 or 09 as invalid octal.
+  [[ "$incomplete_discovery_runs" =~ ^(0|[1-9][0-9]{0,5})$ ]] || incomplete_discovery_runs=0
 fi
 if command -v pnpm >/dev/null 2>&1; then
   # All observation children share one supervised group and cumulative deadline.
@@ -1265,8 +1266,9 @@ if command -v pnpm >/dev/null 2>&1; then
       pnpm_discovery_reason="repository discovery did not complete (exit $discovery_status)"
     fi
     append_review 'Repository discovery' "offline selection incomplete (exit $discovery_status); completed records' notes and diagnostics kept; partial candidates discarded; pnpm store cleanup skipped; no store was touched; independent maintenance continues"
-    incomplete_discovery_runs=$((incomplete_discovery_runs + 1))
+    # Report mode shows the recorded count; only an acting run adds itself.
     if [[ "$act" -eq 1 ]]; then
+      incomplete_discovery_runs=$((incomplete_discovery_runs + 1))
       write_state "$pnpm_discovery_incomplete_runs" "$incomplete_discovery_runs"
     fi
     if [[ "$incomplete_discovery_runs" -ge "$discovery_escalation_runs" ]]; then
@@ -1682,14 +1684,14 @@ prune_pnpm_store() {
   local directory="$1" expected_store="$2" expected_version="$3" store_base="$4"
   local actual_store actual_version
   cd "$directory"
-  actual_store="$(COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --store-dir "$store_base" store path 2>/dev/null)" || return 1
+  actual_store="$("${offline_probe_env[@]}" pnpm --store-dir "$store_base" store path 2>/dev/null)" || return 1
   actual_store="$(canonical_dir "$actual_store" || printf '%s' "$actual_store")"
-  actual_version="$(COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --version 2>/dev/null)" || return 1
+  actual_version="$("${offline_probe_env[@]}" pnpm --version 2>/dev/null)" || return 1
   if [[ "$actual_store" != "$expected_store" || "$actual_version" != "$expected_version" ]]; then
     echo "groundwork-cleanup: pnpm selection changed before prune (expected $expected_version at $expected_store; found $actual_version at $actual_store)." >&2
     return 1
   fi
-  exec env COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm --store-dir "$store_base" store prune
+  exec "${offline_probe_env[@]}" pnpm --store-dir "$store_base" store prune
 }
 
 echo
