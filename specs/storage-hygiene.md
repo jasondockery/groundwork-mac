@@ -87,22 +87,54 @@ wider.
   `MISE_EXEC_AUTO_INSTALL`, `MISE_NOT_FOUND_AUTO_INSTALL`, and
   `MISE_TASK_RUN_AUTO_INSTALL`, alongside Corepack's network and prompt
   switches, so up to 16 parallel probes cannot start installs.
-- **Discovery scales by bounded parallel probes, never by shared results.**
-  Each repository still resolves its own store and version, because store
-  configuration can differ per worktree (`.npmrc`, workspace `storeDir`, mise
-  environment, filesystem). Up to `GROUNDWORK_PNPM_DISCOVERY_JOBS` (default 4,
-  at most 16) probes run at once inside the one supervised process group, so
-  the cumulative deadline still cancels all of them. The same-run uncached
-  observation is preserved by probing one leader per Corepack context key
-  before its followers. Lockfile or worktree dedupe, skipping records without
-  `node_modules`, and cross-run caching were rejected: each would let an
-  unobserved selector hide a conflicting pnpm major. A partial inventory is
-  still discarded rather than kept as incomplete candidates, because it cannot
-  prove the absence of a conflicting selector.
+- **Discovery scales by bounded parallel probes and by sharing an observation
+  only across an identical store context** (issue #121). Up to
+  `GROUNDWORK_PNPM_DISCOVERY_JOBS` (default 4, at most 16) probes run at once
+  inside the one supervised process group, so the cumulative deadline still
+  cancels all of them. Store configuration can differ per worktree (`.npmrc`,
+  workspace `storeDir`, mise environment, filesystem), so an earlier design
+  rejected lockfile or worktree dedupe. The dedupe key now binds each of those
+  inputs instead: the proven Corepack context and exact pin, the filesystem
+  device, `PNPM_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, store-dir
+  environment variables, the global pnpm rc files, and the content of every
+  `.npmrc`, `pnpm-workspace.yaml`, `.pnpmfile.cjs`, `.pnpmfile.mjs`, and
+  `pnpm-lock.yaml` from the record up to `/`. The record's own files are keyed
+  by name and ancestors by absolute path, so worktrees of one checkout share a
+  key. `package.json` is checked but not hashed, because branches edit scripts
+  and dependencies without changing store selection. A record never shares
+  when it has no Corepack proof, no SHA-256 or device tool is available, any
+  input is unreadable or a dangling link, a store-dir setting is relative or
+  computed (`${...}`), a manifest mentions a store dir, or `userconfig`,
+  `globalconfig`, or `global-dir` is redirected through the environment. Those
+  records probe on their own. Records with equal keys reuse the first record's
+  raw store and version, and each record still applies the pin, launcher-drift,
+  existence, and trusted-root checks itself. Among records that probe, one
+  leader per Corepack context still observes a same-run miss first. A
+  store path pnpm returns must be absolute. Skipping records without
+  `node_modules` remains rejected. A partial inventory is still discarded
+  rather than kept as incomplete candidates, because it cannot prove the
+  absence of a conflicting selector.
   Exact stable `packageManager` pins are resolved with Corepack networking
   disabled. Integrity suffixes are accepted, but prerelease pins are
   review-only for unattended maintenance. Ambient HOME selection is
   report-only, never an automatic fallback.
+- **Exact-pin observations persist across runs, never from an incomplete
+  one.** After a complete discovery, acting mode rewrites
+  `$XDG_STATE_HOME/groundwork/pnpm-discovery-cache.tsv` (or
+  `~/.local/state/...` when that variable is unset or relative) with one
+  `key, store, version` row per store context whose observed version equals
+  its pin. Contexts that were not seen are dropped. A changed pin, lockfile,
+  configuration file, or environment input is a different key, so it is a
+  cache miss. Report mode reads the cache but never writes it. An incomplete
+  discovery never writes it. A missing header, a malformed row, a symlink, or
+  an unreadable file makes the whole cache empty with a notice, and the next
+  complete acting run replaces it. Misses are never persisted, because a
+  later download can make a pin available. Reads are skipped when the run may
+  prune on cadence (no recorded success, or one at least 30 days old), when it
+  is forced, or when a pnpm repair is pending, so a scheduled prune and its
+  repair always act on fresh observations. Only a high-water prune can act on
+  a cached observation, and pre-prune revalidation of the store path and
+  version still guards it.
 - **The automatic store root is allowlisted.** Standard pnpm roots are
   accepted. A custom parent becomes automatic only through an explicit
   `trusted_pnpm_store_root` entry in `repos.conf` or its local overlay. The

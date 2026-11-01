@@ -64,7 +64,7 @@ if [[ -f .offline ]]; then
 fi
 if [[ "${1:-}" == --store-dir ]]; then shift 2; fi
 case "$*" in
-'store path') cat .store ;;
+'store path') sed -n 's/^fixture-store=//p' .npmrc ;;
 --version) jq -r '.packageManager | sub("^pnpm@"; "")' package.json ;;
 'store prune'*) [[ ! -f .prune-fails ]] || exit 3 ;;
 *) exit 64 ;;
@@ -73,6 +73,7 @@ esac''')
         self.env = dict(os.environ, HOME=str(self.home), PATH='/usr/bin:/bin',
                         XDG_CONFIG_HOME=str(self.home / '.config'),
                         XDG_DATA_HOME=str(self.home / '.local/share'),
+                        XDG_STATE_HOME=str(self.home / '.local/state'),
                         REVIEW_CALLS=str(self.calls), REVIEW_RECORDS=str(self.records),
                         COREPACK_ENV_FILE='0',
                         GROUNDWORK_MAINTENANCE_POLL_SECONDS='0.05',
@@ -94,7 +95,9 @@ esac''')
         else:
             store = self.stores / generation
             store.mkdir(exist_ok=True)
-            (repo / '.store').write_text(str(store) + '\n')
+            # The fixture pnpm reads its store from .npmrc, a store-selection
+            # input that discovery fingerprints.
+            (repo / '.npmrc').write_text('fixture-store=' + str(store) + '\n')
         with self.records.open('a') as records:
             records.write(str(repo) + '\tfixture\n')
         return repo
@@ -105,12 +108,14 @@ esac''')
 
     def test_repeated_cache_miss_is_classified_once_and_independent_work_continues(self):
         self.repository('old-a', offline=True)
-        self.repository('old-b', offline=True)
+        old_b = self.repository('old-b', offline=True)
+        (old_b / 'pnpm-lock.yaml').write_text('lockfileVersion: 9\n')
         self.repository('cached', pin='39.0.1', generation='v39')
         result = self.run_cleanup('--yes')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('intentionally offline, not a connectivity test', result.stdout)
-        self.assertIn('2 store probes, 1 known misses reused', result.stdout)
+        self.assertIn('2 store probes for 3 pinned records; 0 shared in this run, 0 from the result cache, '
+                      '1 known misses reused', result.stdout)
         self.assertNotIn('about to download', result.stdout + result.stderr)
         calls = self.calls.read_text()
         self.assertEqual(calls.count('pnpm store path'), 2, calls)
@@ -145,7 +150,8 @@ esac''')
         result = self.run_cleanup()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
-        self.assertIn('2 store probes, 0 known misses reused', result.stdout)
+        self.assertIn('2 store probes for 2 pinned records; 0 shared in this run, 0 from the result cache, '
+                      '0 known misses reused', result.stdout)
         self.assertFalse((self.home / '.local/state').exists())
 
     def test_mise_shims_use_each_repository_effective_corepack_cache_context(self):
@@ -182,7 +188,8 @@ exec "$@"
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = self.calls.read_text()
                 self.assertEqual(calls.count('pnpm store path'), 2)
-                self.assertIn('2 store probes, 1 known misses reused', result.stdout)
+                # context-a2 shares context-a's whole store context, so it reuses that observation.
+                self.assertIn('2 store probes for 3 pinned records; 1 shared in this run', result.stdout)
                 mise_calls = [line for line in calls.splitlines() if line.startswith('mise exec')]
                 # Three Corepack-context probes plus two shimmed store probes that miss.
                 self.assertEqual(len(mise_calls), 5, calls)
@@ -198,6 +205,168 @@ exec "$@"
         self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
         self.assertIn('0 known misses reused', result.stdout)
 
+    def cache(self):
+        return self.home / '.local/state/groundwork/pnpm-discovery-cache.tsv'
+
+    def worktrees(self, count, lockfile='lockfileVersion: 9\n', pin=FIXTURE_PIN, generation='v40'):
+        repos = [self.repository(f'wt{number}', pin=pin, generation=generation) for number in range(count)]
+        for repo in repos:
+            (repo / 'pnpm-lock.yaml').write_text(lockfile)
+        return repos
+
+    def test_records_sharing_pin_lockfile_and_configuration_probe_once(self):
+        repos = self.worktrees(5)
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls.read_text().count('pnpm store path'), 1)
+        self.assertEqual(self.calls.read_text().count('pnpm --version'), 1)
+        self.assertIn('1 store probes for 5 pinned records; 4 shared in this run', result.stdout)
+        self.assertIn('Selectors: 5', result.stdout)
+        for repo in repos:
+            self.assertIn(str(repo), result.stdout)
+
+    def test_a_changed_lockfile_or_configuration_gets_its_own_probe(self):
+        repos = self.worktrees(4)
+        (repos[1] / 'pnpm-lock.yaml').write_text('lockfileVersion: 9\n# changed\n')
+        (repos[2] / '.npmrc').write_text('fixture-store=' + str(self.stores / 'v40') + '\n# changed\n')
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls.read_text().count('pnpm store path'), 3)
+        self.assertIn('3 store probes for 4 pinned records; 1 shared in this run', result.stdout)
+
+    def test_manifest_edits_share_but_a_manifest_store_setting_does_not(self):
+        repos = self.worktrees(3)
+        (repos[1] / 'package.json').write_text(json.dumps(
+            {'packageManager': 'pnpm@' + FIXTURE_PIN, 'scripts': {'test': 'node --test'}}))
+        (repos[2] / 'package.json').write_text(json.dumps(
+            {'packageManager': 'pnpm@' + FIXTURE_PIN, 'pnpm': {'storeDir': '/absolute/store'}}))
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('2 store probes for 3 pinned records; 1 shared in this run', result.stdout)
+
+    def test_relative_or_computed_store_dir_is_never_shared(self):
+        for line in ('store-dir=../shared-store', 'store-dir=${PNPM_STORE}', 'storeDir: relative'):
+            with self.subTest(line=line):
+                for child in self.root.glob('wt*'):
+                    shutil.rmtree(child)
+                self.records.write_text('')
+                self.calls.unlink(missing_ok=True)
+                repos = self.worktrees(2)
+                for repo in repos:
+                    name = 'pnpm-workspace.yaml' if line.startswith('storeDir') else '.npmrc'
+                    with (repo / name).open('a') as config:
+                        config.write(line + '\n')
+                result = self.run_cleanup()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
+                self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
+        for child in self.root.glob('wt*'):
+            shutil.rmtree(child)
+        self.records.write_text('')
+        self.calls.unlink(missing_ok=True)
+        for repo in self.worktrees(2):
+            with (repo / '.npmrc').open('a') as config:
+                config.write('store-dir = /absolute/store\n')
+        result = self.run_cleanup()
+        self.assertIn('1 store probes for 2 pinned records; 1 shared in this run', result.stdout)
+
+    def test_store_dir_environment_must_be_absolute_to_share(self):
+        self.worktrees(2)
+        for value, probes in (('relative/store', 2), ('/absolute/store', 1)):
+            with self.subTest(value=value):
+                self.calls.unlink(missing_ok=True)
+                self.env['npm_config_store_dir'] = value
+                result = self.run_cleanup()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls.read_text().count('pnpm store path'), probes)
+
+    def test_result_cache_serves_later_runs_until_pin_or_lockfile_changes(self):
+        repos = self.worktrees(3)
+        report = self.run_cleanup()
+        self.assertEqual(report.returncode, 0, report.stdout + report.stderr)
+        self.assertFalse(self.cache().exists(), 'report mode must not write the cache')
+        first = self.run_cleanup('--yes')
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        lines = self.cache().read_text().splitlines()
+        self.assertEqual(lines[0], 'groundwork pnpm discovery cache v1')
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(lines[1].endswith('\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN))
+        self.calls.unlink()
+        second = self.run_cleanup('--yes')
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertIn('0 store probes for 3 pinned records; 2 shared in this run, 1 from the result cache',
+                      second.stdout)
+        self.assertNotIn('pnpm store path', self.calls.read_text())
+        report = self.run_cleanup()
+        self.assertIn('Automatic candidates: 1', report.stdout)
+        self.assertIn('Selectors: 3', report.stdout)
+        for repo in repos:
+            (repo / 'pnpm-lock.yaml').write_text('lockfileVersion: 9\n# upgraded\n')
+        self.calls.unlink()
+        third = self.run_cleanup('--yes')
+        self.assertIn('1 store probes for 3 pinned records; 2 shared in this run, 0 from the result cache',
+                      third.stdout)
+        for repo in repos:
+            (repo / 'package.json').write_text(json.dumps({'packageManager': 'pnpm@40.5.7'}))
+        self.calls.unlink()
+        fourth = self.run_cleanup('--yes')
+        self.assertIn('1 store probes for 3 pinned records', fourth.stdout)
+        self.assertIn('\t40.5.7', self.cache().read_text())
+        self.assertNotIn('\t' + FIXTURE_PIN, self.cache().read_text())
+
+    def test_result_cache_honors_xdg_state_home(self):
+        self.worktrees(1)
+        state = self.root / 'custom-state'
+        self.env['XDG_STATE_HOME'] = str(state)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((state / 'groundwork/pnpm-discovery-cache.tsv').exists())
+        self.assertFalse(self.cache().exists())
+
+    def test_corrupt_result_cache_is_treated_as_empty_and_replaced(self):
+        self.worktrees(2)
+        self.cache().parent.mkdir(parents=True)
+        # A recent prune makes this a cache-reading run.
+        (self.cache().parent / 'pnpm-prune-last-success').write_text(f'{int(time.time())} now\n')
+        good = 'a' * 64 + '\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN
+        for content in ('garbage\n', 'groundwork pnpm discovery cache v1\nshort\t/x\t1.2.3\n',
+                        'groundwork pnpm discovery cache v1\n' + good + '\textra\n', ''):
+            with self.subTest(content=content):
+                self.cache().write_text(content)
+                self.calls.unlink(missing_ok=True)
+                result = self.run_cleanup('--yes')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('ignored an unreadable result cache', result.stdout)
+                self.assertEqual(self.calls.read_text().count('pnpm store path'), 1)
+                self.assertTrue(self.cache().read_text().startswith('groundwork pnpm discovery cache v1\n'))
+
+    def test_pending_pnpm_repair_re_probes_instead_of_trusting_the_cache(self):
+        self.worktrees(2)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.pending().parent.mkdir(parents=True, exist_ok=True)
+        self.pending().write_text('2026-10-01T00:00:00Z pnpm store maintenance failed (exit 3)\n')
+        self.calls.unlink()
+        result = self.run_cleanup('--yes')
+        self.assertIn('1 store probes for 2 pinned records; 1 shared in this run, 0 from the result cache',
+                      result.stdout)
+
+    def test_a_run_due_for_pnpm_maintenance_re_probes_instead_of_trusting_the_cache(self):
+        self.worktrees(2)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        success = self.home / '.local/state/groundwork/pnpm-prune-last-success'
+        success.write_text(f'{int(time.time()) - 31 * 86400} 2026-09-30T00:00:00Z\n')
+        self.calls.unlink()
+        result = self.run_cleanup('--yes')
+        self.assertIn('pnpm maintenance may run, so every store context is probed fresh', result.stdout)
+        self.assertIn('1 store probes for 2 pinned records; 1 shared in this run, 0 from the result cache',
+                      result.stdout)
+        self.assertIn(' store prune', self.calls.read_text())
+        self.calls.unlink()
+        result = self.run_cleanup('--yes', '--force')
+        self.assertIn('0 from the result cache', result.stdout)
+
     def pending(self):
         return self.home / '.local/state/groundwork/update-all-pending/pnpm'
 
@@ -205,6 +374,8 @@ exec "$@"
         self.repository('first-ready')
         slow = self.repository('second-hangs')
         (slow / '.hang').touch()
+        # A distinct lockfile gives the hanging record its own store context.
+        (slow / 'pnpm-lock.yaml').write_text('lockfileVersion: 9\n')
         self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
         result = self.run_cleanup('--yes')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -218,6 +389,7 @@ exec "$@"
         self.assertNotIn(' store prune', calls)
         self.assertFalse(self.pending().exists())
         state = self.home / '.local/state/groundwork'
+        self.assertFalse(self.cache().exists())
         self.assertFalse((state / 'pnpm-prune-last-attempt').exists())
         self.assertFalse((state / 'pnpm-prune-last-success').exists())
 
@@ -355,7 +527,7 @@ exec "$@"
                     (repo / '.offline').touch()
                 else:
                     (self.stores / generation).mkdir(exist_ok=True)
-                    (repo / '.store').write_text(str(self.stores / generation) + '\n')
+                    (repo / '.npmrc').write_text('fixture-store=' + str(self.stores / generation) + '\n')
                 if worktree % 3 == 0:
                     (repo / 'node_modules').mkdir()
         self.records.write_text(''.join(lines))
@@ -368,7 +540,10 @@ exec "$@"
                                 env=self.env, capture_output=True, text=True, timeout=90)
         elapsed = time.monotonic() - started
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('inspected 250/250 repository records; 191 store probes, 19 known misses reused; complete.',
+        # Worktrees of one repository share its pin, lockfile, and configuration, so
+        # each repository's store context is probed once.
+        self.assertIn('inspected 250/250 repository records; 20 store probes for 210 pinned records; '
+                      '189 shared in this run, 0 from the result cache, 1 known misses reused; complete.',
                       result.stdout)
         self.assertNotIn('hard deadline', result.stderr)
         self.assertIn('Automatic candidates: 2', result.stdout)
