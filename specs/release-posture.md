@@ -1,28 +1,16 @@
-# Environment Profiles and Release Posture
+# Release Posture
 
-Status: partially implemented (2026-08-09, local review tranche). Shipped on
-`origin/main`:
-- profile/posture schema and storage, and the `groundwork-profile` reporting
-  command (`f46e3a7`);
-- selective editing of the `profile_preset` seed via `groundwork-configure`
-  (`937ae11`);
-- the browser vertical slice: every desktop Mac posture (current, preview,
-  and Xcode) installs Brave from the checksummed `brave-browser`
-  cask; headless profiles select no GUI browser. Policies are rendered from
-  groundwork-core (`core/browser/brave.json`) into a configuration
-  profile the user approves. Chrome is not selected. An existing Chrome
-  install is left in place; removal is manual. The old no-checksum exception
-  lane is retired.
-This local tranche makes `groundwork-configure` the first-class editor for
-independent `environment_role` and `release_posture` values plus dependent Xcode
-`beta`, removes those mutable preferences from bootstrap, treats
-`profile_preset` as compatibility/history rather than a live master switch, and
-makes `groundwork-profile set` delegate to the same guarded transaction. Xcode
-beta is hidden while Xcode is off, and the final transaction reconciles its
-dependent change without overriding an explicit user choice. Open:
-- the remaining posture-driven application families and machine-readable
-  general tool catalog. Browser selection is live;
-  broader channel migration and explicit-candidate `update-all` remain open.
+Status: implemented for the browser slice; the general tool catalog and
+posture-driven channel families remain open (see Sequence).
+
+Groundwork has one release-channel setting per machine: `release_posture`,
+`current` or `preview`. It lives in the chezmoi config Groundwork already owns
+and is edited with `groundwork-configure`. There are no environment profiles:
+no work-managed profile (removed 2026-10-29, #74) and no environment role or
+profile preset (removed in #129). Every machine gets the same setup, and the
+settings that are not profiles stay independent: headless, Xcode with its
+dependent Xcode beta, game-dev tools, password manager, Git identity, and the
+developer preferences in `home/.chezmoitemplates/developer-settings`.
 
 `AI_THESIS.md` → "Release posture" owns the product stance; this specifies how it
 becomes configuration.
@@ -32,27 +20,22 @@ Implement under `skills/safe-mutating-cli` and
 
 ## Problem
 
-`update-all` today has one behavior for every machine and reports it
-dishonestly: it prints skipped casks and then says `Groundwork tools
-refreshed.` The browser slice installs Brave on every desktop
-Mac. Release posture does not select a browser channel. Editor and other
-application families still need the same model where a real preview channel
-exists.
+`update-all` once had one behavior for every machine and reported it
+dishonestly: it printed skipped casks and then said `Groundwork tools
+refreshed.` The temptation is to keep adding flags — `--greedy`,
+`--include-vendor-casks`, `--beta`. That produces a command whose behavior
+nobody can predict and whose receipt nobody can trust. A reverted attempt on
+2026-07-20 demonstrated the failure mode: `--require-sha --greedy-auto-updates`
+planned to upgrade `google-chrome`. At that time the cask shipped no checksum,
+so the audit kept it out of the Brewfile. That exception lane is retired.
+Brave is checksummed and Sparkle owns its later updates, so `update-all` does
+not brew-upgrade it.
 
-The temptation is to keep adding flags — `--greedy`, `--include-vendor-casks`,
-`--beta`. That produces a command whose behavior nobody can predict and whose
-receipt nobody can trust. A reverted attempt on 2026-07-20 demonstrated the
-failure mode: `--require-sha --greedy-auto-updates` planned to upgrade
-`google-chrome`. At that time the cask shipped no checksum, so the audit kept
-it out of the Brewfile. That exception lane is retired. Brave is checksummed
-and Sparkle owns its later updates, so `update-all` does not brew-upgrade it.
-
-The environment should declare its posture once, and `update-all` should read
-it.
+The machine should declare its posture once, and `update-all` should read it.
 
 ## Fixed invariants
 
-These are not profile fields. No preset may change them.
+These are not settings. No release posture may change them.
 
 1. **AI tool freshness.** Groundwork imposes **no intentional delay** on
    supported AI tools: it targets the newest Groundwork-supported release
@@ -70,144 +53,103 @@ These are not profile fields. No preset may change them.
    preference. Homebrew applications and AI CLIs carry no floor.
 4. **Project pins win.** Release posture governs available workstation tools,
    never repository contracts.
-5. **No OS enrollment.** Groundwork records and diagnoses the system channel;
-   it never enrolls a machine in an OS beta or downloads one.
+5. **No OS enrollment.** Groundwork never enrolls a machine in an OS beta or
+   downloads one.
 
-## Dimensions
+## The setting
 
-Presets choose starting values. What is **persisted is the concrete choice**,
-not the abstract posture, because future families may expose several concrete
-preview variants. The browser slice supports one family and one managed
-variant: Brave. Release posture does not change it.
-
-```yaml
-schema_version: 1
-
-environment:
-  role: personal              # personal | disposable
-  release_posture: preview    # current | preview; seeds defaults, does not name a channel
-
-tools:
-  primary_browser:
-    family: brave
-    variant: release          # current and preview both persist Brave release
-
-system:
-  declared_channel: developer-beta   # INTENT
-  management: user-controlled        # user-controlled | organization-managed
+```text
+release_posture = "current"    # current | preview; seeds defaults, never names a channel
 ```
 
-Two vocabularies, deliberately separate:
+- **`current`** — the latest stable release of each application. The default
+  for every fresh install, and not a cautious choice (see below).
+- **`preview`** — a pre-release channel for families that have one. Expect
+  occasional breakage where a preview channel is selected.
 
-- **Posture** — `current` or `preview`. An attitude that seeds defaults.
-- **Variant** — the concrete product a family installs. Brave persists
-  the release cask for both postures.
+Bootstrap never asks. `chezmoi init` writes `current` on a fresh install and
+carries a stored valid value forward on every regeneration.
+`groundwork-configure` is the only editor: it shows the current value, stages
+a change, renders the candidate config in isolation, previews the dotfile diff,
+and applies only after confirmation. `groundwork-configure --release-posture
+current|preview` opens the same transaction with posture preselected; there is
+no second writer. Confirming runs `chezmoi apply`, so the selected desired
+state is reconciled immediately. `update-all` owns later upgrades and
+maintenance.
 
-The two words stay separate so a later family can map its preview posture to
-a different variant without renaming posture. That split does not select
-another browser. Posture seeds the catalog default, and Brave's
-default is the release cask on every desktop Mac.
+Xcode beta is the one dependent choice. It is offered only while Xcode is
+enabled; disabling Xcode stages `beta=false` in the same receipt.
+`groundwork-doctor --browser` reports the stored posture, Xcode, and Xcode beta
+states. A one-time apply notice names the current posture and points to
+`groundwork-configure`.
 
-`system.declared_channel` records **intent**. Detected OS state is a separate
-observation made by `groundwork-doctor`, never stored as if Groundwork set it —
-Groundwork does not control Software Update enrollment and must not imply it
-does.
-
-### Roles
-
-| Role | Environment |
-| ---- | ----------- |
-| `personal` | The common setup for every Mac, including a machine an organization manages |
-| `disposable` | Rebuildable container or VM; aggressive variants are cheap |
-
-There is no `managed` role and no Work Managed profile. A stored
-`environment_role` of `managed`, a stored `profile_preset` of `work-managed`,
-or a stored `work=true` flag is ignored. Regeneration rewrites the retired role
-to `personal` and the retired preset to `personal-current`, and keeps an independent
-`release_posture`. Regeneration writes one comment into the config:
-`Retired work-managed setting ignored; this Mac uses the common setup.`
-`groundwork-profile show` and `groundwork-configure` print that same line while
-a retired role or preset is still stored. Nothing fails. Organization and device policy
-still outrank Groundwork on any Mac. That is the MDM ownership guard used by
-`groundwork-app-remove`, `groundwork-app-adopt`, and `update-all`, not a
-setup profile.
-
-`disposable` is in the v1 schema because the thesis already names containers as
-a target and the owner has stated the requirement. Modelling the role is cheap;
-building the full container experience is not, and that can follow.
-
-`ci` is deferred until Groundwork actually owns a CI installation path.
-
-Role and posture are independently editable through `groundwork-configure`;
-the stored preset below is only the historical bootstrap seed. Confirming that
-transaction runs `chezmoi apply`, so the selected desired state is reconciled
-immediately. `update-all` owns later upgrades and maintenance. The managed
-browser stays Brave either way.
-
-### Independent developer preferences
-
-`home/.chezmoitemplates/developer-settings` is the compatibility resolver for
-`docker_backend` (`colima`, `docker-desktop`, `none`), `git_identity` (`personal`,
-`work`), `personal_apps`, and `work_extensions`. The shared developer tools and
-AI CLIs are installed for every Mac. macOS defaults to Colima plus Docker CLI,
-including headless Macs. Device policy still takes precedence.
-
-`groundwork-configure` edits these preferences independently. Explicit stored
-values win. The retired `work` flag does not choose personal apps or
-infrastructure extensions. When a retired marker is present
-(`work=true`, `environment_role=managed`, or `profile_preset=work-managed`)
-and the stored pair is still the old seed (personal apps off, infrastructure
-extensions on), that pair is rewritten to the common defaults: personal apps
-on, infrastructure extensions off. Any other stored pair is kept. An explicit
-Git identity is kept. When `work=true` is stored and `git_identity` was never
-stored, regeneration writes `git_identity=work`. That is the identity the work
-flag used to select, so the Git email stays the work email when one is saved
-and the personal email when the work email is blank or the `email_work` key
-is missing. A missing key does not fail the render. A managed role or
-`work-managed` preset does not by itself choose a Git identity. A fresh setup
-has no work/personal install question.
-Docker Desktop removal and data migration are explicit owner operations:
-[the single migration guide](../docs/docker-desktop-to-colima.md).
-
-### Stored preset seeds
-
-| Preset | role | posture | |
-| ------ | ---- | ------- | --- |
-| **Personal Current** | personal | current | **the common Mac setup** |
-| **Personal Preview** | personal | preview | |
-| **Disposable Experimental** | disposable | preview | |
-
-**Personal Current is the shipped default, and that is not a cautious choice.**
-Current AI tools on stable foundations is the configuration that sets an
-AI-native developer up to succeed, for two reasons:
+**Current is the shipped default.** Current AI tools on stable foundations is
+the configuration that sets an AI-native developer up to succeed, for two
+reasons:
 
 1. **The AI layer already supplies the variance.** DORA's 2024 data found
    delivery stability dropping about 7.2% for every 25-point rise in AI
    adoption. A workflow that has taken on that much new variance should not
    also be absorbing pre-release breakage in its editor and operating system.
-   The managed browser stays Brave in every posture.
 2. **Agents work better against a documented substrate.** When an agent
    debugs a machine, it reasons from how the tool is documented to behave.
    Preview channels move behavior ahead of its documentation, so the developer
    ends up supervising the agent's confusion instead of the work.
 
-The scarce resource for an AI-native developer is attention. Every preview-
-channel breakage spends attention that should have gone to directing agents.
-Preview is a first-class, fully supported choice — it is simply not the default,
+Preview is a first-class, fully supported choice. It is simply not the default,
 and it is never a workaround or an integrity bypass.
 
-The settings editor confirms **concrete products**, not an abstract switch. On
-a desktop Mac the managed browser is Brave for every release
-posture. Groundwork runs `defaultbrowser browser` once, automatically, only when the
-default is Safari or unset; macOS asks you to confirm, the next run records
-Brave as accepted or a Keep Safari answer as a decline, and organization or
-device policy remains authoritative.
-Chrome is not installed or configured. A copy already on the machine stays until
-the owner removes it.
-
-There is no "production" profile. Groundwork configures development and
+There is no "production" posture. Groundwork configures development and
 automation environments; production belongs to Roost or the app's deployment
 system.
+
+### Posture and variant
+
+What a family installs is a **variant**, the concrete product. Posture only
+seeds which variant a family defaults to. The two words stay separate so a
+later family can map preview to a different variant without renaming posture.
+
+The browser slice supports one family and one managed variant: Brave. Both
+postures resolve to the release `brave-browser` cask, so switching posture
+does not install, configure, or remove a browser. On a desktop Mac Groundwork
+runs `defaultbrowser browser` once, automatically, only when the default is
+Safari or unset; macOS asks you to confirm, and organization or device policy
+remains authoritative. Chrome is not installed or configured. A copy already on
+the machine stays until the owner removes it. A headless machine selects no GUI
+browser.
+
+### Retired environment-profile keys
+
+Older configs can still carry `work`, `environment_role`, or `profile_preset`.
+They are read once and never written back:
+
+- `home/.chezmoi.toml.tmpl` reads them during regeneration and drops them.
+  When no valid `release_posture` is stored, a `profile_preset` ending in
+  `-preview` maps to `preview`; anything else maps to `current`. A stored
+  posture always wins.
+- A work-managed marker (`work=true`, `environment_role=managed`, or
+  `profile_preset=work-managed`) writes one comment into the config:
+  `Retired work-managed setting ignored; this Mac uses the common setup.`
+  `groundwork-configure` prints the same line while a marker is still stored.
+- `home/.chezmoitemplates/developer-settings` keeps two pieces of the old
+  behavior. When a marker is present and the stored pair is still the old seed
+  (personal apps off, infrastructure extensions on), that pair returns to the
+  common defaults. When `work=true` is stored and `git_identity` never was,
+  regeneration writes `git_identity=work`, so commits keep the work email when
+  one is saved. An explicit Git identity always wins. That is commit identity,
+  not a profile.
+- The presence of a stored `profile_preset` still marks a pre-multiplexer
+  install, which keeps tmux instead of the fresh-install Herdr recommendation.
+
+Nothing fails. `groundwork-profile` is a one-line shim: every invocation points
+to `groundwork-configure` and changes nothing. `scripts/validate-groundwork`
+holds a migration case for each retired key and a grep guard that keeps the
+retired names out of everything except the migration readers, history, and
+tests.
+
+Organization and device policy still outrank Groundwork on every Mac. That is
+the MDM ownership guard used by `groundwork-app-remove`,
+`groundwork-app-adopt`, and `update-all`, not a setup profile.
 
 ### Precedence
 
@@ -221,16 +163,16 @@ organization / device policy
 ```
 
 An organization-managed Mac may therefore run behind when device policy blocks
-an update. Groundwork reports that block and does not work around it. Groundwork
-itself imposes no delay and no separate work setup.
+an update. Groundwork reports that block and does not work around it.
+Groundwork itself imposes no delay.
 
 ### Persistence
 
-The profile is machine-local configuration, not tracked project state. It must
-be: readable before `chezmoi apply`, schema-versioned, atomically written,
-editable without rerunning onboarding, parsed by exactly one implementation, and
-recoverable when corrupt. Answers live in the chezmoi config Groundwork already
-owns — there must not be one answer in chezmoi and a second copy elsewhere.
+Posture is machine-local configuration, not tracked project state. It must be
+readable before `chezmoi apply`, atomically written, editable without rerunning
+onboarding, parsed by exactly one implementation, and recoverable when corrupt.
+The answer lives in the chezmoi config Groundwork already owns; there must not
+be one answer in chezmoi and a second copy elsewhere.
 
 ## Tool catalog
 
@@ -258,7 +200,7 @@ families:
 `defaults` is how a posture becomes a variant, and why posture and variant stay
 separate vocabularies. Brave's current and preview postures both resolve to
 the release cask, so the browser does not vary with release posture. Another family
-can later map preview to a different variant without touching the profile
+can later map preview to a different variant without touching the posture
 vocabulary. Chrome is not a managed variant.
 
 ### Three owners, not one
@@ -384,26 +326,21 @@ demote the former primary      → stop managing that preference domain; keep
 
 Distinguish an **installed** copy from a **configured** one from a
 **verified** one. An unmanaged install is not a proven rollback environment.
-
-## Profile changes are planned migrations
+## Switching posture
 
 Switching posture is a mutating operation and follows
 `skills/safe-mutating-cli`: show the plan, mutate only on acceptance.
 
 ```text
-groundwork-profile show
-groundwork-profile set preview               # guarded preview, then confirm
-groundwork-profile edit
+groundwork-configure                              # pick Release posture
+groundwork-configure --release-posture preview    # same transaction, preselected
 ```
 
 A change must never delete the previous channel automatically, overwrite the
 other channel's settings, or alter default-application handlers without showing
 it. Switching release posture does not install, configure, or remove a browser.
-Brave stays the managed browser. A Chrome cask that is already
-installed stays installed, with its preferences and profile data left alone,
-until the owner runs the manual removal command above.
 
-`update-all` gains no new posture flags. Its user-facing surface stays:
+`update-all` gains no posture flags. Its user-facing surface stays:
 
 ```text
 update-all
@@ -419,7 +356,7 @@ trampoline:
 PLAN-001  --plan parses and validates before synchronization or apply.
 PLAN-002  A plan performs no persistent machine mutation. Metadata and network
           reads may occur; any unavoidable cache effect is documented.
-PLAN-003  --help, invalid arguments, and an invalid profile invoke no git,
+PLAN-003  --help, invalid arguments, and an invalid posture invoke no git,
           chezmoi, brew, mise, installer, or application-start command.
 PLAN-004  --plan does not write the last-update-all timestamp, so it never
           suppresses the stale-refresh reminder.
@@ -466,7 +403,7 @@ safe commands and performs no ownership or removal action.
 ## Execution model
 
 ```text
-read persisted profile
+read persisted release posture
 → inventory each supported package manager and known selected manual app
 → query installed, available, pinned, and updater-ownership state
 → classify every candidate
@@ -500,35 +437,10 @@ Groundwork does not claim the AI toolchain is fully current.
 ```
 
 Exit behavior: a Groundwork-owned update failure is nonzero; invalid arguments
-or an invalid profile fail before mutation; an external updater being required
+or an invalid posture fail before mutation; an external updater being required
 is visible and does not claim fully current; unverifiable status makes the
 receipt explicitly incomplete; a device-policy block is reported, never
 bypassed.
-
-## Migration for existing installations
-
-Never guess a profile silently. Detect installed channels, recommend the closest
-preset, show resulting changes, let the user accept or edit, then persist.
-
-Migration preserves installed applications and their settings. The Homebrew
-upgrade scope now follows the rendered Groundwork Brewfile without a prompt:
-that narrows mutation to declared software and leaves independently installed
-applications and their data alone. A posture change does not add or remove a
-browser. Brave stays selected on every desktop Mac, and an existing
-Chrome cask and its profile data stay until the owner removes it by hand.
-
-```text
-interactive, unmigrated     → show the recommended profile and plan; require a
-                              selection before the next MUTATING update
-noninteractive, unmigrated  → fail before mutation, naming the exact command
-                              that selects a profile
-compatibility escape hatch  → owner-approved, visibly deprecated, with a bounded
-                              removal date
-```
-
-Read-only commands (`--plan`, `--help`, `groundwork-profile show`) keep working
-unmigrated.
-
 ## Structural guardrails
 
 Enforced by `scripts/validate-groundwork`:
@@ -547,34 +459,32 @@ Enforced by `scripts/validate-groundwork`:
    explicit checked exception or generated output. (This document is such an
    exception; its earlier draft asserted the broad rule and then violated it.)
 6. Update and retry use the same exact selected token.
-7. A profile change is idempotent.
+7. A posture change is idempotent.
 8. Stable fallback is preserved when the catalog says coexistence is supported.
    Brave does not declare a fallback. Every desktop posture selects Brave only.
 9. An upstream token or bundle rename requires one canonical production-data
    edit. Fixtures, a migration alias, and release notes may also change;
    consumers must derive the value rather than duplicate it in logic.
-
 ## Sequence
 
 1. **Done** — guardrail skills committed (`81bb40b`).
-2. **Done** — thesis stance + this specification (`bc2ac88`).
-3. **Done** — profile schema and persistence for role, posture, and system
-   intent, with storage, argument safety, and rendering proven, plus the
-   `groundwork-profile` reporting command (`f46e3a7`); the numbered-menu
-   interview writes the fields (`4bb48df`). No channel depends on it yet.
-4. **Browser slice done** — Brave on every desktop Mac posture, checksummed
+2. **Done** — thesis stance and the first version of this specification
+   (`bc2ac88`).
+3. **Done** — posture storage and rendering, owned by `groundwork-configure`.
+4. **Done** — browser slice: Brave on every desktop Mac posture, checksummed
    Brewfile install, policy profile rendered from groundwork-core, and
    preserved legacy `install_chrome` input. The Chrome exception lane is
-   retired. Chrome is not selected and is not uninstalled when already
-   present. A general machine-readable catalog for other families remains;
-   test that channels never replace one another.
-5. Migration and profile-changing commands, built on catalog-backed plans —
-   migration needs the catalog to map observed casks to known variants.
-6. Rebuild `update-all` on explicit candidates with `--plan` and an honest
+   retired.
+5. **Done** — environment profiles removed: work-managed (#74), then
+   environment role, profile preset, and the `groundwork-profile` command
+   (#129). One `release_posture` setting remains.
+6. Machine-readable catalog for other families; test that channels never
+   replace one another.
+7. Rebuild `update-all` on explicit candidates with `--plan` and an honest
    receipt. Bare global greedy remains forbidden; exact greedy-aware lanes may
    mutate only preclassified installed tokens. Manual/MDM apps remain unchanged.
-7. `groundwork-doctor` checks: profile vs installed channels, AI freshness,
-   vendor-updater status, policy blocks, unmanaged software, system channel vs
-   declared intent.
+8. `groundwork-doctor` checks: posture vs installed channels, AI freshness,
+   vendor-updater status, policy blocks, and unmanaged software. Groundwork
+   never enrolls a machine in an OS beta.
 
 Hostile fixtures land with each phase, not after. Red-prove every branch.

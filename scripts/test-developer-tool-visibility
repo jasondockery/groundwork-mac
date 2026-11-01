@@ -315,7 +315,7 @@ PY
 
 empty_config="$tmp/empty-config.toml"
 : >"$empty_config"
-base_data='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"none","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"profile_preset":"personal-current","environment_role":"personal","release_posture":"current","work":false,"headless":false,"xcode":false,"beta":false'
+base_data='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"none","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"release_posture":"current","headless":false,"xcode":false,"beta":false'
 
 render() { # os source output
   local os="$1" source="$2" output="$3" os_release='{}'

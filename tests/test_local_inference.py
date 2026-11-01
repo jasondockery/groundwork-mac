@@ -171,18 +171,6 @@ class LocalInferenceTests(unittest.TestCase):
         self.assertIn("local_inference = false", coerced)
         self.assertNotIn('local_inference = "yes"', coerced)
 
-    def test_profile_reports_when_a_stored_flag_cannot_apply(self):
-        apple = self.render("home/dot_local/bin/executable_groundwork-profile.tmpl", local_inference=True)
-        intel = self.render(
-            "home/dot_local/bin/executable_groundwork-profile.tmpl",
-            local_inference=True,
-            chezmoi=dict(os="darwin", arch="amd64", osRelease={}),
-        )
-        self.assertIn('local_inference=true', apple)
-        self.assertIn('local_inference_applies=true', apple)
-        self.assertIn("inactive (stored enabled; Apple Silicon only)", intel)
-        self.assertIn('local_inference_applies=false', intel)
-
 
 def _array(text, name):
     import re

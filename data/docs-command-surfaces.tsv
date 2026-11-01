@@ -33,9 +33,6 @@ Ctrl+Space then ?	key	herdr-binding	all	all	herdr	herdr.html
 Ctrl+Space then [	key	herdr-binding	all	all	herdr	herdr.html
 groundwork-platform	command	executable	all	all	-	platforms.html
 groundwork-distro [--family]	command	executable	linux-wsl	all	-	platforms.html
-groundwork-profile show	command	executable	all	all	-	platforms.html
-groundwork-profile set <current|preview>	command	executable	all	all	-	platforms.html
-groundwork-profile edit	command	executable	all	all	-	platforms.html
 groundwork-yazi-config status	command	executable	all	all	yazi	shell.html
 groundwork-yazi-config diff	command	executable	all	all	yazi	customizing.html
 groundwork-yazi-config edit	command	executable	all	all	yazi	customizing.html

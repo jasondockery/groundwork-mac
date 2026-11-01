@@ -832,34 +832,34 @@ run_shellcheck() {
 empty_config="$out_dir/empty-config.toml"
 : >"$empty_config"
 
-base_data='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"bitwarden","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"profile_preset":"personal-current","environment_role":"personal","release_posture":"current"'
+base_data='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"bitwarden","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"release_posture":"current"'
 
+# render os headless arch input output [xcode beta game_dev password_manager
+#   release_posture docker_backend]. Set render_extra_data to a JSON member list
+# (for example '"work":true') to add stored keys, such as retired ones a
+# migration check must still render.
 render() {
   local os="$1" headless="$2" arch="${3:-arm64}" input="$4" output="$5"
-  local work="${6:-false}"
-  local xcode="${7:-false}"
-  local beta="${8:-false}"
-  local game_dev="${9:-false}"
-  local password_manager="${10:-bitwarden}"
-  local profile_preset="${11:-personal-current}"
-  local environment_role="${12:-personal}"
-  local release_posture="${13:-current}"
+  local xcode="${6:-false}"
+  local beta="${7:-false}"
+  local game_dev="${8:-false}"
+  local password_manager="${9:-bitwarden}"
+  local release_posture="${10:-current}"
   # Existing Docker Desktop transaction fixtures select that alternative; the
   # default preference matrix is exercised by scripts/test-common-setup.
-  local docker_backend="${14:-colima}"
-  [[ "$work" == false && "$#" -lt 14 ]] && docker_backend="docker-desktop"
+  local docker_backend="${11:-docker-desktop}"
+  local extra_data="${render_extra_data:-}"
   local os_release='{}'
   [[ "$os" == "linux" ]] && os_release='{"ID":"ubuntu"}'
-  local data="{${base_data},\"work\":${work},\"docker_backend\":\"${docker_backend}\",\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"game_dev\":${game_dev},\"password_manager\":\"${password_manager}\",\"profile_preset\":\"${profile_preset}\",\"environment_role\":\"${environment_role}\",\"release_posture\":\"${release_posture}\",\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
+  local data="{${base_data},${extra_data:+${extra_data},}\"docker_backend\":\"${docker_backend}\",\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"game_dev\":${game_dev},\"password_manager\":\"${password_manager}\",\"release_posture\":\"${release_posture}\",\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
   chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" --override-data "$data" execute-template <"$input" >"$output"
 }
 
 render_without_xcode_key() {
   local os="$1" headless="$2" arch="${3:-arm64}" input="$4" output="$5"
-  local work="${6:-false}"
   local os_release='{}'
   [[ "$os" == "linux" ]] && os_release='{"ID":"ubuntu"}'
-  local data="{${base_data},\"work\":${work},\"headless\":${headless},\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
+  local data="{${base_data},\"headless\":${headless},\"chezmoi\":{\"os\":\"${os}\",\"arch\":\"${arch}\",\"osRelease\":${os_release}}}"
   chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" --override-data "$data" execute-template <"$input" >"$output"
 }
 
@@ -4613,13 +4613,12 @@ EOF
   # exist in that branch.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
     "$update_all_fixture/darwin-runner"
-  # The common Mac setup uses Colima. Pass that backend explicitly. A retired
-  # work-managed profile is not a separate render.
+  # The common Mac setup uses Colima. Pass that backend explicitly.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
-    "$update_all_fixture/darwin-work-runner" false false false false bitwarden \
-    personal-current personal current colima
+    "$update_all_fixture/darwin-colima-runner" false false false bitwarden \
+    current colima
   chmod +x "$update_all_fixture/darwin-runner" \
-    "$update_all_fixture/darwin-work-runner"
+    "$update_all_fixture/darwin-colima-runner"
   cat >"$update_all_bin/groundwork-apps-start" <<'SH'
 #!/usr/bin/env bash
 printf 'apps-start\n' >>"$GROUNDWORK_TEST_LOG"
@@ -5944,7 +5943,7 @@ PY
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
   # Exact work-laptop regression: a vendor/manual ChatGPT bundle is present on
-  # a work profile while Homebrew owns other software. It must be reported and
+  # a managed laptop while Homebrew owns other software. It must be reported and
   # omitted from the Brewfile apply, but every safe managed lane still runs.
   # Ownership review is a successful-but-actionable receipt, not updater failure.
   manual_apps="$update_all_fixture/Work Applications"
@@ -5963,10 +5962,10 @@ PY
   HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_CASKS='ghostty' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-work-runner" \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/darwin-work-manual-chatgpt" 2>&1 || manual_exit=$?
   [[ "$manual_exit" -eq 0 ]] \
-    || fail "manual ChatGPT on a work profile surfaced as exit $manual_exit instead of action-required"
+    || fail "manual ChatGPT on a managed laptop surfaced as exit $manual_exit instead of action-required"
   grep -qF 'ChatGPT.app is installed but not package-manager-owned' \
     "$update_all_fixture/darwin-work-manual-chatgpt" \
     || fail "the exact work-laptop manual ChatGPT case was silent"
@@ -6008,7 +6007,7 @@ PY
   mkdir -p "$update_all_home/.Trash"
   : >"$update_all_log"
   awk '/groundwork_interactive_tty_available=0/ { found=1 } found { print }' \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/action-center-render"
   assert_not_contains 'GROUNDWORK_PROMPT_TTY|/dev/tty' \
     "$update_all_fixture/action-center-render" \
@@ -6018,7 +6017,7 @@ PY
     HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-work-runner" \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-colima-runner" \
     || fail "the consent-gated ChatGPT action sequence failed"
   grep -qF 'Let Homebrew manage ChatGPT.app? [y/N]' \
     "$update_all_fixture/darwin-chatgpt-actions"
@@ -6073,7 +6072,7 @@ PY
     HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-work-runner" \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-colima-runner" \
     || fail "declining ChatGPT adoption failed the completed updater"
   grep -qxF 'app-adopt --check chatgpt' "$update_all_log" \
     || fail "the action center prompted without a fresh adoption eligibility check"
@@ -6087,7 +6086,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_ADOPT_STATUS=17 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" || action_failed_exit=$?
+    "$update_all_fixture/darwin-colima-runner" || action_failed_exit=$?
   [[ "$action_failed_exit" -eq 17 ]] \
     || fail "a requested ChatGPT adoption failure surfaced as $action_failed_exit"
   grep -qF 'Maintenance: succeeded' \
@@ -6117,7 +6116,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_ADOPT_CHECK_STATUS=18 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "an ineligible ChatGPT adoption failed otherwise completed maintenance"
   grep -qxF 'app-adopt --check chatgpt' "$update_all_log"
   assert_not_contains '^app-adopt --yes|^app-remove' "$update_all_log" \
@@ -6133,7 +6132,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_ADOPT_CHECK_STATUS=0 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "a no-longer-needed adoption check failed completed maintenance"
   grep -qxF 'app-adopt --check chatgpt' "$update_all_log"
   assert_not_contains '^app-adopt --yes' "$update_all_log" \
@@ -6152,7 +6151,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_REMOVE_CHECK_STATUS=0 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "a no-longer-needed Classic removal check failed completed maintenance"
   grep -qxF 'app-adopt --yes chatgpt' "$update_all_log"
   grep -qxF 'app-remove --check chatgpt-classic' "$update_all_log"
@@ -6173,7 +6172,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     FAIL_ACTION_RECEIPT_CP=1 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" || action_receipt_failure_exit=$?
+    "$update_all_fixture/darwin-colima-runner" || action_receipt_failure_exit=$?
   [[ "$action_receipt_failure_exit" -eq 1 ]] \
     || fail "action-receipt publication failure surfaced as $action_receipt_failure_exit"
   grep -qF 'durable post-update action receipt could not be published' \
@@ -6884,7 +6883,7 @@ EOF
   grep -qxF 'docker-info' "$update_all_log"
   grep -qxF 'docker-desktop-stop' "$update_all_log"
   assert_not_contains 'colima (start|stop)' "$update_all_log" \
-    "the personal profile changed the nonselected Colima backend"
+    "the Docker Desktop selection changed the nonselected Colima backend"
   grep -qF 'Docker scratch          completed' \
     "$update_all_fixture/docker-personal-approved" \
     || fail "the final receipt did not classify completed Docker maintenance"
@@ -6898,7 +6897,7 @@ EOF
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "an approved temporary Colima maintenance cycle failed"
   grep -qxF 'stopped' "$docker_runtime_state" \
     || fail "Colima was not restored to its original stopped state"
@@ -6908,7 +6907,7 @@ EOF
   [[ "$(grep -c '^colima-env COLIMA_HOME=unset$' "$update_all_log")" -eq 3 ]] \
     || fail "Colima was given COLIMA_HOME when ~/.colima does not exist"
   assert_not_contains 'docker-desktop-start|docker-desktop-stop' "$update_all_log" \
-    "the work profile changed the nonselected Docker Desktop backend"
+    "the Colima selection changed the nonselected Docker Desktop backend"
 
   check "update-all sets COLIMA_HOME when ~/.colima already exists"
   printf 'stopped\n' >"$docker_runtime_state"
@@ -6920,7 +6919,7 @@ EOF
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "an approved Colima cycle with an existing ~/.colima failed"
   [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/.colima$" "$update_all_log")" -eq 3 ]] \
     || fail "Groundwork did not set COLIMA_HOME for every Colima invocation, including start --help"
@@ -6943,7 +6942,7 @@ EOF
     COLIMA_HOME="$update_all_home/custom-colima" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "an approved Colima cycle with a user-set COLIMA_HOME failed"
   [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/custom-colima$" "$update_all_log")" -eq 3 ]] \
     || fail "Groundwork replaced a user-set COLIMA_HOME on start --help, start, or stop"
@@ -6962,7 +6961,7 @@ EOF
   HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=0 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/docker-work-running" 2>&1 \
     || fail "a work update with running Colima failed"
   grep -qxF 'running' "$docker_runtime_state" \
@@ -6978,7 +6977,7 @@ EOF
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "declining a temporary Colima start failed update-all"
   grep -qxF 'stopped' "$docker_runtime_state"
   assert_not_contains 'colima (start|stop)|docker-desktop-start|docker-desktop-stop' \
@@ -7381,7 +7380,7 @@ EOF
   env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-disk-zero-yaml" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "disk: 0 exited $update_all_status; expected a skip, not success or the start deadline"
@@ -7414,7 +7413,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_HOME="$colima_disk_root/empty-datadisk" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-empty-datadisk" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a 0-byte Colima data disk exited $update_all_status; expected a skip, not success or the start deadline"
@@ -7441,7 +7440,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_HOME="$colima_disk_root/healthy" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "a healthy COLIMA_HOME was blocked by disk: 0 under ~/.colima"
   grep -qxF 'colima start --runtime docker' "$update_all_log" \
     || fail "update-all did not start the COLIMA_HOME instance"
@@ -7467,7 +7466,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_PROFILE=work \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-profile-broken" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a broken COLIMA_PROFILE exited $update_all_status; expected a skip, not success or the start deadline"
@@ -7491,7 +7490,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_PROFILE=work \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "a healthy COLIMA_PROFILE was blocked by disk: 0 on the default profile"
   grep -qxF 'colima start --runtime docker' "$update_all_log" \
     || fail "update-all did not start the healthy COLIMA_PROFILE"
@@ -7515,7 +7514,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_PROFILE=work LIMA_HOME="$lima_root" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-lima-home" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a 0-byte LIMA_HOME datadisk exited $update_all_status; expected a skip"
@@ -7540,7 +7539,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_HOME="$colima_disk_root/missing-colima-home" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-missing-home" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a missing COLIMA_HOME with a broken ~/.colima exited $update_all_status; expected a skip"
@@ -7566,7 +7565,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     XDG_CONFIG_HOME="$xdg_root" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-xdg-home" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "an XDG-only Colima home exited $update_all_status; expected a skip"
@@ -10907,7 +10906,7 @@ SH
   chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
     --override-data '{"chezmoi":{"os":"linux","arch":"amd64","kernel":{"osrelease":"5.15.167.4-microsoft-standard-WSL2"}}}' \
     execute-template --init \
-    --promptBool work=false,headless=true,reset_existing_configs=false,game_dev=false,xcode=false \
+    --promptBool headless=true,reset_existing_configs=false,game_dev=false,xcode=false \
     --promptString name=Test,email_personal=test@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name= \
     --promptChoice password_manager=none,terminal_multiplexer=herdr \
     <home/.chezmoi.toml.tmpl >"$out_dir/wsl2-init" 2>&1 \
@@ -10918,7 +10917,7 @@ SH
   chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
     --override-data '{"chezmoi":{"os":"linux","arch":"amd64","kernel":{"osrelease":"4.19.104-microsoft-standard"}}}' \
     execute-template --init \
-    --promptBool work=false,headless=true,reset_existing_configs=false,game_dev=false,xcode=false \
+    --promptBool headless=true,reset_existing_configs=false,game_dev=false,xcode=false \
     --promptString name=Test,email_personal=test@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name= \
     --promptChoice password_manager=none,terminal_multiplexer=herdr \
     <home/.chezmoi.toml.tmpl >"$out_dir/wsl2-old-init" 2>&1 \
@@ -11093,11 +11092,12 @@ PYTHON
 
   check "chezmoi interview: release preferences stay out of bootstrap"
   # Stable versus preview and Xcode beta are mutable preferences, not facts
-  # required to render a usable first install. Fresh setup derives a stable
-  # profile, retaining a legacy seed when present; existing saved preferences
-  # survive regeneration and remain editable through groundwork-configure.
+  # required to render a usable first install. Fresh setup is current; existing
+  # saved preferences survive regeneration and remain editable through
+  # groundwork-configure. Retired environment-profile keys are read once and
+  # never written back.
   assert_no_matches "chezmoi init must not ask for a release profile" \
-    rg -n 'promptChoiceOnce \. "profile_preset"|Starting profile' home/.chezmoi.toml.tmpl
+    rg -n 'promptChoiceOnce \. "(profile_preset|environment_role|release_posture)"|Starting profile' home/.chezmoi.toml.tmpl
   assert_no_matches "chezmoi init must not ask for an Xcode beta preference" \
     rg -n 'promptBoolOnce \. "beta"' home/.chezmoi.toml.tmpl
   assert_no_matches "chezmoi init must not ask for the iMessage gateway role" \
@@ -11107,38 +11107,39 @@ PYTHON
     chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
       --override-data "$override_data" \
       execute-template --init \
-      --promptBool work=false,headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
+      --promptBool headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
       --promptString name=Test,email_personal=test@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name= \
       --promptChoice password_manager=none,key_repeat=fast,terminal_multiplexer=herdr \
       <home/.chezmoi.toml.tmpl 2>&1
   }
-  preset_out="$(_profile_render '{"work":false,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
-    || fail "fresh stable profile did not render"
-  grep -qF 'profile_preset = "personal-current"' <<<"$preset_out" \
-    || fail "a fresh personal install must seed personal-current without another prompt"
+  assert_no_retired_profile_keys() { # rendered-config message
+    if grep -qE '^[[:space:]]*(work|profile_preset|environment_role)[[:space:]]*=' <<<"$1"; then
+      printf '%s\n' "$1" >&2
+      fail "$2"
+    fi
+  }
+  preset_out="$(_profile_render '{"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
+    || fail "fresh stable setup did not render"
   grep -qF 'release_posture = "current"' <<<"$preset_out" \
     || fail "a fresh install must default to stable/current release posture"
-  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
-    || fail "a fresh install must use the personal role"
+  assert_no_retired_profile_keys "$preset_out" "a fresh install wrote a retired environment-profile key"
+  ! grep -qF 'Retired work-managed setting ignored' <<<"$preset_out" \
+    || fail "a fresh install must not print the retirement notice"
+  # Migration: retired work flag.
   preset_out="$(_profile_render '{"work":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
     || fail "a stored work flag must still render"
-  grep -qF 'profile_preset = "personal-current"' <<<"$preset_out" \
-    || fail "a stored work flag must seed the common personal-current profile"
-  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
-    || fail "a stored work flag must not select a managed role"
   grep -qF 'release_posture = "current"' <<<"$preset_out" \
     || fail "a stored work flag must keep the stable/current release posture"
   grep -qF 'personal_apps = true' <<<"$preset_out" \
     || fail "a stored work flag must keep the common personal-apps setup"
   grep -qF 'work_extensions = false' <<<"$preset_out" \
     || fail "a stored work flag must not enable the old infrastructure-extension seed"
+  grep -qF 'git_identity = "work"' <<<"$preset_out" \
+    || fail "a stored work flag with no git_identity must keep the work commit identity"
   grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' <<<"$preset_out" \
     || fail "a stored work flag must record the one-line retirement notice"
-  grep -qF 'work = false' <<<"$preset_out" \
-    || fail "a stored work flag must be written back as false once migrated"
-  ! grep -qF 'work = true' <<<"$preset_out" \
-    || fail "a migrated config must not keep work = true"
-  preset_out="$(_profile_render '{"work":false,"personal_apps":false,"work_extensions":true,"git_identity":"work","chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
+  assert_no_retired_profile_keys "$preset_out" "a stored work flag was written back after migration"
+  preset_out="$(_profile_render '{"personal_apps":false,"work_extensions":true,"git_identity":"work","chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
     || fail "a migrated config must still render"
   grep -qF 'personal_apps = false' <<<"$preset_out" \
     || fail "a migrated config must keep an explicit personal_apps choice"
@@ -11146,16 +11147,12 @@ PYTHON
     || fail "a migrated config must keep an explicit work_extensions choice"
   ! grep -qF 'Retired work-managed setting ignored' <<<"$preset_out" \
     || fail "a migrated config must not repeat the retirement notice"
-  preset_out="$(_profile_render '{"work":false,"profile_preset":"personal-preview","release_posture":"preview","xcode":true,"beta":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
+  preset_out="$(_profile_render '{"release_posture":"preview","xcode":true,"beta":true,"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}')" \
     || fail "stored preview preferences did not render"
-  grep -qF 'profile_preset = "personal-preview"' <<<"$preset_out" \
-    || fail "an existing personal-preview preset must survive regeneration"
   grep -qF 'release_posture = "preview"' <<<"$preset_out" \
     || fail "an existing preview posture must survive regeneration"
   grep -qF 'beta = true' <<<"$preset_out" \
     || fail "an existing Xcode beta preference must survive regeneration"
-  grep -qF 'environment_role = "personal"' <<<"$preset_out" \
-    || fail "changing posture must not change the personal role"
 
   check "chezmoi interview: key repeat menu, dual return domain, and where it is asked"
   # Key repeat keeps its existing numbered-menu contract plus a scope rule: key
@@ -11167,7 +11164,7 @@ PYTHON
     DISPLAY=:0 chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
       --override-data "{${1}\"chezmoi\":{\"os\":\"$2\",\"arch\":\"arm64\",\"osRelease\":{},\"kernel\":{\"osrelease\":\"$3\"}}}" \
       execute-template --init \
-      --promptBool work=false,headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
+      --promptBool headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
       --promptString name=Test,email_personal=test@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name= \
       --promptChoice password_manager=none,terminal_multiplexer=herdr \
       <home/.chezmoi.toml.tmpl 2>&1
@@ -11432,18 +11429,16 @@ KRXS
   gc_rc=0
   bash "$gc_bin" --release-posture sideways >/dev/null 2>&1 || gc_rc=$?
   [[ "$gc_rc" -eq 64 ]] || fail "groundwork-configure must reject an invalid release posture with exit 64"
-  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend ' "$gc_bin" \
-    || fail "groundwork-configure must expose independent posture/role and dependent Xcode beta settings"
-  grep -qE '^fields_kind=\(posture role multiplexer bool docker ' "$gc_bin" \
-    || fail "release posture, environment role, terminal multiplexer, and Xcode beta must use the matching guarded field types"
-  grep -qE '^role_values=\(personal disposable\)$' "$gc_bin" \
-    || fail "groundwork-configure must offer personal and disposable, and no managed role"
+  grep -qE '^fields_key=\(release_posture terminal_multiplexer beta docker_backend ' "$gc_bin" \
+    || fail "groundwork-configure must expose release posture first and dependent Xcode beta"
+  grep -qE '^fields_kind=\(posture multiplexer bool docker ' "$gc_bin" \
+    || fail "release posture, terminal multiplexer, and Xcode beta must use the matching guarded field types"
   grep -qF 'pending_origin=()' "$gc_bin" \
     || fail "groundwork-configure must distinguish user and dependency-created pending changes"
-  assert_no_matches "profile_preset is bootstrap history, not a live settings master" \
-    rg -n '^fields_key=.*profile_preset' "$gc_bin"
-  assert_no_matches "changing one preference must never silently reseed independent role or posture" \
-    rg -n 'data\.pop\("environment_role"|data\.pop\("release_posture"' "$gc_bin"
+  assert_no_matches "retired environment-profile keys must not return as configure fields" \
+    rg -n '^fields_key=.*(environment_role|profile_preset)|^role_(values|labels)=' "$gc_bin"
+  assert_no_matches "changing one preference must never silently reseed release posture" \
+    rg -n 'data\.pop\("release_posture"' "$gc_bin"
   # Safe machine-state handling: candidate via isolated init, no sed on TOML,
   # compare-before-swap + lock + atomic 0600 promotion, apply with the exact config.
   grep -qF 'init --config-path' "$gc_bin" || fail "groundwork-configure must render a candidate via 'init --config-path'"
@@ -11522,11 +11517,11 @@ KRXS
     {
       echo "sourceDir = \"$PWD/home\""
       echo '[data]'
-      printf '    %s\n' 'work = false' 'headless = false' 'name = "Test User"' \
+      printf '    %s\n' 'headless = false' 'name = "Test User"' \
         'email_personal = "test@example.com"' 'email_work = ""' 'code_dir = "~/code"' \
         'reset_existing_configs = false' 'password_manager = "bitwarden"' 'signingkey = ""' \
-        'obsidian_vault_name = "test"' 'install_chrome = false' 'profile_preset = "personal-current"' \
-        'environment_role = "personal"' 'release_posture = "current"' 'terminal_multiplexer = "tmux"' 'game_dev = false' \
+        'obsidian_vault_name = "test"' 'install_chrome = false' \
+        'release_posture = "current"' 'terminal_multiplexer = "tmux"' 'game_dev = false' \
         'xcode = true' 'beta = false' 'key_repeat = "fast"'
     } >"$gc_dir/xdg/chezmoi/chezmoi.toml"
     # Derive the Apply entry's number from the field registry instead of hardcoding
@@ -11575,7 +11570,7 @@ KRXS
       }
     grep -aqF 'Not applied' "$gc_out" \
       || fail "declining must report the configuration was not applied"
-    grep -qF 'profile_preset = "personal-current"' "$gc_dir/xdg/chezmoi/chezmoi.toml" \
+    grep -qF 'release_posture = "current"' "$gc_dir/xdg/chezmoi/chezmoi.toml" \
       || fail "declining must leave the live config unchanged"
 
     # Focused release-posture path: use the real candidate renderer and diff,
@@ -11603,13 +11598,15 @@ fi
 exec "$GROUNDWORK_REAL_CHEZMOI" "$@"
 STUB
     chmod +x "$gc_focus/bin/chezmoi"
-    write_gc_focus_config() { # directory posture xcode beta role
-      local directory="$1" posture="$2" xcode_value="$3" beta_value="$4" role_value="$5"
+    write_gc_focus_config() { # directory posture xcode beta [stored legacy lines]
+      # An empty posture omits the key, as a config written before it existed.
+      local directory="$1" posture="$2" xcode_value="$3" beta_value="$4" legacy_lines="${5:-}"
+      local posture_line=""
+      [[ -z "$posture" ]] || posture_line="    release_posture = \"$posture\""
       mkdir -p "$directory/xdg/chezmoi" "$directory/home"
       cat >"$directory/xdg/chezmoi/chezmoi.toml" <<EOF
 sourceDir = "$PWD/home"
 [data]
-    work = false
     headless = false
     name = "Test User"
     email_personal = "test@example.com"
@@ -11620,13 +11617,13 @@ sourceDir = "$PWD/home"
     signingkey = ""
     obsidian_vault_name = "test"
     install_chrome = false
-    profile_preset = "personal-current"
-    environment_role = "$role_value"
-    release_posture = "$posture"
+$posture_line
+    terminal_multiplexer = "tmux"
     game_dev = false
     xcode = $xcode_value
     beta = $beta_value
     key_repeat = "fast"
+$legacy_lines
 EOF
     }
     run_gc_focus_session() { # fixture name extra-env
@@ -11645,9 +11642,11 @@ EOF
       tmux -L "$socket" pipe-pane -t 0 -o "cat >> '$output'"
       printf '%s\n' "$socket"
     }
-    # Accept: only posture moves. Preset and independently stored role survive.
+    # Accept: posture moves, and the promoted config is a fresh render, so the
+    # retired environment-profile keys stored beside it are read once and dropped.
     gc_focus_accept="$gc_focus/accept"
-    write_gc_focus_config "$gc_focus_accept" current false false disposable
+    write_gc_focus_config "$gc_focus_accept" current false false \
+      "$(printf '    work = false\n    profile_preset = "personal-current"\n    environment_role = "disposable"')"
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_accept")"
     await_gc_output "$gc_focus_sock" "$gc_focus_accept/out" \
       'Preview the dotfiles this would change?' 1 \
@@ -11665,10 +11664,9 @@ EOF
       "focused release-posture receipt included an unselected independent field"
     grep -qF 'release_posture = "preview"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
       || fail "accepted focused transaction did not persist preview posture"
-    grep -qF 'environment_role = "disposable"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
-      || fail "focused posture change rewrote the independent environment role"
-    grep -qF 'profile_preset = "personal-current"' "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
-      || fail "focused posture change rewrote the bootstrap preset history"
+    assert_not_contains '^[[:space:]]*(work|profile_preset|environment_role)[[:space:]]*=' \
+      "$gc_focus_accept/xdg/chezmoi/chezmoi.toml" \
+      "a confirmed transaction kept a retired environment-profile key"
     [[ -f "$gc_focus_accept/apply-log" ]] \
       || fail "accepted focused transaction did not invoke the final apply"
     gc_focus_accept_posture="$(
@@ -11676,16 +11674,18 @@ EOF
         data --format=json | jq -r '.release_posture'
     )"
     render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl \
-      "$gc_focus_accept/Brewfile.browser" false false false false bitwarden \
-      personal-current disposable "$gc_focus_accept_posture"
+      "$gc_focus_accept/Brewfile.browser" false false false bitwarden \
+      "$gc_focus_accept_posture"
     grep -qx 'cask "brave-browser"' "$gc_focus_accept/Brewfile.browser" \
       || fail "accepted preview posture did not keep Brave for the immediate apply"
     assert_not_contains 'google-chrome@beta' "$gc_focus_accept/Brewfile.browser" \
       "accepted preview posture selected Chrome Beta"
 
     # Already-active posture is a true no-op: no receipt, preview, or apply.
+    # Here preview comes from a retired *-preview preset with no stored posture,
+    # which configure must read exactly as the template does.
     gc_focus_noop="$gc_focus/noop"
-    write_gc_focus_config "$gc_focus_noop" preview false false disposable
+    write_gc_focus_config "$gc_focus_noop" "" false false '    profile_preset = "personal-preview"'
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_noop")"
     await_gc_output "$gc_focus_sock" "$gc_focus_noop/out" 'No changes to apply.' 1 \
       "focused no-op transaction did not finish within ten seconds"
@@ -11697,7 +11697,7 @@ EOF
 
     # EOF is non-consent and leaves the configuration byte-for-byte unchanged.
     gc_focus_eof="$gc_focus/eof"
-    write_gc_focus_config "$gc_focus_eof" current false false personal
+    write_gc_focus_config "$gc_focus_eof" current false false
     cp "$gc_focus_eof/xdg/chezmoi/chezmoi.toml" "$gc_focus_eof/before.toml"
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_eof")"
     await_gc_output "$gc_focus_sock" "$gc_focus_eof/out" \
@@ -11714,7 +11714,7 @@ EOF
 
     # Candidate-render failure is authoritative and cannot promote a config.
     gc_focus_fail="$gc_focus/render-failure"
-    write_gc_focus_config "$gc_focus_fail" current false false personal
+    write_gc_focus_config "$gc_focus_fail" current false false
     cp "$gc_focus_fail/xdg/chezmoi/chezmoi.toml" "$gc_focus_fail/before.toml"
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_fail" 'GROUNDWORK_CONFIGURE_FAIL_INIT=1')"
     await_gc_output "$gc_focus_sock" "$gc_focus_fail/out" \
@@ -11728,7 +11728,7 @@ EOF
 
     # A concurrent writer wins: compare-before-swap refuses this stale editor.
     gc_focus_race="$gc_focus/concurrent-change"
-    write_gc_focus_config "$gc_focus_race" current false false personal
+    write_gc_focus_config "$gc_focus_race" current false false
     gc_focus_sock="$(run_gc_focus_session "$gc_focus_race")"
     await_gc_output "$gc_focus_sock" "$gc_focus_race/out" \
       'Preview the dotfiles this would change?' 1 \
@@ -11755,12 +11755,11 @@ EOF
     gc_xcode_index="$(sed -n 's/^fields_key=(\(.*\))[[:space:]]*$/\1/p' "$gc_bin" | tr ' ' '\n' | grep -n '^xcode$' | cut -d: -f1)"
     [[ -n "$gc_xcode_index" ]] || fail "could not locate Xcode in the configure field registry"
     gc_beta_index="$(sed -n 's/^fields_key=(\(.*\))[[:space:]]*$/\1/p' "$gc_bin" | tr ' ' '\n' | grep -n '^beta$' | cut -d: -f1)"
-    gc_role_index="$(sed -n 's/^fields_key=(\(.*\))[[:space:]]*$/\1/p' "$gc_bin" | tr ' ' '\n' | grep -n '^environment_role$' | cut -d: -f1)"
-    [[ -n "$gc_beta_index" && -n "$gc_role_index" ]] \
-      || fail "could not locate beta and environment role in the configure field registry"
+    [[ -n "$gc_beta_index" ]] \
+      || fail "could not locate beta in the configure field registry"
 
     gc_xcode_disable="$gc_focus/xcode-disable"
-    write_gc_focus_config "$gc_xcode_disable" current true true personal
+    write_gc_focus_config "$gc_xcode_disable" current true true
     gc_focus_sock="$(run_gc_main_session "$gc_xcode_disable")"
     await_gc_output "$gc_focus_sock" "$gc_xcode_disable/out" \
       'Choose a setting to change' 1 \
@@ -11796,7 +11795,7 @@ EOF
     # Dependency reconciliation follows the final effective Xcode state. Undoing
     # Xcode off -> on removes only the dependency-created beta change.
     gc_xcode_undo="$gc_focus/xcode-undo"
-    write_gc_focus_config "$gc_xcode_undo" current true true personal
+    write_gc_focus_config "$gc_xcode_undo" current true true
     cp "$gc_xcode_undo/xdg/chezmoi/chezmoi.toml" "$gc_xcode_undo/before.toml"
     gc_focus_sock="$(run_gc_main_session "$gc_xcode_undo")"
     await_gc_output "$gc_focus_sock" "$gc_xcode_undo/out" \
@@ -11828,7 +11827,7 @@ EOF
       || fail "Xcode off then on invoked apply despite a no-op final state"
 
     gc_xcode_undo_explicit="$gc_focus/xcode-undo-explicit-beta"
-    write_gc_focus_config "$gc_xcode_undo_explicit" current true true personal
+    write_gc_focus_config "$gc_xcode_undo_explicit" current true true
     gc_focus_sock="$(run_gc_main_session "$gc_xcode_undo_explicit")"
     await_gc_output "$gc_focus_sock" "$gc_xcode_undo_explicit/out" \
       'Choose a setting to change' 1 \
@@ -11876,7 +11875,7 @@ EOF
       || fail "explicit beta=false was discarded after Xcode undo"
 
     gc_xcode_enable="$gc_focus/xcode-enable"
-    write_gc_focus_config "$gc_xcode_enable" current false false personal
+    write_gc_focus_config "$gc_xcode_enable" current false false
     gc_focus_sock="$(run_gc_main_session "$gc_xcode_enable")"
     await_gc_output "$gc_focus_sock" "$gc_xcode_enable/out" \
       'Choose a setting to change' 1 \
@@ -11907,7 +11906,7 @@ EOF
       || fail "enabling Xcode revived a stale beta preference"
 
     gc_xcode_invalid="$gc_focus/xcode-invalid"
-    write_gc_focus_config "$gc_xcode_invalid" current false true personal
+    write_gc_focus_config "$gc_xcode_invalid" current false true
     gc_focus_sock="$(run_gc_main_session "$gc_xcode_invalid")"
     await_gc_output "$gc_focus_sock" "$gc_xcode_invalid/out" \
       'Choose a setting to change' 1 \
@@ -11927,44 +11926,6 @@ EOF
     tmux -L "$gc_focus_sock" kill-server 2>/dev/null || true
     grep -qF 'beta = false' "$gc_xcode_invalid/xdg/chezmoi/chezmoi.toml" \
       || fail "confirmed normalization did not clear inactive Xcode beta"
-
-    # Environment role is independently mutable and must not reseed posture or
-    # rewrite the historical profile preset.
-    gc_role_change="$gc_focus/role-change"
-    write_gc_focus_config "$gc_role_change" current false false personal
-    gc_focus_sock="$(run_gc_main_session "$gc_role_change")"
-    await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
-      'Choose a setting to change' 1 \
-      "role-change transaction did not reach the settings menu within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 "$gc_role_index" Enter
-    await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
-      'Choose 1-2 (Enter keeps current)' 1 \
-      "role-change transaction did not reach the role choice within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 2 Enter
-    await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
-      'Choose a setting to change' 2 \
-      "role-change transaction did not return to the settings menu within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 "$gc_field_count" Enter
-    await_gc_output "$gc_focus_sock" "$gc_role_change/out" \
-      'Preview the dotfiles this would change?' 1 \
-      "role-change transaction did not reach preview consent within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 n Enter
-    await_gc_output "$gc_focus_sock" "$gc_role_change/out" 'Apply these changes?' 1 \
-      "role-change transaction did not reach apply consent within ten seconds"
-    tmux -L "$gc_focus_sock" send-keys -t 0 y Enter
-    await_gc_output "$gc_focus_sock" "$gc_role_change/session-complete" complete 1 \
-      "role-change transaction did not finish within ten seconds"
-    tmux -L "$gc_focus_sock" kill-server 2>/dev/null || true
-    grep -aqF 'Environment role:' "$gc_role_change/out" \
-      || fail "role change must appear in the transaction receipt"
-    assert_not_contains 'Release posture:' "$gc_role_change/out" \
-      "role change silently rewrote independent release posture"
-    grep -qF 'environment_role = "disposable"' "$gc_role_change/xdg/chezmoi/chezmoi.toml" \
-      || fail "guided configuration did not make the disposable role reachable"
-    grep -qF 'release_posture = "current"' "$gc_role_change/xdg/chezmoi/chezmoi.toml" \
-      || fail "role change rewrote release posture"
-    grep -qF 'profile_preset = "personal-current"' "$gc_role_change/xdg/chezmoi/chezmoi.toml" \
-      || fail "role change rewrote the historical bootstrap seed"
   fi
 
   check "groundwork-github-ssh fallback (hostile arguments, semantics, transactions, revert)"
@@ -12952,34 +12913,35 @@ EOF
     "Chrome is still a declared vendor-updater"
   browser_current="$out_dir/browser-current"
   browser_preview="$out_dir/browser-preview"
-  browser_managed="$out_dir/browser-managed"
+  browser_retired="$out_dir/browser-retired-keys"
   browser_xcode="$out_dir/browser-xcode"
   browser_headless="$out_dir/browser-headless"
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_current" \
-    false false false false bitwarden personal-current personal current
+    false false false bitwarden current
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_preview" \
-    false false false false bitwarden personal-preview personal preview
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_managed" \
-    true false false false 1password work-managed managed current
+    false false false bitwarden preview
+  render_extra_data='"work":true,"profile_preset":"work-managed","environment_role":"managed"' \
+    render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_retired" \
+    false false false 1password current
   render darwin false arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_xcode" \
-    false true false false bitwarden personal-current personal current
+    true false false bitwarden current
   render darwin true arm64 home/dot_config/homebrew/Brewfile.browser.tmpl "$browser_headless" \
-    false false false false none personal-current personal current
+    false false false none current
 
   grep -qxF 'cask "brave-browser"' "$browser_current" \
-    || fail "Personal Current must select Brave"
+    || fail "the current release posture must select Brave"
   diff -u "$browser_current" "$browser_preview" \
-    || fail "Personal Preview changed the managed browser away from Brave"
-  diff -u "$browser_current" "$browser_managed" \
-    || fail "a retired work-managed config changed the managed browser away from Brave"
+    || fail "the preview release posture changed the managed browser away from Brave"
+  diff -u "$browser_current" "$browser_retired" \
+    || fail "stored retired profile keys changed the managed browser away from Brave"
   diff -u "$browser_current" "$browser_xcode" \
     || fail "Xcode changed the managed browser away from Brave"
   assert_not_contains 'google-chrome' "$browser_current" \
     "a desktop browser manifest selected Chrome"
   assert_not_contains 'google-chrome' "$browser_preview" \
-    "Personal Preview selected Chrome"
-  assert_not_contains 'google-chrome' "$browser_managed" \
-    "a retired work-managed config selected Chrome"
+    "the preview release posture selected Chrome"
+  assert_not_contains 'google-chrome' "$browser_retired" \
+    "stored retired profile keys selected Chrome"
   assert_not_contains '^cask ' "$browser_headless" \
     "a headless Mac selected a GUI browser"
 
@@ -12999,9 +12961,9 @@ EOF
   chrome_current="$out_dir/brew-bundle-chrome-current"
   chrome_preview="$out_dir/brew-bundle-chrome-preview"
   render darwin false arm64 home/run_onchange_after_10-brew-bundle.sh.tmpl "$chrome_current" \
-    false false false false bitwarden personal-current personal current
+    false false false bitwarden current
   render darwin false arm64 home/run_onchange_after_10-brew-bundle.sh.tmpl "$chrome_preview" \
-    false false false false bitwarden personal-preview personal preview
+    false false false bitwarden preview
   /bin/bash -n "$chrome_current"
   /bin/bash -n "$chrome_preview"
 
@@ -13009,7 +12971,7 @@ EOF
   # or widen the posture-selected browser set, and regeneration preserves it.
   render_legacy_chrome() {
     chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
-      --override-data "{${base_data},\"work\":false,\"headless\":false,\"xcode\":false,\"beta\":false,\"install_chrome\":$1,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
+      --override-data "{${base_data},\"headless\":false,\"xcode\":false,\"beta\":false,\"install_chrome\":$1,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
       execute-template <home/run_onchange_after_10-brew-bundle.sh.tmpl >"$2"
   }
   render_legacy_chrome false "$out_dir/chrome-legacy-false"
@@ -13054,14 +13016,13 @@ EOF
     "the retired browser-manifest parser is still rendered"
 
   # Brave is in the checksum-safe Brewfile. Chrome is not.
-  for chrome_profile in 'false false' 'true false' 'false true'; do
-    read -r chrome_work chrome_game <<<"$chrome_profile"
+  for chrome_game in false true; do
     render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl \
-      "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" "$chrome_work"
-    grep -qxF 'cask "brave-browser"' "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" \
-      || fail "desktop Brewfile omitted Brave (work=$chrome_work)"
-    assert_not_contains '^cask "google-chrome(@beta)?"' "$out_dir/brewfile-chrome-$chrome_work-$chrome_game" \
-      "Chrome is in the checksum-safe Brewfile (work=$chrome_work)"
+      "$out_dir/brewfile-chrome-$chrome_game" false false "$chrome_game"
+    grep -qxF 'cask "brave-browser"' "$out_dir/brewfile-chrome-$chrome_game" \
+      || fail "desktop Brewfile omitted Brave (game_dev=$chrome_game)"
+    assert_not_contains '^cask "google-chrome(@beta)?"' "$out_dir/brewfile-chrome-$chrome_game" \
+      "Chrome is in the checksum-safe Brewfile (game_dev=$chrome_game)"
   done
 
   # The retired browser contract is repository-wide and red-proven against a
@@ -17899,21 +17860,18 @@ sourceDir = "$repo/home"
     name = "Test"
     obsidian_vault_name = "v"
     password_manager = "none"
-    profile_preset = "personal-preview"
     terminal_multiplexer = "tmux"
     reset_existing_configs = false
     signingkey = ""
-    work = false
     xcode = true
+    release_posture = "preview"
 EOF
   chezmoi --config "$interview_in" --source "$repo/home" \
     --persistent-state "$out_dir/interview-state.boltdb" --cache "$out_dir/interview-cache" \
     init --config-path "$interview_out" </dev/null \
     || fail "the chezmoi interview could not regenerate a stored config"
-  grep -qF 'profile_preset = "personal-preview"' "$interview_out" \
-    || fail "a stored profile_preset was discarded when the interview skipped its question"
   grep -qF 'release_posture = "preview"' "$interview_out" \
-    || fail "when independent posture is absent, the preserved bootstrap seed must supply its migration default"
+    || fail "a stored release_posture was discarded when the interview skipped its question"
   grep -qF 'key_repeat = "standard"' "$interview_out" \
     || fail "a stored key_repeat was discarded when the interview skipped its question"
   grep -qF 'beta = true' "$interview_out" \
@@ -17927,13 +17885,13 @@ EOF
   # ...and a config that never answered still takes the documented default.
   interview_fresh_in="$out_dir/interview-fresh.toml"
   interview_fresh_out="$out_dir/interview-fresh-rendered.toml"
-  grep -vE 'profile_preset|key_repeat|beta|terminal_multiplexer' "$interview_in" >"$interview_fresh_in"
+  grep -vE 'release_posture|key_repeat|beta|terminal_multiplexer' "$interview_in" >"$interview_fresh_in"
   chezmoi --config "$interview_fresh_in" --source "$repo/home" \
     --persistent-state "$out_dir/interview-fresh-state.boltdb" --cache "$out_dir/interview-fresh-cache" \
     init --no-tty --promptDefaults --config-path "$interview_fresh_out" </dev/null \
-    || fail "the chezmoi interview could not regenerate a config with no stored preset"
-  grep -qF 'profile_preset = "personal-current"' "$interview_fresh_out" \
-    || fail "an unanswered profile_preset must fall back to the documented default"
+    || fail "the chezmoi interview could not regenerate a config with no stored posture"
+  grep -qF 'release_posture = "current"' "$interview_fresh_out" \
+    || fail "an unanswered release_posture must fall back to current"
   grep -qF 'key_repeat = "fast"' "$interview_fresh_out" \
     || fail "an unanswered key_repeat must fall back to the documented default"
   grep -qF 'beta = false' "$interview_fresh_out" \
@@ -17942,94 +17900,128 @@ EOF
     || fail "a fresh install must default the iMessage gateway role to false"
   grep -qF 'terminal_multiplexer = "herdr"' "$interview_fresh_out" \
     || fail "a fresh install must recommend Herdr while preserving an explicit choice"
-  # A real older Groundwork config has profile_preset but predates the new
-  # multiplexer field. It must migrate silently to its established tmux
-  # workflow instead of taking the fresh-install recommendation.
-  interview_legacy_in="$out_dir/interview-legacy.toml"
-  interview_legacy_out="$out_dir/interview-legacy-rendered.toml"
-  grep -v 'terminal_multiplexer' "$interview_in" >"$interview_legacy_in"
-  chezmoi --config "$interview_legacy_in" --source "$repo/home" \
-    --persistent-state "$out_dir/interview-legacy-state.boltdb" --cache "$out_dir/interview-legacy-cache" \
-    init --config-path "$interview_legacy_out" </dev/null \
-    || fail "the chezmoi interview could not migrate a pre-multiplexer config"
-  grep -qF 'terminal_multiplexer = "tmux"' "$interview_legacy_out" \
-    || fail "a pre-field stored config must retain the established tmux workflow"
   # groundwork-configure offers every mutable field on every platform, which is
   # honest because the template preserves stored answers that bootstrap does not ask.
   # If that preservation is ever removed, the editor starts printing "Proposed
   # changes" receipts for values that never move — so the two are asserted
   # together, right here, rather than in separate places that can drift apart.
-  grep -qE '^fields_key=\(release_posture environment_role terminal_multiplexer beta docker_backend .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
-    || fail "groundwork-configure must own mutable role/release preferences and preserve existing baseline settings"
-  # Role and posture are stored separately from the preset so a disposable
-  # machine can take current posture without becoming personal. A retired
-  # managed role migrates to personal and keeps an independent preview posture.
-  interview_role_in="$out_dir/interview-role.toml"
-  interview_role_out="$out_dir/interview-role-rendered.toml"
-  sed 's/profile_preset = "personal-preview"/profile_preset = "work-managed"/' "$interview_in" >"$interview_role_in"
-  printf '    environment_role = "managed"\n    release_posture = "preview"\n    personal_apps = false\n    work_extensions = true\n' >>"$interview_role_in"
-  chezmoi --config "$interview_role_in" --source "$repo/home" \
-    --persistent-state "$out_dir/interview-role-state.boltdb" --cache "$out_dir/interview-role-cache" \
-    init --config-path "$interview_role_out" </dev/null \
-    || fail "the chezmoi interview failed on a retired work-managed config"
-  grep -qF 'environment_role = "personal"' "$interview_role_out" \
-    || fail "a stored managed role must migrate to personal"
-  grep -qF 'profile_preset = "personal-current"' "$interview_role_out" \
-    || fail "a stored work-managed preset must migrate to personal-current"
-  grep -qF 'release_posture = "preview"' "$interview_role_out" \
-    || fail "migrating a retired role must keep an independent preview posture"
-  grep -qF 'personal_apps = true' "$interview_role_out" \
-    || fail "the retired work seed must turn personal apps back on"
-  grep -qF 'work_extensions = false' "$interview_role_out" \
-    || fail "the retired work seed must turn infrastructure extensions off"
-  grep -qF 'Retired work-managed setting ignored; this Mac uses the common setup.' "$interview_role_out" \
-    || fail "a retired work-managed config must record the one-line notice"
-  interview_disposable_in="$out_dir/interview-disposable.toml"
-  interview_disposable_out="$out_dir/interview-disposable-rendered.toml"
-  cp "$interview_in" "$interview_disposable_in"
-  printf '    environment_role = "disposable"\n    release_posture = "current"\n' >>"$interview_disposable_in"
-  chezmoi --config "$interview_disposable_in" --source "$repo/home" \
-    --persistent-state "$out_dir/interview-disposable-state.boltdb" --cache "$out_dir/interview-disposable-cache" \
-    init --config-path "$interview_disposable_out" </dev/null \
-    || fail "the chezmoi interview could not regenerate a disposable role"
-  grep -qF 'environment_role = "disposable"' "$interview_disposable_out" \
-    || fail "a stored disposable role must survive regeneration"
-  grep -qF 'release_posture = "current"' "$interview_disposable_out" \
-    || fail "a stored current posture must survive regeneration beside a disposable role"
-  interview_posture_in="$out_dir/interview-posture.toml"
-  interview_posture_out="$out_dir/interview-posture-rendered.toml"
-  cp "$interview_in" "$interview_posture_in"
-  printf '    environment_role = "personal"\n    release_posture = "current"\n' >>"$interview_posture_in"
-  chezmoi --config "$interview_posture_in" --source "$repo/home" \
-    --persistent-state "$out_dir/interview-posture-state.boltdb" --cache "$out_dir/interview-posture-cache" \
-    init --config-path "$interview_posture_out" </dev/null \
-    || fail "the chezmoi interview could not regenerate an independently current posture"
-  grep -qF 'profile_preset = "personal-preview"' "$interview_posture_out" \
-    || fail "regeneration rewrote the historical bootstrap seed"
-  grep -qF 'release_posture = "current"' "$interview_posture_out" \
-    || fail "regeneration re-derived an independently stored current posture from the preview seed"
-  # ...and with no stored role/posture the preset still seeds both.
-  grep -qF 'environment_role = "personal"' "$interview_out" \
-    || fail "an unstored environment_role must be seeded from the preset"
-  # groundwork-profile must not send a posture-only change through the preset:
-  # that would move environment_role too.
-  assert_no_matches "groundwork-profile must not route a posture change through profile_preset" \
-    rg -n 'Environment profile  ->|set profile_preset' home/dot_local/bin/executable_groundwork-profile.tmpl
-  assert_no_matches "groundwork-profile must not tell users to set release_posture through a promptChoice that does not exist" \
-    rg -n 'promptChoice release_posture' home/dot_local/bin/executable_groundwork-profile.tmpl
-  # Source-level guard intentionally matches the literal variable reference.
-  # shellcheck disable=SC2016
-  grep -qF 'exec "$configure_command" --release-posture "$argument"' home/dot_local/bin/executable_groundwork-profile.tmpl \
-    || fail "groundwork-profile set must delegate to the canonical managed settings helper"
+  grep -qE '^fields_key=\(release_posture terminal_multiplexer beta docker_backend .*\bkey_repeat\b' home/dot_local/bin/executable_groundwork-configure \
+    || fail "groundwork-configure must own the mutable release posture and preserve existing baseline settings"
+
+  check "chezmoi interview: retired environment-profile keys migrate once"
+  # Environment profiles are retired (specs/release-posture.md). A real older
+  # config can still carry work, environment_role, and profile_preset. Each is
+  # read once by a real `chezmoi init` regeneration, never fails the render, and
+  # is never written back. A *-preview preset maps to preview only when no
+  # valid posture is stored; an invalid stored posture falls back to the same
+  # mapping instead of surviving.
+  interview_migrate() { # name stored-lines; sets interview_rendered to the regenerated config
+    local name="$1" lines="$2"
+    grep -vE 'release_posture' "$interview_in" >"$out_dir/interview-$name.toml"
+    printf '%s\n' "$lines" >>"$out_dir/interview-$name.toml"
+    chezmoi --config "$out_dir/interview-$name.toml" --source "$repo/home" \
+      --persistent-state "$out_dir/interview-$name-state.boltdb" --cache "$out_dir/interview-$name-cache" \
+      init --config-path "$out_dir/interview-$name-rendered.toml" </dev/null \
+      || fail "the chezmoi interview failed on stored retired keys ($name)"
+    assert_not_contains '^[[:space:]]*(work|profile_preset|environment_role)[[:space:]]*=' \
+      "$out_dir/interview-$name-rendered.toml" \
+      "regeneration wrote a retired environment-profile key back ($name)"
+    interview_rendered="$out_dir/interview-$name-rendered.toml"
+  }
+  interview_expect() { # rendered expected-line message
+    grep -qF "$2" "$1" || {
+      cat "$1" >&2
+      fail "$3"
+    }
+  }
+  for interview_case in \
+    'preset-current|    profile_preset = "personal-current"|current' \
+    'preset-preview|    profile_preset = "personal-preview"|preview' \
+    'preset-disposable|    profile_preset = "disposable-experimental"|current' \
+    'preset-work-managed|    profile_preset = "work-managed"|current' \
+    'preset-preview-posture-current|    profile_preset = "personal-preview"\n    release_posture = "current"|current' \
+    'preset-preview-posture-invalid|    profile_preset = "personal-preview"\n    release_posture = "sideways"|preview' \
+    'preset-current-posture-invalid|    profile_preset = "personal-current"\n    release_posture = "sideways"|current' \
+    'role-disposable|    environment_role = "disposable"|current' \
+    'role-personal-posture-preview|    environment_role = "personal"\n    release_posture = "preview"|preview' \
+    'work-false|    work = false|current'; do
+    IFS='|' read -r interview_name interview_lines interview_posture <<<"$interview_case"
+    interview_migrate "$interview_name" "$(printf '%b' "$interview_lines")"
+    interview_expect "$interview_rendered" "release_posture = \"$interview_posture\"" \
+      "stored retired keys ($interview_name) must regenerate release_posture = $interview_posture"
+    interview_expect "$interview_rendered" 'terminal_multiplexer = "tmux"' \
+      "stored retired keys ($interview_name) changed the stored multiplexer"
+  done
+  # A retired work-managed config: managed role, work-managed preset, work=true,
+  # and the old seed pair. Posture is kept; the seed pair returns to the common
+  # defaults; the work flag keeps the work commit identity; one notice line.
+  interview_migrate work-managed "$(printf '%s\n' \
+    '    work = true' '    environment_role = "managed"' '    profile_preset = "work-managed"' \
+    '    release_posture = "preview"' '    personal_apps = false' '    work_extensions = true')"
+  interview_expect "$interview_rendered" 'release_posture = "preview"' \
+    "migrating a retired work-managed config must keep an independent preview posture"
+  interview_expect "$interview_rendered" 'personal_apps = true' \
+    "the retired work seed must turn personal apps back on"
+  interview_expect "$interview_rendered" 'work_extensions = false' \
+    "the retired work seed must turn infrastructure extensions off"
+  interview_expect "$interview_rendered" 'git_identity = "work"' \
+    "a stored work flag with no git_identity must keep the work commit identity"
+  interview_expect "$interview_rendered" 'Retired work-managed setting ignored; this Mac uses the common setup.' \
+    "a retired work-managed config must record the one-line notice"
+  # The migration is one-time: regenerating the migrated config is a fixed point.
+  cp "$interview_rendered" "$out_dir/interview-work-managed-again.toml"
+  chezmoi --config "$out_dir/interview-work-managed-again.toml" --source "$repo/home" \
+    --persistent-state "$out_dir/interview-again-state.boltdb" --cache "$out_dir/interview-again-cache" \
+    init --config-path "$out_dir/interview-work-managed-again-rendered.toml" </dev/null \
+    || fail "the chezmoi interview could not regenerate a migrated config"
+  assert_not_contains 'Retired work-managed setting ignored' "$out_dir/interview-work-managed-again-rendered.toml" \
+    "a migrated config repeated the retirement notice"
+  diff <(grep -vE '^(#|$)' "$interview_rendered") <(grep -vE '^(#|$)' "$out_dir/interview-work-managed-again-rendered.toml") \
+    || fail "regenerating a migrated config changed it again"
+  # A real older Groundwork config has profile_preset but predates the
+  # multiplexer field. It must migrate silently to its established tmux
+  # workflow instead of taking the fresh-install recommendation.
+  grep -v 'terminal_multiplexer' "$interview_in" >"$out_dir/interview-legacy.toml"
+  printf '%s\n' '    profile_preset = "personal-current"' >>"$out_dir/interview-legacy.toml"
+  chezmoi --config "$out_dir/interview-legacy.toml" --source "$repo/home" \
+    --persistent-state "$out_dir/interview-legacy-state.boltdb" --cache "$out_dir/interview-legacy-cache" \
+    init --config-path "$out_dir/interview-legacy-rendered.toml" </dev/null \
+    || fail "the chezmoi interview could not migrate a pre-multiplexer config"
+  grep -qF 'terminal_multiplexer = "tmux"' "$out_dir/interview-legacy-rendered.toml" \
+    || fail "a pre-field stored config must retain the established tmux workflow"
+
+  check "retired environment-profile keys and groundwork-profile do not return"
+  # Grep guard. Retired names may appear only where a migration reads them,
+  # where history is recorded, or in tests that feed them as old stored input.
+  # Anything else, such as a template that writes them, a field, a doc that
+  # teaches them, or a command that consumes them, fails here.
+  retired_profile_allow='^(home/\.chezmoi\.toml\.tmpl|home/\.chezmoitemplates/developer-settings|home/dot_local/bin/executable_groundwork-configure|home/dot_local/bin/executable_groundwork-profile|specs/release-posture\.md|specs/interactive-cli-and-chezmoi-interview\.md|scripts/audit-docs-coverage|scripts/validate-groundwork|scripts/test-[a-z-]+|tests/test_[a-z_]+\.py)$'
+  git -C "$repo" rev-parse --is-inside-work-tree >/dev/null \
+    || fail "the retired environment-profile guard could not read the repository at $repo"
+  retired_profile_rc=0
+  retired_profile_files="$(git -C "$repo" grep -lIE 'environment_role|profile_preset|groundwork-profile|personal-current|personal-preview|disposable-experimental' -- . ':!core')" \
+    || retired_profile_rc=$?
+  # git grep exits 1 for no match; anything higher is a failed search, not a pass.
+  [[ "$retired_profile_rc" -le 1 ]] \
+    || fail "the retired environment-profile guard's git grep failed (exit $retired_profile_rc)"
+  retired_profile_hits="$(grep -vE "$retired_profile_allow" <<<"$retired_profile_files" || true)"
+  [[ -z "$retired_profile_hits" ]] \
+    || fail "retired environment-profile names returned outside the migration and history allowlist: $(tr '\n' ' ' <<<"$retired_profile_hits")"
+  assert_no_matches "the config template must never write a retired environment-profile key" \
+    rg -n '^[[:space:]]+(work|profile_preset|environment_role) = ' home/.chezmoi.toml.tmpl
+  assert_no_matches "groundwork-profile must not return to the command catalog or docs inventory" \
+    rg -n 'groundwork-profile' home/dot_local/share/groundwork/commands.tsv data/docs-command-surfaces.tsv data/docs-coverage.tsv
+  assert_no_matches "the render matrix must not carry retired environment-profile columns" \
+    rg -n '\b(work|profile_preset|environment_role)\b' data/render-profiles.tsv
   notice_current="$out_dir/release-posture-notice-current"
   notice_preview="$out_dir/release-posture-notice-preview"
   notice_xcode_beta="$out_dir/release-posture-notice-xcode-beta"
   render darwin false arm64 home/run_once_after_96-release-posture-notice.sh.tmpl "$notice_current" \
-    false false false false none personal-current personal current
+    false false false none current
   render darwin false arm64 home/run_once_after_96-release-posture-notice.sh.tmpl "$notice_preview" \
-    false false false false none personal-preview personal preview
+    false false false none preview
   render darwin false arm64 home/run_once_after_96-release-posture-notice.sh.tmpl "$notice_xcode_beta" \
-    false true true false none personal-current personal current
+    true true false none current
   bash -n "$notice_current" || fail "the rendered current release-posture notice must be valid bash"
   bash -n "$notice_preview" || fail "the rendered preview release-posture notice must be valid bash"
   bash -n "$notice_xcode_beta" || fail "the rendered Xcode beta notice must be valid bash"
@@ -18682,25 +18674,25 @@ PY
 
   shell_templates=(home/run_*.sh.tmpl home/dot_local/bin/*.tmpl)
   rendered_shell_scripts=()
-  while IFS=$'\t' read -r case_name os arch headless work xcode beta game_dev password_manager profile_preset environment_role release_posture; do
+  while IFS=$'\t' read -r case_name os arch headless xcode beta game_dev password_manager release_posture; do
     [[ -n "$case_name" && "$case_name" != \#* ]] || continue
     mkdir -p "$out_dir/$case_name"
     check "rendered shell templates ($case_name)"
     for script in "${shell_templates[@]}"; do
       rendered="$out_dir/$case_name/$(basename "${script%.tmpl}")"
-      render "$os" "$headless" "$arch" "$script" "$rendered" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+      render "$os" "$headless" "$arch" "$script" "$rendered" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
       bash -n "$rendered"
       rendered_shell_scripts+=("$rendered")
     done
 
     check "rendered zsh ($case_name)"
-    render "$os" "$headless" "$arch" home/dot_zshrc.tmpl "$out_dir/$case_name/zshrc" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
-    render "$os" "$headless" "$arch" home/dot_zprofile.tmpl "$out_dir/$case_name/zprofile" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+    render "$os" "$headless" "$arch" home/dot_zshrc.tmpl "$out_dir/$case_name/zshrc" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
+    render "$os" "$headless" "$arch" home/dot_zprofile.tmpl "$out_dir/$case_name/zprofile" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
     zsh -n "$out_dir/$case_name/zshrc"
     zsh -n "$out_dir/$case_name/zprofile"
 
     check "rendered tmux ($case_name)"
-    render "$os" "$headless" "$arch" home/dot_config/tmux/tmux.conf.tmpl "$out_dir/$case_name/tmux.conf" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+    render "$os" "$headless" "$arch" home/dot_config/tmux/tmux.conf.tmpl "$out_dir/$case_name/tmux.conf" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
     grep -qF "set-environment -g TMUX_PLUGIN_MANAGER_PATH \"\$HOME/.config/tmux/plugins/\"" "$out_dir/$case_name/tmux.conf"
     if [[ "$headless" == "true" ]]; then
       grep -qF "set -g @continuum-restore 'off'" "$out_dir/$case_name/tmux.conf"
@@ -18711,8 +18703,8 @@ PY
     fi
 
     check "rendered Brewfile ($case_name)"
-    render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.tmpl "$out_dir/$case_name/Brewfile" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
-    render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.browser.tmpl "$out_dir/$case_name/Brewfile.browser" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+    render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.tmpl "$out_dir/$case_name/Brewfile" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
+    render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.browser.tmpl "$out_dir/$case_name/Brewfile.browser" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
     if [[ "$os" == "linux" || "$headless" == "true" ]]; then
       assert_not_contains '^mas ' "$out_dir/$case_name/Brewfile" "App Store apps leaked into $case_name"
       # Casks also package native Linux/headless CLIs. Permit only that declared
@@ -18747,32 +18739,32 @@ PY
       "a tap entered the required $case_name Brewfile instead of the optional manifest"
 
     check "rendered optional Brewfile ($case_name)"
-    render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.optional.tmpl "$out_dir/$case_name/Brewfile.optional" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+    render "$os" "$headless" "$arch" home/dot_config/homebrew/Brewfile.optional.tmpl "$out_dir/$case_name/Brewfile.optional" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
     assert_not_contains '^(brew|cask) "[^"]*/' "$out_dir/$case_name/Brewfile.optional" \
       "a tap-qualified package entered the $case_name optional Brewfile"
     assert_taps_approved "$out_dir/$case_name/Brewfile.optional" "$case_name" \
       "$out_dir/$case_name/run_onchange_after_10-brew-bundle.sh"
     # Optional means nothing depends on it. A cask that other tooling expects,
-    # or a work profile quietly gaining a personal package, would both break
-    # that promise.
-    if [[ "$work" == "true" || "$os" != "darwin" || "$headless" == "true" ]]; then
+    # or a Linux or headless render quietly gaining a desktop package, would
+    # both break that promise.
+    if [[ "$os" != "darwin" || "$headless" == "true" ]]; then
       assert_not_contains '^(tap|brew|cask) ' "$out_dir/$case_name/Brewfile.optional" \
         "$case_name must not receive optional personal packages"
     fi
 
     check "rendered ignore ($case_name)"
-    render "$os" "$headless" "$arch" home/.chezmoiignore "$out_dir/$case_name/chezmoiignore" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+    render "$os" "$headless" "$arch" home/.chezmoiignore "$out_dir/$case_name/chezmoiignore" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
     if [[ "$os" != "darwin" || "$headless" == "true" ]]; then
       grep -q '^Library/\*\*' "$out_dir/$case_name/chezmoiignore"
       grep -q '^\.config/karabiner/\*\*' "$out_dir/$case_name/chezmoiignore"
     fi
 
     if [[ "$os" == "linux" || "$headless" == "true" ]]; then
-      render "$os" "$headless" "$arch" home/run_onchange_after_30-macos-defaults.sh.tmpl "$out_dir/$case_name/macos-defaults.sh" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+      render "$os" "$headless" "$arch" home/run_onchange_after_30-macos-defaults.sh.tmpl "$out_dir/$case_name/macos-defaults.sh" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
       assert_not_contains 'defaults write' "$out_dir/$case_name/macos-defaults.sh" "macOS defaults leaked into $case_name"
-      render "$os" "$headless" "$arch" home/run_after_40-obsidian-vault.sh.tmpl "$out_dir/$case_name/obsidian-vault.sh" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+      render "$os" "$headless" "$arch" home/run_after_40-obsidian-vault.sh.tmpl "$out_dir/$case_name/obsidian-vault.sh" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
       assert_not_contains 'Obsidian|Library/Mobile Documents|obsidian.json' "$out_dir/$case_name/obsidian-vault.sh" "Obsidian vault body leaked into $case_name"
-      render "$os" "$headless" "$arch" home/run_after_45-obsidian-plugins.sh.tmpl "$out_dir/$case_name/obsidian-plugins.sh" "$work" "$xcode" "$beta" "$game_dev" "$password_manager" "$profile_preset" "$environment_role" "$release_posture"
+      render "$os" "$headless" "$arch" home/run_after_45-obsidian-plugins.sh.tmpl "$out_dir/$case_name/obsidian-plugins.sh" "$xcode" "$beta" "$game_dev" "$password_manager" "$release_posture"
       assert_not_contains 'obsidian-plugins|Library/Mobile Documents' "$out_dir/$case_name/obsidian-plugins.sh" "Obsidian plugins body leaked into $case_name"
       assert_not_contains 'SSH_AUTH_SOCK' "$out_dir/$case_name/zshrc" "SSH_AUTH_SOCK leaked into $case_name zshrc"
     fi
@@ -18815,8 +18807,10 @@ PY
 
   check "rendered retired work flag uses the common Mac setup"
   mkdir -p "$out_dir/darwin-work"
-  render darwin false arm64 home/.chezmoiignore "$out_dir/darwin-work/chezmoiignore" true
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-work/Brewfile" true
+  render_extra_data='"work":true' render darwin false arm64 home/.chezmoiignore \
+    "$out_dir/darwin-work/chezmoiignore" false false false bitwarden current colima
+  render_extra_data='"work":true' render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl \
+    "$out_dir/darwin-work/Brewfile" false false false bitwarden current colima
   assert_not_contains '^\.config/karabiner/\*\*' "$out_dir/darwin-work/chezmoiignore" \
     "Karabiner was ignored for a stored work flag"
   grep -q '^cask "karabiner-elements"$' "$out_dir/darwin-work/Brewfile"
@@ -18834,29 +18828,29 @@ PY
 
   check "rendered Xcode macOS profile"
   mkdir -p "$out_dir/darwin-no-xcode" "$out_dir/darwin-xcode" "$out_dir/darwin-legacy-no-xcode"
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-no-xcode/Brewfile" false false
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-no-xcode/Brewfile" false
   assert_not_contains '^mas "Xcode"' "$out_dir/darwin-no-xcode/Brewfile" "Xcode leaked into default personal macOS"
   grep -q '^cask "appcleaner"' "$out_dir/darwin-no-xcode/Brewfile"
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-xcode/Brewfile" false true
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-xcode/Brewfile" true
   grep -q '^mas "Xcode", id: 497799835' "$out_dir/darwin-xcode/Brewfile"
-  render_without_xcode_key darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-legacy-no-xcode/Brewfile" false
+  render_without_xcode_key darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-legacy-no-xcode/Brewfile"
   assert_not_contains '^mas "Xcode"' "$out_dir/darwin-legacy-no-xcode/Brewfile" "Xcode leaked when xcode key was absent"
 
   check "rendered beta channel profile"
   mkdir -p "$out_dir/darwin-beta" "$out_dir/darwin-nobeta" "$out_dir/darwin-beta-noxcode"
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-beta/Brewfile" false true true
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-beta/Brewfile" true true
   grep -q '^brew "xcodes"' "$out_dir/darwin-beta/Brewfile"
-  render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl "$out_dir/darwin-beta/update-run" false true true
+  render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl "$out_dir/darwin-beta/update-run" true true
   grep -q "beta channel on" "$out_dir/darwin-beta/update-run"
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-nobeta/Brewfile" false true false
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-nobeta/Brewfile" true false
   assert_not_contains '^brew "xcodes"' "$out_dir/darwin-nobeta/Brewfile" "xcodes leaked without the beta channel"
-  render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl "$out_dir/darwin-nobeta/update-run" false true false
+  render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl "$out_dir/darwin-nobeta/update-run" true false
   assert_not_contains "beta channel on" "$out_dir/darwin-nobeta/update-run" "beta reminder leaked into update-all without the beta channel"
   # beta is only meaningful with Xcode: xcode=false + beta=true must normalize to
   # no xcodes and no reminder, matching the prompt that only offers beta under Xcode.
-  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-beta-noxcode/Brewfile" false false true
+  render darwin false arm64 home/dot_config/homebrew/Brewfile.tmpl "$out_dir/darwin-beta-noxcode/Brewfile" false true
   assert_not_contains '^brew "xcodes"' "$out_dir/darwin-beta-noxcode/Brewfile" "xcodes installed with beta but no Xcode"
-  render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl "$out_dir/darwin-beta-noxcode/update-run" false false true
+  render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl "$out_dir/darwin-beta-noxcode/update-run" false true
   assert_not_contains "beta channel on" "$out_dir/darwin-beta-noxcode/update-run" "beta reminder shown with beta but no Xcode"
   # Lock the update-all Homebrew policy: every cask mutation requires a
   # checksum. Greedy-aware variants are permitted only in their preclassified
@@ -18970,7 +18964,7 @@ SH
     docker_merge_path="$docker_config_dir/bin:$PATH"
   fi
   render darwin false arm64 home/dot_docker/modify_private_config.json.tmpl \
-    "$docker_config_dir/merge.py" true
+    "$docker_config_dir/merge.py" false false false bitwarden current colima
   render darwin false arm64 home/dot_docker/modify_private_config.json.tmpl \
     "$docker_config_dir/passthrough.py"
   python3 -m py_compile "$docker_config_dir/merge.py" "$docker_config_dir/passthrough.py"
@@ -19319,138 +19313,44 @@ EOF
     && fail "pre-commit must stay cheap; the test suite belongs in pre-push"
   true
 
-  check "environment profile: browser resolution, reporting, and hostile arguments"
-  # The browser vertical slice consumes the stored posture while preserving the
-  # safe-mutating contract: show/set/help and invalid input do not change state.
+  check "retired groundwork-profile shim points to groundwork-configure and changes nothing"
+  # Environment profiles are retired. The old command stays as a one-line
+  # pointer so muscle memory lands on groundwork-configure. It reads no
+  # configuration, so it is not a template, and every invocation is inert.
   profile_dir="$out_dir/profile"
-  mkdir -p "$profile_dir"
-  render_profile() {
-    local posture="$1" work="$2" headless="$3" output="$4"
-    local role="$5" preset="$6"
-    local xcode="${7:-false}" beta="${8:-false}"
-    local data="{${base_data%%,\"profile_preset\"*},\"profile_preset\":\"${preset}\",\"environment_role\":\"${role}\",\"release_posture\":\"${posture}\",\"terminal_multiplexer\":\"herdr\",\"work\":${work},\"headless\":${headless},\"xcode\":${xcode},\"beta\":${beta},\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}"
-    chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
-      --override-data "$data" execute-template \
-      <home/dot_local/bin/executable_groundwork-profile.tmpl >"$output"
-    chmod +x "$output"
-  }
-
-  render_profile current false false "$profile_dir/personal-current" personal personal-current
-  render_profile preview false false "$profile_dir/personal-preview" personal personal-preview
-  render_profile current true false "$profile_dir/managed" managed work-managed
-  render_profile preview false false "$profile_dir/disposable" disposable disposable-experimental
-  render_profile current false true "$profile_dir/headless" personal personal-current
-  render_profile current false false "$profile_dir/xcode-beta" personal personal-current true true
-  render_profile current false false "$profile_dir/xcode-beta-inactive" personal personal-current false true
-
-  # Role is stored, not derived from the retired work flag. A retired managed
-  # role or work-managed preset renders as personal and records the notice.
-  grep -q '^role="personal"' "$profile_dir/personal-current"
-  grep -q '^role="personal"' "$profile_dir/managed"
-  grep -q '^retired_work_managed=true' "$profile_dir/managed"
-  grep -q '^role="disposable"' "$profile_dir/disposable"
-  grep -q '^posture="preview"' "$profile_dir/personal-preview"
-
-  # `show` reports the stored posture and the invariants that posture cannot
-  # change. Capture to a file first: `cmd | grep -q` closes the pipe on the first
-  # match, and the SIGPIPE that kills the producer surfaces through pipefail.
-  profile_out() {
-    HOME="$profile_home" PATH="$profile_stub_bin:$PATH" GROUNDWORK_PROFILE_CONFIGURE_LOG="$profile_configure_log" \
-      "$1" "${@:2}" >"$profile_dir/output" 2>&1
-    cat "$profile_dir/output"
-  }
-  profile_home="$profile_dir/home"
-  profile_stub_bin="$profile_home/.local/bin"
-  profile_configure_log="$profile_dir/configure-invoked"
+  profile_shim="$PWD/home/dot_local/bin/executable_groundwork-profile"
+  test -x "$profile_shim" || fail "the groundwork-profile shim must exist and be executable"
+  test ! -e home/dot_local/bin/executable_groundwork-profile.tmpl \
+    || fail "the retired groundwork-profile template returned"
+  bash -n "$profile_shim"
+  profile_stub_bin="$profile_dir/bin"
+  profile_stub_log="$profile_dir/invoked"
   mkdir -p "$profile_stub_bin"
-  cat >"$profile_stub_bin/groundwork-configure" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >"${GROUNDWORK_PROFILE_CONFIGURE_LOG}"
-echo "configuration transaction delegated"
-STUB
-  chmod +x "$profile_stub_bin/groundwork-configure"
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Release posture   preview'
-  profile_out "$profile_dir/xcode-beta" show | grep -Fq 'Xcode             enabled'
-  profile_out "$profile_dir/xcode-beta" show | grep -Fq 'Xcode beta        enabled'
-  profile_out "$profile_dir/xcode-beta-inactive" show | grep -Fq 'Xcode beta        inactive (stored enabled)'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Xcode beta        disabled'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Release posture   current'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Multiplexer       herdr'
-  profile_out "$profile_dir/managed" show | grep -Fq 'Role              personal'
-  profile_out "$profile_dir/managed" show | grep -Fq 'Retired work-managed setting ignored; this Mac uses the common setup.'
-  profile_out "$profile_dir/managed" show | grep -Fq 'Bootstrap seed    personal-current'
-  profile_out "$profile_dir/disposable" show | grep -Fq 'Role              disposable'
-  # Device policy still outranks the profile on every Mac. That is not a role.
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'does not work around it'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Bootstrap seed    personal-current'
-  profile_out "$profile_dir/headless" show | grep -Fq 'no desktop apps, so posture has no effect'
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'AI tools (no intentional release delay)'
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'release-age floors'
-  profile_out "$profile_dir/personal-current" show | grep -Fq 'Managed browser   Brave'
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Managed browser   Brave'
-  profile_out "$profile_dir/personal-preview" show | grep -Fq 'Release posture   preview'
-  assert_not_contains 'Browser fallback|Google Chrome Beta|google-chrome@beta' "$profile_dir/output" \
-    "preview profile still reported a Chrome Beta channel"
-  profile_out "$profile_dir/managed" show | grep -Fq 'Managed browser   Brave'
-  profile_out "$profile_dir/headless" show | grep -Fq 'Managed browser   none (headless)'
-
-  # `set` is the narrow shortcut into the same guarded settings transaction.
-  rm -f "$profile_configure_log"
-  profile_out "$profile_dir/personal-current" set preview | grep -Fq 'configuration transaction delegated'
-  grep -qx -- '--release-posture preview' "$profile_configure_log" \
-    || fail "groundwork-profile set preview must delegate the exact posture to groundwork-configure"
-  # Idempotent: setting the active posture changes nothing.
-  rm -f "$profile_configure_log"
-  profile_out "$profile_dir/personal-preview" set preview | grep -Fq 'already preview'
-  [[ ! -e "$profile_configure_log" ]] \
-    || fail "groundwork-profile must not open a configuration transaction for an already-active posture"
-
-  expect_profile_exit() {
-    local want="$1" name="$2"
-    shift 2
-    local rc=0
-    HOME="$profile_home" PATH="$profile_stub_bin:$PATH" GROUNDWORK_PROFILE_CONFIGURE_LOG="$profile_configure_log" \
-      "$profile_dir/personal-current" "$@" >/dev/null 2>&1 || rc=$?
-    if [[ "$rc" != "$want" ]]; then
-      echo "groundwork-profile $name exited $rc, expected $want" >&2
-      exit 1
-    fi
-  }
-  expect_profile_exit 0 "--help" --help
-  expect_profile_exit 0 "show" show
-  expect_profile_exit 64 "unknown option" --bogus
-  expect_profile_exit 64 "unknown command" frobnicate
-  expect_profile_exit 64 "invalid posture" set sideways
-  expect_profile_exit 64 "set with no posture" set
-  expect_profile_exit 64 "no command"
-  expect_profile_exit 64 "extra positional argument" show extra junk
-
-  # Help, show, and invalid input must not touch chezmoi or the settings editor.
-  # Stubs that log calls prove it rather than merely reading the code.
-  cat >"$profile_stub_bin/chezmoi" <<'STUB'
-#!/usr/bin/env bash
-echo "chezmoi was invoked" >"${GROUNDWORK_PROFILE_STUB_LOG}"
-exit 0
-STUB
-  chmod +x "$profile_stub_bin/chezmoi"
-  profile_stub_log="$profile_dir/chezmoi-invoked"
-  for profile_case in --help show --bogus frobnicate "set sideways"; do
-    rm -f "$profile_stub_log" "$profile_configure_log"
-    # shellcheck disable=SC2086
-    HOME="$profile_home" PATH="$profile_stub_bin:$PATH" GROUNDWORK_PROFILE_STUB_LOG="$profile_stub_log" \
-      GROUNDWORK_PROFILE_CONFIGURE_LOG="$profile_configure_log" \
-      "$profile_dir/personal-current" $profile_case >/dev/null 2>&1 || true
-    if [[ -f "$profile_stub_log" ]]; then
-      echo "groundwork-profile $profile_case invoked chezmoi; only 'edit' may" >&2
-      exit 1
-    fi
-    if [[ -f "$profile_configure_log" ]]; then
-      echo "groundwork-profile $profile_case invoked groundwork-configure before accepting a valid change" >&2
-      exit 1
-    fi
+  for profile_stub in chezmoi groundwork-configure; do
+    # The stub body expands its own arguments when it runs.
+    # shellcheck disable=SC2016
+    printf '#!/usr/bin/env bash\necho "%s $*" >>"$GROUNDWORK_PROFILE_STUB_LOG"\n' "$profile_stub" \
+      >"$profile_stub_bin/$profile_stub"
+    chmod +x "$profile_stub_bin/$profile_stub"
   done
+  for profile_case in "0|--help" "64|show" "64|set preview" "64|edit" "64|--bogus" "64|"; do
+    profile_want="${profile_case%%|*}"
+    profile_args="${profile_case#*|}"
+    profile_rc=0
+    rm -f "$profile_stub_log"
+    # shellcheck disable=SC2086
+    HOME="$profile_dir/home" PATH="$profile_stub_bin:$PATH" GROUNDWORK_PROFILE_STUB_LOG="$profile_stub_log" \
+      /bin/bash "$profile_shim" $profile_args >"$profile_dir/output" 2>&1 || profile_rc=$?
+    [[ "$profile_rc" == "$profile_want" ]] \
+      || fail "groundwork-profile ${profile_args:-<no arguments>} exited $profile_rc, expected $profile_want"
+    grep -qF 'Run: groundwork-configure' "$profile_dir/output" \
+      || fail "groundwork-profile ${profile_args:-<no arguments>} did not point to groundwork-configure"
+    [[ ! -e "$profile_stub_log" ]] \
+      || fail "groundwork-profile ${profile_args:-<no arguments>} invoked $(cat "$profile_stub_log")"
+  done
+  [[ ! -e "$profile_dir/home" ]] || fail "groundwork-profile wrote under HOME"
 
-  check "doctor: managed browser report follows profile and remains read-only"
+  check "doctor: managed browser report follows release posture and remains read-only"
   browser_doctor="$profile_dir/browser-doctor"
   mkdir -p "$browser_doctor/bin"
   cat >"$browser_doctor/bin/uname" <<'SH'
@@ -19481,7 +19381,7 @@ SH
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --browser
   }
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","xcode":false,"beta":false}' \
     'brave-browser')"
   grep -qF 'Current release posture: stable' <<<"$browser_doctor_out"
   grep -qF 'Xcode: disabled' <<<"$browser_doctor_out"
@@ -19491,7 +19391,7 @@ SH
   assert_not_contains 'no longer Groundwork-managed|google-chrome@beta' <(printf '%s\n' "$browser_doctor_out") \
     "current browser doctor reported an absent Chrome install"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"password_manager":"bitwarden","release_posture":"preview","environment_role":"personal","xcode":true,"beta":true}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"preview","xcode":true,"beta":true}' \
     'brave-browser google-chrome google-chrome@beta')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'Xcode: enabled' <<<"$browser_doctor_out"
@@ -19502,7 +19402,7 @@ SH
   assert_not_contains 'primary preview browser|compatibility fallback' <(printf '%s\n' "$browser_doctor_out") \
     "preview doctor still treated Chrome Beta as the managed browser"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","xcode":false,"beta":false}' \
     'google-chrome@beta')"
   grep -qF 'Brave Browser is selected but not installed' <<<"$browser_doctor_out"
   grep -qF 'brew uninstall --cask google-chrome@beta' <<<"$browser_doctor_out"
@@ -19512,10 +19412,10 @@ SH
     '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"managed","xcode":false,"beta":true}' \
     'brave-browser google-chrome')"
   assert_not_contains 'device policy outrank this selection' <(printf '%s\n' "$browser_doctor_out") \
-    "a retired managed role must not get a special doctor note"
+    "a stored retired environment_role must not get a special doctor note"
   grep -qF 'Xcode beta is enabled while Xcode is disabled' <<<"$browser_doctor_out"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"password_manager":"bitwarden","release_posture":"broken","environment_role":"personal","xcode":false,"beta":true}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"broken","xcode":false,"beta":true}' \
     'brave-browser')"
   grep -qF "release_posture is 'broken'" <<<"$browser_doctor_out" \
     || fail "doctor must report an invalid release posture"
@@ -19524,7 +19424,7 @@ SH
   assert_not_contains 'Brave Browser is installed' <(printf '%s\n' "$browser_doctor_out") \
     "invalid posture must suppress browser-installation claims"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":true,"password_manager":"bitwarden","release_posture":"preview","environment_role":"disposable","xcode":false,"beta":false}' '')"
+    '{"headless":true,"password_manager":"bitwarden","release_posture":"preview","xcode":false,"beta":false}' '')"
   grep -qF 'Current release posture: preview' <<<"$browser_doctor_out"
   grep -qF 'headless profile selects no GUI browser' <<<"$browser_doctor_out"
   grep -qF -- '--browser' < <(/bin/bash home/dot_local/bin/executable_groundwork-doctor --help)
@@ -19533,7 +19433,7 @@ SH
   browser_doctor_fake_apps="$browser_doctor/FakeApplications"
   mkdir -p "$browser_doctor_fake_apps/Google Chrome.app" "$browser_doctor_fake_apps/Google Chrome Beta.app"
   browser_doctor_out="$(run_browser_doctor \
-    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","environment_role":"personal","xcode":false,"beta":false}' \
+    '{"headless":false,"password_manager":"bitwarden","release_posture":"current","xcode":false,"beta":false}' \
     'brave-browser' "$browser_doctor_fake_apps")"
   grep -qF 'Chrome is still installed and is no longer Groundwork-managed' <<<"$browser_doctor_out" \
     || fail "doctor must detect Chrome through GROUNDWORK_APPLICATIONS_DIR"

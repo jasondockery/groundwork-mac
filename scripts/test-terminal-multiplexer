@@ -16,7 +16,7 @@ trap 'rm -rf -- "$tmp"' EXIT
 
 empty_config="$tmp/empty-config.toml"
 : >"$empty_config"
-base='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"none","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"profile_preset":"personal-current","environment_role":"personal","release_posture":"current","work":false,"headless":false,"xcode":false,"beta":false'
+base='"name":"CI User","email_personal":"ci@example.com","email_work":"","code_dir":"~/code","reset_existing_configs":false,"password_manager":"none","signingkey":"","obsidian_vault_name":"ci","game_dev":false,"release_posture":"current","headless":false,"xcode":false,"beta":false'
 
 render() { # selection os source output [arch]
   local selection="$1" os="$2" source="$3" output="$4" arch="${5:-arm64}" os_release='{}'
@@ -473,7 +473,7 @@ test ! -s "$tmp/nested.out"
 fresh_data='{"chezmoi":{"os":"darwin","arch":"arm64","osRelease":{}}}'
 chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
   --override-data "$fresh_data" execute-template --init \
-  --promptBool work=false,headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
+  --promptBool headless=false,reset_existing_configs=false,game_dev=false,xcode=false \
   --promptString name=Test,email_personal=test@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name= \
   --promptChoice password_manager=none,key_repeat=fast,terminal_multiplexer=1 \
   <"$repo/home/.chezmoi.toml.tmpl" >"$tmp/fresh-config"
@@ -484,8 +484,9 @@ for selection in herdr tmux both none; do
     execute-template --init <"$repo/home/.chezmoi.toml.tmpl" >"$tmp/stored-$selection"
   grep -qF "terminal_multiplexer = \"$selection\"" "$tmp/stored-$selection"
 done
+# A pre-field config is recognized by its retired profile_preset key.
 chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
-  --override-data "{${base},\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
+  --override-data "{${base},\"profile_preset\":\"personal-current\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\",\"osRelease\":{}}}" \
   execute-template --init <"$repo/home/.chezmoi.toml.tmpl" >"$tmp/legacy-config"
 grep -qF 'terminal_multiplexer = "tmux"' "$tmp/legacy-config"
 chezmoi --config "$empty_config" --source "$repo" --destination "$tmp/home" \
@@ -504,7 +505,6 @@ invalid_consumers=(
   home/run_after_20-tools.sh.tmpl
   home/dot_local/bin/executable_groundwork-mux.tmpl
   home/dot_local/bin/executable_groundwork-herdr-integrations.tmpl
-  home/dot_local/bin/executable_groundwork-profile.tmpl
 )
 for invalid_source in "${invalid_consumers[@]}"; do
   invalid_name="$(printf '%s' "$invalid_source" | tr '/.' '__')"
