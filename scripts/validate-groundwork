@@ -15831,6 +15831,35 @@ EOF
   grep -qF -- '-t buildctx/scratch:review' "$build_state/argv.log"
   grep -qF -- '--build-arg FOO=bar' "$build_state/argv.log"
   grep -qF 'image id: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$out_dir/build-out"
+  # A GitHub token reaches the build only as a BuildKit secret named by its
+  # variable; GH_TOKEN wins, and the value never appears in Docker's argv.
+  for build_token_case in 'GH_TOKEN:GH_TOKEN' 'GITHUB_TOKEN:GITHUB_TOKEN' 'both:GH_TOKEN' 'none:'; do
+    docker_state_init "$build_state"
+    (
+      unset GH_TOKEN GITHUB_TOKEN
+      case "${build_token_case%%:*}" in
+        GH_TOKEN) export GH_TOKEN=fixture-build-token ;;
+        GITHUB_TOKEN) export GITHUB_TOKEN=fixture-build-token ;;
+        both) export GH_TOKEN=fixture-build-token GITHUB_TOKEN=fixture-other-token ;;
+      esac
+      docker_run "$build_state" "$docker_stub_bin:$PATH" groundwork-docker-build-scratch \
+        review "$build_ctx" >/dev/null
+    )
+    if [[ -n "${build_token_case#*:}" ]]; then
+      grep -qF -- "--secret id=github_token,env=${build_token_case#*:} " "$build_state/argv.log" \
+        || fail "scratch build did not forward the ${build_token_case%%:*} token as a BuildKit secret"
+    else
+      assert_no_matches "scratch build forwarded a secret without a token" grep -n -- '--secret' "$build_state/argv.log"
+    fi
+    assert_no_matches "scratch build exposed a GitHub token in Docker argv" \
+      grep -n 'fixture-build-token\|fixture-other-token' "$build_state/argv.log"
+  done
+  unset build_token_case
+  docker_state_init "$build_state"
+  GH_TOKEN=fixture-build-token docker_run "$build_state" "$docker_stub_bin:$PATH" \
+    groundwork-docker-build-scratch review "$build_ctx" -- --secret id=github_token,src=/dev/null >/dev/null
+  [[ "$(grep -o -- '--secret' "$build_state/argv.log" | wc -l | tr -d ' ')" == 1 ]] \
+    || fail "scratch build duplicated a forwarded github_token secret"
   docker_state_init "$build_state"
   docker_run "$build_state" "$docker_stub_bin:$PATH" groundwork-docker-build-scratch \
     review "$build_ctx" --project myproj --rm-after >"$out_dir/build-rmafter"
@@ -16060,6 +16089,30 @@ SH
   grep -qF 'ps -aq --no-trunc' "$build_state/argv.log" \
     || fail "successful verification did not prove exact container-ID absence"
   grep -qF 'removed image sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$out_dir/verify-docker-ok"
+
+  # Local verification builds pass a GitHub token through the scratch builder
+  # as a BuildKit secret, never as an argument value.
+  docker_state_init "$build_state"
+  (
+    unset GH_TOKEN
+    export GITHUB_TOKEN=fixture-verify-token
+    verify_docker_run --purpose validator-token >"$out_dir/verify-docker-token" 2>&1
+  )
+  grep -qF -- '--secret id=github_token,env=GITHUB_TOKEN ' "$build_state/argv.log" \
+    || fail "repository Docker verification did not forward the GitHub token secret"
+  assert_no_matches "repository Docker verification exposed a GitHub token in Docker argv" \
+    grep -n 'fixture-verify-token' "$build_state/argv.log"
+  # Local image proof passes the token secret through the scratch builder.
+  docker_state_init "$build_state"
+  (
+    unset GH_TOKEN
+    GITHUB_TOKEN=fixture-verify-token verify_docker_run --purpose validator-token \
+      >"$out_dir/verify-docker-token" 2>&1
+  )
+  grep -qF -- '--secret id=github_token,env=GITHUB_TOKEN ' "$build_state/argv.log" \
+    || fail "repository Docker verification built without the GitHub token secret"
+  assert_no_matches "repository Docker verification exposed the GitHub token in Docker argv" \
+    grep -n 'fixture-verify-token' "$build_state/argv.log" "$out_dir/verify-docker-token"
 
   # Container ownership comes from Docker's CID-file receipt, not stdout.
   # Successful creates remain self-cleaning when stdout is empty, malformed, or
