@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""One update-all runs each reported section exactly once.
+
+Drives the real launcher, the rendered runner, and the real install hooks that
+print the same sections, through a chezmoi stub whose full apply runs those
+hooks the way chezmoi does. A section counted twice in one run fails.
+"""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+REPO = Path(__file__).resolve().parents[1]
+HOME_SOURCE = REPO / 'home'
+RUNNER = HOME_SOURCE / 'dot_local/bin/executable_groundwork-update-run.tmpl'
+TOOLS_HOOK = HOME_SOURCE / 'run_after_20-tools.sh.tmpl'
+OWNERSHIP_HOOK = HOME_SOURCE / 'run_after_22-cli-ownership.sh'
+CLAUDE_MARK = 'Claude Code effective command:'
+DISCOVERY_MARK = 'Offline pnpm discovery: fixture pass'
+
+
+class UpdateSectionsOnceTests(unittest.TestCase):
+    def setUp(self):
+        self.chezmoi = shutil.which('chezmoi')
+        self.assertIsNotNone(self.chezmoi, 'chezmoi is required to render the runner and hooks')
+        self.temp = tempfile.TemporaryDirectory(prefix='groundwork-sections-once-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.home = self.root / 'home'
+        self.bin = self.home / '.local/bin'
+        self.bin.mkdir(parents=True)
+        self.log = self.root / 'commands.log'
+        self.log.write_text('')
+        # The runner checks out core from this tree before apply; keep that
+        # step inside the fixture.
+        tree_lib = self.root / 'tree/home/dot_local/share/groundwork/lib'
+        tree_lib.mkdir(parents=True)
+        self.script(tree_lib / 'checkout-core.sh', 'exit 0')
+        empty_config = self.root / 'empty.toml'
+        empty_config.write_text('')
+        self.render_env = self.isolated_env()
+        self.render_args = [self.chezmoi, '--config', str(empty_config), '--source', str(REPO)]
+
+        lock_dir = self.home / '.local/lib/groundwork'
+        lock_dir.mkdir(parents=True)
+        shutil.copy(HOME_SOURCE / 'dot_local/lib/groundwork/update-lock.sh', lock_dir)
+        share = self.home / '.local/share/groundwork/lib'
+        share.mkdir(parents=True)
+        for library in ('coding-cli-ownership.sh', 'maintenance-runner.sh'):
+            shutil.copy(HOME_SOURCE / 'dot_local/share/groundwork/lib' / library, share)
+        shutil.copy(HOME_SOURCE / 'dot_local/bin/executable_update-all', self.bin / 'update-all')
+        (self.bin / 'update-all').chmod(0o755)
+        # Nothing in the tools hook may reach the network or the real home.
+        (self.home / '.config/nvim').mkdir(parents=True)
+        (self.home / '.config/nvim/init.lua').write_text('')
+
+        hooks = self.root / 'hooks'
+        hooks.mkdir()
+        self.rendered_runner = self.root / 'groundwork-update-run'
+        self.render(RUNNER, self.rendered_runner)
+        self.render(TOOLS_HOOK, hooks / '20-tools.sh')
+        shutil.copy(OWNERSHIP_HOOK, hooks / '22-cli-ownership.sh')
+        for hook in hooks.iterdir():
+            hook.chmod(0o755)
+
+        self.script(self.bin / 'chezmoi', f'''printf 'chezmoi %s\\n' "$*" >>"$SECTIONS_LOG"
+case "${{1:-}}" in
+  apply)
+    if [[ $# -gt 1 ]]; then
+      cp {self.q(self.rendered_runner)} "$HOME/.local/bin/groundwork-update-run"
+      chmod +x "$HOME/.local/bin/groundwork-update-run"
+      exit 0
+    fi
+    # A full apply runs every run_after_ hook in name order.
+    for hook in {self.q(hooks)}/*; do
+      "$hook" || exit $?
+    done
+    printf 'chezmoi apply finished\\n' >>"$SECTIONS_LOG"
+    ;;
+esac
+exit 0''')
+        self.script(self.bin / 'groundwork-platform', 'echo linux')
+        self.script(self.bin / 'mise', '''if [[ "${1:-}" == upgrade && "${2:-}" == --help ]]; then
+  echo '      --minimum-release-age <MINIMUM_RELEASE_AGE>'
+  exit 0
+fi
+[[ "${1:-}" == which ]] && exit 1
+printf 'mise %s\\n' "$*" >>"$SECTIONS_LOG"
+echo "mise fixture section: $1"
+[[ "${1:-}" != install ]] || exit "${MISE_INSTALL_STATUS:-0}"''')
+        self.script(self.bin / 'claude', 'echo "1.0.0 (Claude Code)"')
+        self.script(self.bin / 'groundwork-cleanup', f'''printf 'groundwork-cleanup %s\\n' "$*" >>"$SECTIONS_LOG"
+echo '  {DISCOVERY_MARK}'
+printf 'homebrew\\tcompleted\\nnpm\\tnot-installed\\npnpm\\tnot-due\\nowner-review\\t0\\n' >&"$GROUNDWORK_CLEANUP_RECEIPT_FD"''')
+        self.script(self.bin / 'groundwork-docker-tidy', 'printf \'docker-tidy %s\\n\' "$*" >>"$SECTIONS_LOG"')
+
+    @staticmethod
+    def q(path):
+        return "'" + str(path).replace("'", "'\\''") + "'"
+
+    @staticmethod
+    def script(path, body):
+        path.write_text('#!/usr/bin/env bash\n' + body + '\n')
+        path.chmod(0o755)
+
+    def isolated_env(self):
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(('XDG_', 'GROUNDWORK_', 'CHEZMOI'))}
+        env.update(
+            HOME=str(self.home),
+            XDG_CONFIG_HOME=str(self.home / '.config'),
+            XDG_CACHE_HOME=str(self.home / '.cache'),
+            XDG_DATA_HOME=str(self.home / '.local/share'),
+            XDG_STATE_HOME=str(self.home / '.local/state'),
+            GNUPGHOME=str(self.home / '.gnupg'),
+            NO_COLOR='1',
+        )
+        return env
+
+    def render(self, template, destination):
+        data = {
+            'name': 'CI User', 'email_personal': 'ci@example.com', 'email_work': '',
+            'code_dir': '~/code', 'reset_existing_configs': False,
+            'password_manager': 'none', 'signingkey': '', 'obsidian_vault_name': 'ci',
+            'game_dev': False, 'profile_preset': 'personal-current',
+            'environment_role': 'personal', 'release_posture': 'current', 'work': False,
+            'docker_backend': 'docker-desktop', 'headless': True, 'xcode': False,
+            'beta': False, 'terminal_multiplexer': 'none',
+            'chezmoi': {'os': 'linux', 'arch': 'amd64', 'osRelease': {'ID': 'ubuntu'},
+                        'workingTree': str(self.root / 'tree')},
+        }
+        result = subprocess.run(
+            [*self.render_args, '--destination', str(self.home),
+             '--override-data', json.dumps(data), 'execute-template'],
+            input=template.read_text(encoding='utf-8'), text=True, capture_output=True,
+            env=self.render_env, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        destination.write_text(result.stdout, encoding='utf-8')
+
+    def update_all(self, *args, extra_env=None):
+        env = self.isolated_env()
+        # The runner prepends the real Homebrew prefixes; with no brew there the
+        # fixture bin and the system tools are all it can resolve.
+        env.update(PATH=f'{self.bin}:/usr/bin:/bin', SECTIONS_LOG=str(self.log))
+        env.update(extra_env or {})
+        result = subprocess.run([str(self.bin / 'update-all'), *args], env=env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                cwd=self.home, timeout=120)
+        return result, self.log.read_text().splitlines()
+
+    def assert_once(self, output, mark, label, transcript):
+        self.assertEqual(output.count(mark), 1, f'{label} ran {output.count(mark)} times:\n{transcript}')
+
+    def test_full_update_runs_each_section_once(self):
+        result, log = self.update_all()
+        transcript = result.stdout + result.stderr + '\n' + '\n'.join(log)
+        self.assertEqual(result.returncode, 0, transcript)
+        output = result.stdout + result.stderr
+        self.assert_once(output, CLAUDE_MARK, 'the Claude Code section', transcript)
+        self.assert_once(output, 'mise fixture section: install', 'mise install', transcript)
+        self.assert_once(output, 'mise fixture section: upgrade', 'mise upgrade', transcript)
+        self.assert_once(output, DISCOVERY_MARK, 'pnpm discovery', transcript)
+        self.assertEqual(log.count('groundwork-cleanup --yes'), 1, transcript)
+        self.assertEqual(log.count('chezmoi apply'), 1, transcript)
+        # The one mise section belongs to the runner, after the apply, with
+        # install and the release-floored upgrade adjacent.
+        apply_done = log.index('chezmoi apply finished')
+        install = log.index('mise install')
+        self.assertGreater(install, apply_done, transcript)
+        self.assertEqual(log[install + 1], 'mise upgrade --minimum-release-age 5d', transcript)
+
+    def test_failed_mise_install_degrades_the_mise_lane(self):
+        result, log = self.update_all(extra_env={'MISE_INSTALL_STATUS': '1'})
+        transcript = result.stdout + result.stderr + '\n' + '\n'.join(log)
+        self.assertEqual(result.returncode, 0, transcript)
+        self.assertIn('mise upgrade --minimum-release-age 5d', log, transcript)
+        self.assertRegex(result.stdout, r'mise runtimes +current-or-updated · install incomplete \(exit 1\)',
+                         transcript)
+
+    def test_configuration_only_update_keeps_the_hook_sections_once(self):
+        result, log = self.update_all('--config-only')
+        transcript = result.stdout + result.stderr + '\n' + '\n'.join(log)
+        self.assertEqual(result.returncode, 0, transcript)
+        output = result.stdout + result.stderr
+        self.assert_once(output, CLAUDE_MARK, 'the Claude Code section', transcript)
+        self.assert_once(output, 'mise fixture section: install', 'mise install', transcript)
+        self.assertNotIn('mise upgrade --minimum-release-age 5d', log, transcript)
+        self.assertNotIn('groundwork-cleanup --yes', log, transcript)
+
+
+if __name__ == '__main__':
+    unittest.main()
