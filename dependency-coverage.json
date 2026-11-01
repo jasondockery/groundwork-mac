@@ -144,8 +144,8 @@
       "paths": ["home/dot_config/mise/config.toml", "home/dot_local/bin/executable_groundwork-update-run.tmpl"],
       "canonical": "home/dot_local/bin/executable_groundwork-update-run.tmpl",
       "agePolicy": "external-tool-policy",
-      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy to fuzzy machine requests, including the node lts alias and a two-component Python line. Renovate's semver-partial rule keeps the primary Python request at major.minor, so a later patch stays fuzzy and the floor can float it. An exact tag is exempt.",
-      "note": "Renovate reads home/dot_config/mise/config.toml for the primary Python version and writes it as major.minor. update-all remains the machine upgrade path and still floats fuzzy requests, including node = \"lts\" and that Python line, under the five-day floor. The file's version tokens are owned by the mise-node-alias and mise-python surfaces."
+      "compensatingControl": "update-all applies Groundwork's separate five-day mise release-age policy to fuzzy machine requests, including the node lts alias and a two-component Python line. Renovate's semver-partial rule keeps the single Python request at major.minor, so a later patch stays fuzzy and the floor can float it. An exact tag is exempt.",
+      "note": "Renovate reads home/dot_config/mise/config.toml for the single managed Python version and writes it as major.minor. update-all remains the machine upgrade path and still floats fuzzy requests, including node = \"lts\" and that Python line, under the five-day floor. The file's version tokens are owned by the mise-node-alias and mise-python surfaces."
     },
     {
       "id": "mise-node-alias",
