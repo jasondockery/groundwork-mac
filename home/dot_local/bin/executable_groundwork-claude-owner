@@ -41,26 +41,38 @@ DEADLINE = time.monotonic() + 45
 AUTO_RESERVE = 20
 SKIPPED = 75
 # A Claude Code process is any process, of any user, that matches either rule:
-#   1. its process name is exactly "claude" (pgrep -x). That is the Homebrew
-#      cask and a native install started through ~/.local/bin/claude. The match
-#      is exact and case-sensitive, so Claude.app ("Claude"), "Claude Helper",
-#      claude-squad and other names that only contain "claude" never match.
+#   1. its process name is exactly "claude" (pgrep -x): the Homebrew cask, and
+#      a native copy on Linux, which names a process after the path it was
+#      started through. The match is exact and case-sensitive, so Claude.app
+#      ("Claude"), "Claude Helper", claude-squad and other names that only
+#      contain "claude" never match.
 #   2. its first argument (pgrep -f, anchored at the start of the command line)
 #      is "claude" or a path ending in "/claude"; a native build under
-#      .../.local/share/claude/versions/X.Y.Z, because a process started
-#      through a symlink can be named after its target; or node or bun running
-#      a "claude" script or the npm package's cli.js. Only the first argument
-#      counts, so an editor, pager or grep given a file named claude does not.
-# Commands with a space in their path can only match rule 1.
+#      .../.local/share/claude/versions/X.Y.Z, which is what macOS shows for a
+#      native copy started through ~/.local/bin/claude (the process takes the
+#      symlink target's name, so rule 1 misses it and this rule catches it);
+#      or node or bun running a "claude" script or the cli.js of the
+#      @anthropic-ai/claude-code or @anthropic-ai/claude-agent-sdk package.
+#      Only the first argument counts, so an editor, pager or grep given a file
+#      named claude does not.
+# Out of scope: an Electron app run as node (ELECTRON_RUN_AS_NODE) with a
+# bundled cli.js, and a command whose path contains a space when its process
+# name is not "claude". Neither can be disturbed by the move: they run their
+# own bundled copy or an already-open executable, never ~/.local/bin/claude,
+# and renaming a symlink does not affect a process that already started.
 CLAUDE_COMMAND_LINE = (
     r"^(([^ ]*/)?claude"
     r"|[^ ]*/\.local/share/claude/versions/[0-9]+\.[0-9]+\.[0-9]+"
-    r"|([^ ]*/)?(node|bun) ([^ ]*/)?(claude|@anthropic-ai/claude-code/cli\.m?js))( |$)"
+    r"|([^ ]*/)?(node|bun) ([^ ]*/)?(claude|@anthropic-ai/claude-(code|agent-sdk)/cli\.m?js))( |$)"
 )
 
 
 class HandoverIncomplete(RuntimeError):
     """The native link already moved; the printed rollback line applies."""
+
+
+class RestoredNative(RuntimeError):
+    """The native link moved and was put back unchanged; the backup remains."""
 
 
 def fail(message):
@@ -219,10 +231,21 @@ def homebrew_copy():
     return managed, managed_real
 
 
-def hand_over(native, snapshot, managed_real, backups, ready=lambda: None):
+def restore_native(native, snapshot):
+    """Put the native link back after a move; True when this restored it."""
+    try:
+        # Exclusive link creation cannot overwrite a concurrently created path.
+        os.symlink(snapshot[1], native)
+    except OSError:
+        return False
+    return True
+
+
+def hand_over(native, snapshot, managed_real, backups, ready=lambda: None,
+              moved=lambda: None, restore_on_failure=False):
+    ready()
     create_parents(backups)
     private_directory(backups)
-    ready()
     backup = Path(tempfile.mkdtemp(prefix="native-", dir=backups))
     saved = backup / "claude"
     unchanged(native, snapshot)
@@ -233,9 +256,22 @@ def hand_over(native, snapshot, managed_real, backups, ready=lambda: None):
     # the last check. Never unlink a command selected only by its pathname.
     os.rename(native, saved)
     try:
+        # A different entry moved into the backup is preserved, never relinked.
         unchanged(saved, snapshot)
+    except (OSError, RuntimeError) as error:
+        raise HandoverIncomplete(str(error)) from error
+    try:
+        moved()
+    except RuntimeError as error:
+        # A session that started during the move keeps the native copy.
+        if restore_native(native, snapshot):
+            raise RestoredNative(str(error)) from error
+        raise HandoverIncomplete(f"{error}; {native} is occupied, so the backup was kept") from error
+    try:
         fresh_command(managed_real)
     except (OSError, RuntimeError) as error:
+        if restore_on_failure and restore_native(native, snapshot):
+            raise HandoverIncomplete(f"{error} The native link was put back; the backup was kept.") from error
         raise HandoverIncomplete(str(error)) from error
 
 
@@ -279,20 +315,28 @@ def auto(owner, home, native, versions, backups):
     if not os.isatty(0):
         return skip("no interactive terminal; run groundwork-claude-owner homebrew --yes")
 
-    def ready():
-        if DEADLINE - time.monotonic() < AUTO_RESERVE:
-            fail("the deadline does not leave time to verify a handover")
+    def processes_absent():
         running = claude_processes()
         if running:
             fail(f"Claude Code is running (PID {', '.join(running)}); quit it, then run update-all again")
+
+    def ready():
+        if DEADLINE - time.monotonic() < AUTO_RESERVE:
+            fail("the deadline does not leave time to verify a handover")
+        processes_absent()
 
     try:
         ready()
         print(f"Claude Code: handing {native} over to Homebrew {managed} automatically "
               f"(claude_code_owner = \"homebrew\").", flush=True)
-        hand_over(native, snapshot, managed_real, backups, ready)
+        hand_over(native, snapshot, managed_real, backups, ready, moved=processes_absent,
+                  restore_on_failure=True)
     except HandoverIncomplete:
         raise
+    except RestoredNative as error:
+        print(f"Claude Code warning: automatic handover to Homebrew skipped: {error}. "
+              "The native link was put back; the private backup remains.")
+        return SKIPPED
     except (OSError, RuntimeError) as error:
         return skip(str(error))
     print("Homebrew ownership verified. To keep the native copy instead, run the Rollback line above;")
@@ -337,9 +381,10 @@ def main(args):
         return auto(args[1], home, native, versions, backups)
     if args[0] == "native":
         native_link(native, versions)
+        # The decline is the point of this command; record it before probing.
+        record_decline(marker, "native")
         print(f"Native ownership preserved: {native} (version {version(native)}).")
         print("Update through the native owner with: claude update")
-        record_decline(marker, "native")
         return 0
     if args[0] == "rollback":
         backup = Path(args[1])
@@ -357,10 +402,12 @@ def main(args):
             print("Preview only. Repeat with --yes to restore native ownership.")
             return 0
         unchanged(saved, snapshot)
+        # Record the decline before restoring, so a restored native link is
+        # never handed over again by the next update-all.
+        record_decline(marker, "rollback")
         # Exclusive link creation cannot overwrite a concurrently created path.
         os.symlink(snapshot[1], native)
         print("Native link restored. The private backup remains available.")
-        record_decline(marker, "rollback")
         fresh_command(snapshot[2])
         return 0
     effective = shutil.which("claude")

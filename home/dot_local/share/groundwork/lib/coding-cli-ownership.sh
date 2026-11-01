@@ -189,7 +189,10 @@ gw_t3_claude_report() {
       echo "T3 Code warning: jq is unavailable, so the Claude Binary path in $settings was not read."
       return 0
     fi
-    # One TSV row per Claude instance: its id, then binaryPath ("" when unset).
+    # One TSV row per Claude instance: its id, "ok" or "unsafe", then
+    # binaryPath ("" when unset). A value with a control, format or other
+    # non-printable character, or a backslash, is withheld so a crafted path
+    # cannot write terminal escapes into the report.
     # shellcheck disable=SC2016 # $config is jq syntax, not a shell expansion.
     if ! entries="$("$jq_bin" -r '
         if type == "object" and ((.providerInstances // {}) | type) == "object" then
@@ -197,7 +200,9 @@ gw_t3_claude_report() {
           | select((.value | type) == "object" and .value.driver == "claudeAgent")
           | (.value.config // {}) as $config
           | if ($config | type) == "object" and (($config.binaryPath // "") | type) == "string"
-            then [.key, ($config.binaryPath // "")] | @tsv
+            then ($config.binaryPath // "") as $path
+              | if ($path | test("[\\p{C}\\\\]")) then [.key, "unsafe", ""] else [.key, "ok", $path] end
+              | @tsv
             else error("unrecognized") end
         else error("unrecognized") end' "$settings" 2>/dev/null)"; then
       echo "T3 Code warning: $settings is not in a format Groundwork recognizes, so the Claude Binary path was not checked."
@@ -206,7 +211,7 @@ gw_t3_claude_report() {
     fi
   fi
   # No Claude entry means the built-in instance with every default.
-  [[ -n "$entries" ]] || entries="claudeAgent"$'\t'
+  [[ -n "$entries" ]] || entries="claudeAgent"$'\tok\t'
   login_shell="${SHELL:-}"
   [[ "$login_shell" == /* && -x "$login_shell" ]] || login_shell="$(command -v zsh || true)"
   # shellcheck disable=SC2016 # The login shell expands $PATH, not this one.
@@ -214,9 +219,13 @@ gw_t3_claude_report() {
     && output="$(gw_cli_bounded "$login_shell" -ilc 'printf "\nGROUNDWORK_T3_PATH=%s\n" "$PATH"' </dev/null 2>/dev/null)"; then
     login_path="$(printf '%s\n' "$output" | sed -n 's/^GROUNDWORK_T3_PATH=//p' | tail -n 1)"
   fi
-  while IFS=$'\t' read -r id setting; do
-    if [[ ! "$id" =~ ^[A-Za-z0-9_.-]+$ || "$setting" == *\\* ]]; then
-      echo "T3 Code warning: a Claude instance in $settings has an id or Binary path Groundwork cannot read safely; check Settings > Providers."
+  while IFS=$'\t' read -r id state setting; do
+    if [[ ! "$id" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+      echo "T3 Code warning: a Claude instance in $settings has an id Groundwork cannot print safely; check Settings > Providers."
+      continue
+    fi
+    if [[ "$state" != ok || "$setting" == *[[:cntrl:]]* ]]; then
+      printf 'T3 Code warning: Claude instance %s has a Binary path with non-printable characters; it is not shown. Check Settings > Providers > %s.\n' "$id" "$id"
       continue
     fi
     where="providerInstances.$id.config.binaryPath in $settings"

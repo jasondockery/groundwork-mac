@@ -40,6 +40,10 @@ eval "$2"
 # command line, so the helper's pattern is proven with a real ERE engine.
 FAKE_PGREP = r"""#!/bin/bash
 printf '%s\n' "$*" >>"$PGREP_LOG"
+calls=$(wc -l <"$PGREP_LOG")
+if [[ -n "${FAKE_PGREP_SWITCH_AT:-}" && "$calls" -ge "$FAKE_PGREP_SWITCH_AT" ]]; then
+  FAKE_PROCS="$FAKE_PROCS_LATE"
+fi
 if [[ -n "${FAKE_PGREP_STATUS:-}" ]]; then
   printf '%b' "${FAKE_PGREP_OUTPUT:-}"
   exit "$FAKE_PGREP_STATUS"
@@ -74,6 +78,7 @@ CLAUDE_PROCESSES = [
     ("node", "/Users/someone/.local/bin/claude"),
     ("node", "node /usr/local/bin/claude"),
     ("node", "/usr/bin/node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"),
+    ("node", "node /app/node_modules/@anthropic-ai/claude-agent-sdk/cli.js --output-format stream-json"),
     ("bun", "bun /opt/tools/claude --continue"),
     ("claude", "unreadable arguments"),
 ]
@@ -106,7 +111,7 @@ class Sandbox(unittest.TestCase):
         self.tools.mkdir()
         self.prefix = self.root / "brew"
         (self.prefix / "bin").mkdir(parents=True)
-        for name in ("dirname", "basename", "readlink", "sed", "cat", "grep", "tail", "uname", "ps"):
+        for name in ("dirname", "basename", "readlink", "sed", "cat", "grep", "tail", "uname", "ps", "wc"):
             found = shutil.which(name)
             self.assertIsNotNone(found, name)
             (self.tools / name).symlink_to(found)
@@ -311,14 +316,101 @@ class AutoHandoverTests(Sandbox):
         before = self.state()
         self.assert_skipped(self.run_helper("auto", "homebrew"), before, "not a verified native symlink")
 
-    def test_failed_login_verification_reports_the_rollback(self):
-        self.install("2.4.1", native=True)
+    def test_failed_login_verification_puts_the_native_link_back(self):
+        native = self.install("2.4.1", native=True)
+        link = os.readlink(native)
         self.install("2.4.2")
         result = self.run_helper("auto", "homebrew", extra={"LOGIN_SHELL_FAIL": "1"})
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("Rollback:", result.stdout)
+        self.assertIn("The native link was put back; the backup was kept.", result.stderr)
         self.assertNotIn("ownership verified", result.stdout)
+        self.assertEqual(os.readlink(native), link)
         self.assertTrue((next(self.backups.iterdir()) / "claude").is_symlink())
+
+    def test_failed_login_with_an_occupied_native_path_keeps_the_backup(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        main = runpy.run_path(str(HELPER))["main"]
+        original = main.__globals__["fresh_command"]
+
+        def occupy_then_verify(expected):
+            self.script(native, "echo someone-else")
+            return original(expected)
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, dict(self.env, LOGIN_SHELL_FAIL="1"), clear=True), \
+                mock.patch.dict(main.__globals__, fresh_command=occupy_then_verify), \
+                mock.patch("os.isatty", return_value=True), contextlib.redirect_stdout(output):
+            with self.assertRaises(RuntimeError) as raised:
+                main(["auto", "homebrew"])
+        self.assertNotIn("put back", str(raised.exception))
+        self.assertEqual(native.read_text(), "#!/bin/bash\necho someone-else\n")
+        self.assertTrue((next(self.backups.iterdir()) / "claude").is_symlink())
+
+    def test_session_started_during_the_move_restores_the_link(self):
+        native = self.install("2.4.1", native=True)
+        link = os.readlink(native)
+        self.install("2.4.2")
+        late = self.root / "late.tsv"
+        late.write_text("4242\tclaude\tclaude\n")
+        # Two pgrep calls per check: auto's check, hand_over's check, then the
+        # check right after the rename, which is the first to see the session.
+        result = self.run_helper("auto", "homebrew",
+                                 extra={"FAKE_PGREP_SWITCH_AT": "5", "FAKE_PROCS_LATE": str(late)})
+        self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
+        self.assertIn("Claude Code is running (PID 4242)", result.stdout)
+        self.assertIn("The native link was put back; the private backup remains.", result.stdout)
+        self.assertEqual(os.readlink(native), link)
+        self.assertEqual(os.readlink(next(self.backups.iterdir()) / "claude"), link)
+
+    def test_session_seen_by_the_last_check_before_the_move_creates_no_backup(self):
+        self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        late = self.root / "late.tsv"
+        late.write_text("4242\tclaude\tclaude\n")
+        before = self.state()
+        self.assert_skipped(self.run_helper("auto", "homebrew", extra={
+            "FAKE_PGREP_SWITCH_AT": "3", "FAKE_PROCS_LATE": str(late)}), before,
+            r"Claude Code is running \(PID 4242\)")
+
+    def test_decline_is_recorded_before_anything_else_or_the_command_fails(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        # A failing version probe still leaves the decline in place.
+        target = native.resolve()
+        self.script(target, "exit 7")
+        result = self.run_helper("native")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.marker.is_file())
+        shutil.rmtree(self.root / "state")
+        self.script(target, 'printf "2.4.1 (Claude Code)\\n"')
+        # A marker that cannot be written fails the command with nothing changed.
+        (self.root / "state").mkdir()
+        (self.root / "state/groundwork").write_text("not a directory")
+        before = self.state()
+        result = self.run_helper("native")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Native ownership preserved", result.stdout)
+        self.assertEqual(before, self.state())
+
+    def test_rollback_records_the_decline_before_restoring(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        self.assertEqual(self.run_helper("homebrew", "--yes").returncode, 0)
+        backup = next(self.backups.iterdir())
+        # The marker cannot be written: rollback fails and native stays absent.
+        (self.root / "state").mkdir(exist_ok=True)
+        (self.root / "state/groundwork").write_text("not a directory")
+        result = self.run_helper("rollback", str(backup), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(os.path.lexists(native))
+        self.assertTrue((backup / "claude").is_symlink())
+        (self.root / "state/groundwork").unlink()
+        # A failed verification after the restore still leaves the decline.
+        result = self.run_helper("rollback", str(backup), "--yes", extra={"LOGIN_SHELL_FAIL": "1"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(native.is_symlink())
+        self.assertTrue(self.marker.is_file())
 
     def test_deadline_without_room_to_verify_skips(self):
         self.install("2.4.1", native=True)
@@ -528,6 +620,20 @@ class T3ResolutionTests(Sandbox):
                 output = self.report()
                 self.assertIn("not in a format Groundwork recognizes", output)
                 self.assertIn("Settings > Providers > Claude > Binary path", output)
+
+    def test_non_printable_binary_path_is_not_printed(self):
+        self.install("2.4.2")
+        self.write_settings({"providerInstances": {
+            "escape": self.claude_instance("/tmp/\u001b]0;owned\u0007claude"),
+            "bidi": self.claude_instance("/opt/\u202eclaude"),
+            "slash": self.claude_instance("C:\\claude"),
+        }})
+        output = self.report()
+        for instance in ("escape", "bidi", "slash"):
+            self.assertIn(f"Claude instance {instance} has a Binary path with non-printable characters", output)
+        self.assertNotIn("\u001b", output)
+        self.assertNotIn("\u202e", output)
+        self.assertNotIn("owned", output)
 
     def test_unobservable_login_shell_is_reported(self):
         self.install("2.4.2")
