@@ -49,7 +49,7 @@ config) printf '%s\\n' "$HOME/npm-cache" ;;
 *) printf 'npm %s\\n' "$*" >>"$REVIEW_CALLS" ;;
 esac''')
         proxy = self.root / 'corepack/dist/pnpm.js'
-        self.script(proxy, '''printf 'pnpm %s at %s network=%s prompt=%s\\n' "$*" "$PWD" "${COREPACK_ENABLE_NETWORK:-unset}" "${COREPACK_ENABLE_DOWNLOAD_PROMPT:-unset}" >>"$REVIEW_CALLS"
+        self.script(proxy, '''printf 'pnpm %s at %s network=%s prompt=%s MISE_OFFLINE=%s\\n' "$*" "$PWD" "${COREPACK_ENABLE_NETWORK:-unset}" "${COREPACK_ENABLE_DOWNLOAD_PROMPT:-unset}" "${MISE_OFFLINE-unset}" >>"$REVIEW_CALLS"
 if [[ -n "${REVIEW_ACTIVE:-}" ]]; then
   : >"$REVIEW_ACTIVE/$$"
   ls "$REVIEW_ACTIVE" | wc -l >>"$REVIEW_ACTIVE.log"
@@ -126,6 +126,10 @@ esac''')
             if line.startswith('pnpm '):
                 self.assertIn('network=0 prompt=0', line)
         self.assertIn('pnpm --store-dir', calls)
+        prunes = [line for line in calls.splitlines() if ' store prune' in line]
+        self.assertTrue(prunes, calls)
+        for line in prunes:
+            self.assertIn('MISE_OFFLINE=1', line)
         logs = list((self.home / '.local/state/groundwork/logs').glob('pnpm-offline-probes.*'))
         self.assertEqual(len(logs), 1)
         self.assertIn('Network access disabled', logs[0].read_text())
@@ -289,9 +293,10 @@ exec "$@"
         first = self.run_cleanup('--yes')
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         lines = self.cache().read_text().splitlines()
-        self.assertEqual(lines[0], 'groundwork pnpm discovery cache v1')
-        self.assertEqual(len(lines), 2, lines)
-        self.assertTrue(lines[1].endswith('\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN))
+        self.assertEqual(lines[0], 'groundwork pnpm discovery cache v2')
+        self.assertEqual(len(lines), 4, lines)
+        for line in lines[1:]:
+            self.assertIn('\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN + '\t', line)
         self.calls.unlink()
         second = self.run_cleanup('--yes')
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
@@ -312,8 +317,8 @@ exec "$@"
         self.calls.unlink()
         fourth = self.run_cleanup('--yes')
         self.assertIn('1 store probes for 3 pinned records', fourth.stdout)
-        self.assertIn('\t40.5.7', self.cache().read_text())
-        self.assertNotIn('\t' + FIXTURE_PIN, self.cache().read_text())
+        self.assertIn('\t40.5.7\t', self.cache().read_text())
+        self.assertNotIn('\t' + FIXTURE_PIN + '\t', self.cache().read_text())
 
     def test_result_cache_honors_xdg_state_home(self):
         self.worktrees(1)
@@ -329,9 +334,11 @@ exec "$@"
         self.cache().parent.mkdir(parents=True)
         # A recent prune makes this a cache-reading run.
         (self.cache().parent / 'pnpm-prune-last-success').write_text(f'{int(time.time())} now\n')
-        good = 'a' * 64 + '\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN
-        for content in ('garbage\n', 'groundwork pnpm discovery cache v1\nshort\t/x\t1.2.3\n',
-                        'groundwork pnpm discovery cache v1\n' + good + '\textra\n', ''):
+        good = 'a' * 64 + '\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN + '\t' + str(int(time.time()))
+        header = 'groundwork pnpm discovery cache v2\n'
+        for content in ('garbage\n', header + 'short\t/x\t1.2.3\t1\n', header + good + '\textra\n',
+                        header + 'a' * 64 + '\t/x\t1.2.3\tsoon\n',
+                        'groundwork pnpm discovery cache v1\n' + 'a' * 64 + '\t/x\t1.2.3\n', ''):
             with self.subTest(content=content):
                 self.cache().write_text(content)
                 self.calls.unlink(missing_ok=True)
@@ -339,7 +346,7 @@ exec "$@"
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('ignored an unreadable result cache', result.stdout)
                 self.assertEqual(self.calls.read_text().count('pnpm store path'), 1)
-                self.assertTrue(self.cache().read_text().startswith('groundwork pnpm discovery cache v1\n'))
+                self.assertTrue(self.cache().read_text().startswith('groundwork pnpm discovery cache v2\n'))
 
     def test_pending_pnpm_repair_re_probes_instead_of_trusting_the_cache(self):
         self.worktrees(2)
@@ -367,6 +374,177 @@ exec "$@"
         self.calls.unlink()
         result = self.run_cleanup('--yes', '--force')
         self.assertIn('0 from the result cache', result.stdout)
+
+    def cache_cycle(self, mutate, expect_reprobe=True):
+        """Prime the cache, prove a reading run hits it, then mutate and rerun."""
+        self.calls.unlink(missing_ok=True)
+        primed = self.run_cleanup('--yes')
+        self.assertEqual(primed.returncode, 0, primed.stdout + primed.stderr)
+        self.calls.unlink(missing_ok=True)
+        hit = self.run_cleanup('--yes')
+        self.assertIn('0 store probes for 2 pinned records; 1 shared in this run, 1 from the result cache',
+                      hit.stdout)
+        mutate()
+        self.calls.unlink(missing_ok=True)
+        after = self.run_cleanup('--yes')
+        self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+        if expect_reprobe:
+            self.assertIn('0 from the result cache', after.stdout)
+            self.assertIn('pnpm store path', self.calls.read_text())
+        else:
+            self.assertIn('1 from the result cache', after.stdout)
+        return after
+
+    def test_each_store_selection_file_invalidates_the_cache(self):
+        # Records live under self.root, outside HOME, so ~/.npmrc is not an ancestor.
+        pnpm_config = self.home / '.config/pnpm'
+        preferences = self.home / 'Library/Preferences/pnpm'
+        cases = {
+            'ancestor .npmrc': self.root / '.npmrc',
+            'user .npmrc outside HOME': self.home / '.npmrc',
+            'pnpm rc': pnpm_config / 'rc',
+            'another pnpm config file': pnpm_config / 'auth.ini',
+            'Library Preferences rc': preferences / 'rc',
+            'npm global config under the node prefix': self.home / '.local/etc/npmrc',
+        }
+        self.worktrees(2)
+        for label, path in cases.items():
+            with self.subTest(label=label):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('fund=false\n')
+
+                def change():
+                    path.write_text('fund=true\n')
+                self.cache_cycle(change)
+
+    def test_each_store_environment_input_invalidates_the_cache(self):
+        self.worktrees(2)
+        cases = (('PNPM_HOME', str(self.root / 'pnpm-home-a'), str(self.root / 'pnpm-home-b')),
+                 ('XDG_DATA_HOME', str(self.home / '.local/share'), str(self.root / 'data-b')),
+                 ('npm_config_registry', 'https://a.invalid/', 'https://b.invalid/'),
+                 ('PNPM_CONFIG_NETWORK_CONCURRENCY', '4', '8'))
+        for name, before, after in cases:
+            with self.subTest(name=name):
+                self.env[name] = before
+
+                def change():
+                    self.env[name] = after
+                self.cache_cycle(change)
+                self.env.pop(name)
+
+    def test_credentials_in_npm_environment_are_hashed_never_stored(self):
+        self.worktrees(2)
+        token = 'secret-token-value-123'
+        self.env['npm_config__authToken'] = token
+        self.cache_cycle(lambda: self.env.__setitem__('npm_config__authToken', token + '-rotated'))
+        self.assertNotIn(token, self.cache().read_text())
+        for path in (self.home / '.local/state').rglob('*'):
+            if path.is_file():
+                self.assertNotIn(token, path.read_text(errors='replace'), path)
+
+    def test_the_device_splits_and_invalidates_the_cache(self):
+        self.script(self.bin / 'stat', """path="${!#}"
+if [[ -f "$path/.fixture-device" ]]; then cat "$path/.fixture-device"; exit 0; fi
+for real in /usr/bin/stat /bin/stat; do [[ -x "$real" ]] && exec "$real" "$@"; done
+exit 1""")
+        repos = self.worktrees(2)
+        for repo in repos:
+            (repo / '.fixture-device').write_text('7\n')
+
+        def move():
+            for repo in repos:
+                (repo / '.fixture-device').write_text('8\n')
+        self.cache_cycle(move)
+        (repos[1] / '.fixture-device').write_text('9\n')
+        self.calls.unlink()
+        result = self.run_cleanup()
+        self.assertIn('1 store probes for 2 pinned records; 0 shared in this run, 1 from the result cache',
+                      result.stdout)
+
+    def test_redirected_npm_configuration_in_the_environment_refuses_sharing(self):
+        self.worktrees(2)
+        for name in ('npm_config_userconfig', 'NPM_CONFIG_GLOBALCONFIG', 'npm_config_global_dir',
+                     'pnpm_config_global-dir'):
+            with self.subTest(name=name):
+                self.env[name] = str(self.root / 'elsewhere')
+                self.calls.unlink(missing_ok=True)
+                result = self.run_cleanup()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
+                self.env.pop(name)
+
+    def test_pnpmfile_targets_are_hashed_and_relative_ones_refuse_sharing(self):
+        hook = self.root / 'hooks/global.cjs'
+        hook.parent.mkdir()
+        hook.write_text('module.exports = {}\n')
+        (self.home / '.npmrc').write_text(f'global-pnpmfile={hook}\n')
+        self.worktrees(2)
+        self.cache_cycle(lambda: hook.write_text('module.exports = { hooks: {} }\n'))
+        hook.unlink()
+        self.calls.unlink()
+        result = self.run_cleanup()
+        self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
+        (self.home / '.npmrc').write_text('pnpmfile=hooks/local.cjs\n')
+        self.calls.unlink()
+        result = self.run_cleanup()
+        self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
+
+    def test_a_per_directory_mise_environment_splits_the_store_context(self):
+        proxy = (self.bin / 'pnpm').resolve()
+        (self.bin / 'pnpm').unlink()
+        runtime = self.root / 'runtime/bin'
+        runtime.mkdir(parents=True)
+        (runtime / 'pnpm').symlink_to(proxy)
+        (runtime / 'node').symlink_to('/usr/bin/true')
+        shims = self.root / 'mise/shims'
+        shims.mkdir(parents=True)
+        self.script(shims / 'pnpm', 'exec "$HOME/.local/bin/mise" exec -- "$REVIEW_RUNTIME_BIN/pnpm" "$@"')
+        self.script(self.bin / 'mise', """[[ "${1:-}" == exec && "${2:-}" == -- ]] || exit 1
+shift 2
+[[ ! -f .mise-env ]] || export NODE_OPTIONS="$(cat .mise-env)"
+export PATH="$REVIEW_RUNTIME_BIN:$PATH"
+exec "$@"
+""")
+        self.env['PATH'] = str(shims) + ':/usr/bin:/bin'
+        self.env['REVIEW_RUNTIME_BIN'] = str(runtime)
+        repos = self.worktrees(3)
+        (repos[2] / '.mise-env').write_text('--max-old-space-size=64\n')
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('2 store probes for 3 pinned records; 1 shared in this run', result.stdout)
+
+    def test_result_cache_rows_expire(self):
+        self.worktrees(2)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        stale = int(time.time()) - 8 * 86400
+        lines = self.cache().read_text().splitlines()
+        self.cache().write_text('\n'.join([lines[0]] + [line.rsplit('\t', 1)[0] + f'\t{stale}' for line in lines[1:]]) + '\n')
+        self.calls.unlink()
+        result = self.run_cleanup('--yes')
+        self.assertIn('1 store probes for 2 pinned records; 1 shared in this run, 0 from the result cache',
+                      result.stdout)
+
+    def test_a_high_water_prune_never_acts_on_cached_selections(self):
+        self.worktrees(2)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Every measured directory now reports about 29 GiB, over the 20 GiB mark.
+        self.script(self.bin / 'du', 'printf "30000000\\t%s\\n" "${!#}"')
+        attempt = self.home / '.local/state/groundwork/pnpm-prune-last-attempt'
+        attempt.write_text(f'{int(time.time()) - 8 * 86400} old\n')
+        self.calls.unlink()
+        deferred = self.run_cleanup('--yes')
+        self.assertEqual(deferred.returncode, 0, deferred.stdout + deferred.stderr)
+        self.assertIn('1 from the result cache', deferred.stdout)
+        self.assertIn('the prune is deferred to the next run', deferred.stdout)
+        self.assertNotIn(' store prune', self.calls.read_text())
+        self.assertFalse(self.cache().exists())
+        self.calls.unlink()
+        fresh = self.run_cleanup('--yes')
+        self.assertIn('0 from the result cache', fresh.stdout)
+        self.assertIn('high-water mark', fresh.stdout)
+        self.assertIn(' store prune', self.calls.read_text())
 
     def pending(self):
         return self.home / '.local/state/groundwork/update-all-pending/pnpm'

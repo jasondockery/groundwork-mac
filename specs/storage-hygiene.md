@@ -97,19 +97,36 @@ wider.
   cancels all of them. Store configuration can differ per worktree (`.npmrc`,
   workspace `storeDir`, mise environment, filesystem), so an earlier design
   rejected lockfile or worktree dedupe. The dedupe key now binds each of those
-  inputs instead: the proven Corepack context and exact pin, the filesystem
-  device, `PNPM_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, store-dir
-  environment variables, the global pnpm rc files, and the content of every
-  `.npmrc`, `pnpm-workspace.yaml`, `.pnpmfile.cjs`, `.pnpmfile.mjs`, and
-  `pnpm-lock.yaml` from the record up to `/`. The record's own files are keyed
-  by name and ancestors by absolute path, so worktrees of one checkout share a
-  key. `package.json` is checked but not hashed, because branches edit scripts
-  and dependencies without changing store selection. A record never shares
-  when it has no Corepack proof, no SHA-256 or device tool is available, any
-  input is unreadable or a dangling link, a store-dir setting is relative or
-  computed (`${...}`), a manifest mentions a store dir, or `userconfig`,
-  `globalconfig`, or `global-dir` is redirected through the environment. Those
-  records probe on their own. Records with equal keys reuse the first record's
+  inputs instead:
+  - the proven Corepack context and exact pin;
+  - the filesystem device;
+  - `PNPM_HOME`, `XDG_DATA_HOME`, and `XDG_CONFIG_HOME`;
+  - the names and values of every `npm_config_*`, `pnpm_config_*` (any
+    case), and `PREFIX` variable, hashed and never stored, because they can
+    hold credentials;
+  - every variable whose value in the record's own directory differs from
+    the cleanup process, which is what a per-directory mise `[env]` adds. The
+    environment is read per record, inside mise's environment for a shim.
+  - `~/.npmrc` (even for a record outside HOME) and npm's global
+    `etc/npmrc` under an explicit prefix and under the prefix two levels above
+    node, both as launched and as resolved;
+  - every file in the pnpm config directories (`$XDG_CONFIG_HOME/pnpm` and
+    `~/Library/Preferences/pnpm`);
+  - the content of every `.npmrc`, `pnpm-workspace.yaml`, `.pnpmfile.cjs`,
+    `.pnpmfile.mjs`, and `pnpm-lock.yaml` from the record up to `/`, plus any
+    configured `pnpmfile` or `global-pnpmfile` target.
+
+  The record's own files are keyed by name and ancestors by absolute path, so
+  worktrees of one checkout share a key. `package.json` is checked but not
+  hashed, because branches edit scripts and dependencies without changing
+  store selection. A record never shares when an input cannot be captured
+  reliably. That covers: no Corepack proof, no SHA-256 or device tool, an
+  unreadable input or dangling link, a relative or computed (`${...}`)
+  store-dir or pnpmfile setting, a missing pnpmfile target, a manifest that
+  mentions a store dir or pnpmfile, `userconfig`, `globalconfig`, or
+  `global-dir` set in the environment, a relative explicit prefix, or an npm
+  or pnpm setting whose variable name Bash cannot read. Those records probe
+  on their own. Records with equal keys reuse the first record's
   raw store and version, and each record still applies the pin, launcher-drift,
   existence, and trusted-root checks itself. Among records that probe, one
   leader per Corepack context still observes a same-run miss first. A
@@ -125,8 +142,13 @@ wider.
   one.** After a complete discovery, acting mode rewrites
   `$XDG_STATE_HOME/groundwork/pnpm-discovery-cache.tsv` (or
   `~/.local/state/...` when that variable is unset or relative) with one
-  `key, store, version` row per store context whose observed version equals
-  its pin. Contexts that were not seen are dropped. A changed pin, lockfile,
+  `key, store, version, observed-at` row per record whose observed version
+  equals its pin. The cross-run key adds the canonical record path to the
+  store-context key, because a device number can be reused by another volume
+  between runs. Records that were not seen are dropped. A row carries the
+  epoch of the observation it came from, and rows older than 7 days are
+  ignored, so a cached selection never outlives a vanished Corepack artifact
+  or store for long. A changed pin, lockfile,
   configuration file, or environment input is a different key, so it is a
   cache miss. Report mode reads the cache but never writes it. An incomplete
   discovery never writes it. A missing header, a malformed row, a symlink, or
@@ -135,9 +157,11 @@ wider.
   later download can make a pin available. Reads are skipped when the run may
   prune on cadence (no recorded success, or one at least 30 days old), when it
   is forced, or when a pnpm repair is pending, so a scheduled prune and its
-  repair always act on fresh observations. Only a high-water prune can act on
-  a cached observation, and pre-prune revalidation of the store path and
-  version still guards it.
+  repair always act on fresh observations. Pre-prune revalidation passes the
+  accepted parent with `--store-dir`, so it cannot detect a selection that now
+  resolves to a different path. A high-water prune is therefore never run on
+  selections that came from the cache: it is deferred, acting mode deletes the
+  cache, and the next run probes every context fresh before it prunes.
 - **The automatic store root is allowlisted.** Standard pnpm roots are
   accepted. A custom parent becomes automatic only through an explicit
   `trusted_pnpm_store_root` entry in `repos.conf` or its local overlay. The

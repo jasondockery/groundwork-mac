@@ -171,6 +171,7 @@ review_records=""
 repository_records=""
 group_records=""
 probe_dir=""
+discovery_cache_temporary=""
 cleanup_exit() {
   local status=$?
   if type groundwork_lock_release >/dev/null 2>&1; then
@@ -182,6 +183,7 @@ cleanup_exit() {
   [[ -z "$repository_records" ]] || rm -f -- "$repository_records" || true
   [[ -z "$group_records" ]] || rm -f -- "$group_records" || true
   [[ -z "$probe_dir" ]] || rm -rf -- "$probe_dir" || true
+  [[ -z "$discovery_cache_temporary" ]] || rm -f -- "$discovery_cache_temporary" || true
   exit "$status"
 }
 trap cleanup_exit EXIT
@@ -526,11 +528,66 @@ observed_cache_path() {
   printf '%s\n' "$resolved"
 }
 
-# Inspect only cache and store-selection context, never credentials or the
-# complete mise environment. Fields 1-7 bind Corepack's artifact cache; fields
-# 8-11 bind the environment pnpm reads when it chooses a store.
-# shellcheck disable=SC2016 # Expanded by the child shell, inside mise's environment for a shim.
-pnpm_context_script='printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "${COREPACK_HOME+x}:${COREPACK_HOME-}" "${XDG_CACHE_HOME+x}:${XDG_CACHE_HOME-}" "${LOCALAPPDATA+x}:${LOCALAPPDATA-}" "$HOME" "${COREPACK_ENV_FILE+x}:${COREPACK_ENV_FILE-}" "$(command -v pnpm)" "$(command -v node || true)" "${PNPM_HOME+x}:${PNPM_HOME-}" "${XDG_DATA_HOME+x}:${XDG_DATA_HOME-}" "${XDG_CONFIG_HOME+x}:${XDG_CONFIG_HOME-}" "$(env | LC_ALL=C grep -iE "^(npm|pnpm)_config_(store[-_]?dir|userconfig|globalconfig|global[-_]?dir)=" | LC_ALL=C sort | tr "\n\t" "\036\036")"'
+# Run in each record's directory, inside mise's environment when a shim
+# launches pnpm. The first record holds the context paths; every exported
+# variable follows, separated by \036. The variables only stream through a pipe
+# to awk and a hash: they can hold credentials, so they are never stored.
+# shellcheck disable=SC2016 # Expanded by the child shell.
+pnpm_context_script='printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\036" "${COREPACK_HOME+x}:${COREPACK_HOME-}" "${XDG_CACHE_HOME+x}:${XDG_CACHE_HOME-}" "${LOCALAPPDATA+x}:${LOCALAPPDATA-}" "$HOME" "${COREPACK_ENV_FILE+x}:${COREPACK_ENV_FILE-}" "$(command -v pnpm)" "$(command -v node || true)" "${PNPM_HOME+x}:${PNPM_HOME-}" "${XDG_DATA_HOME+x}:${XDG_DATA_HOME-}" "${XDG_CONFIG_HOME+x}:${XDG_CONFIG_HOME-}"
+# Bash cannot read a variable whose name is not an identifier; an npm or pnpm
+# setting spelled that way is reported as unreadable, which refuses sharing.
+if env | LC_ALL=C grep -iqE "^(npm|pnpm)_config_[^=]*[^A-Za-z0-9_=][^=]*="; then
+  printf "unreadable\036"
+fi
+names="$(compgen -e)" || exit 1
+for name in $names; do
+  case "$name" in PWD | OLDPWD | SHLVL | _) continue ;; esac
+  printf "%s=%s\036" "$name" "${!name}"
+done'
+
+# Read the context stream. The context file receives the paths line, the share
+# verdict, an explicit npm prefix, and absolute pnpmfile targets; stdout
+# receives hash material only: npm and pnpm configuration variables (including
+# credentials, so they are hashed, not stored) and every variable whose value
+# differs from this process's, which is what a per-directory mise [env] adds.
+# Run this under offline_probe_env so the switches discovery itself injects
+# compare equal.
+# shellcheck disable=SC2016 # An awk program, not shell.
+context_stream_awk='BEGIN { RS = "\036"; share = 1; prefix = "" }
+NR == 1 { print > context; next }
+{
+  eq = index($0, "=")
+  if (eq < 2) { share = 0; next }
+  name = substr($0, 1, eq - 1)
+  value = substr($0, eq + 1)
+  seen[name] = 1
+  lower = tolower(name)
+  if (lower ~ /^(npm|pnpm)_config_/ || lower == "prefix") {
+    print "config " name "=" value
+    setting = lower
+    sub(/^(npm|pnpm)_config_/, "", setting)
+    gsub(/-/, "_", setting)
+    if (setting ~ /^(userconfig|globalconfig|global_dir)$/) share = 0
+    if (setting == "store_dir" && (value !~ /^\// || value ~ /\$\{/)) share = 0
+    if (setting ~ /^(global_)?pnpmfile$/) {
+      if (value !~ /^\// || value ~ /\$\{/ || value ~ /\n/) share = 0
+      else print "target " value > context
+    }
+    if (setting == "prefix" && lower != "prefix") prefix = value
+    else if (lower == "prefix" && prefix == "") prefix = value
+  }
+  if (name !~ /^__MISE_/ && (!(name in ENVIRON) || ENVIRON[name] != value)) print "directory " name "=" value
+}
+END {
+  for (name in ENVIRON) {
+    if (name in seen || name ~ /^__MISE_/) continue
+    if (name == "PWD" || name == "OLDPWD" || name == "SHLVL" || name == "_" || name ~ /^AWK/) continue
+    print "unset " name
+  }
+  if (prefix ~ /\n/) share = 0
+  print "share " share > context
+  print "prefix " prefix > context
+}'
 
 sha256_stream() {
   local digest
@@ -553,43 +610,102 @@ path_device() {
 }
 
 # One store-selection input: absent, or a readable regular file whose store-dir
-# settings are all literal absolute paths. A relative, computed, or
-# unrecognized store-dir resolves per directory, so it makes the record
-# ineligible to share. Lockfiles configure nothing, so they are only hashed.
-# A manifest is not hashed, because branches edit scripts and dependencies
-# without changing store selection; any store-dir mention in it refuses sharing.
+# and pnpmfile settings are all literal absolute paths. A relative, computed,
+# or unrecognized one resolves per directory, so it makes the record
+# ineligible to share. A configured pnpmfile target is hashed too, and must
+# exist. Lockfiles configure nothing, so they are only hashed. A manifest is
+# not hashed, because branches edit scripts and dependencies without changing
+# store selection; any store-dir or pnpmfile mention in it refuses sharing.
 # The label is location-independent for the record's own files and the
 # absolute path for a shared ancestor's.
 fingerprint_input() {
-  local path="$1" kind="$2" label="$3" digest
+  local path="$1" kind="$2" label="$3" digest targets="" target
+  if [[ "$kind" == target ]]; then
+    [[ -f "$path" && -r "$path" ]] || return 1
+  fi
   [[ -e "$path" || -L "$path" ]] || return 0
   [[ -f "$path" && -r "$path" ]] || return 1
   if [[ "$kind" == manifest ]]; then
-    if grep -qiE 'store[-_]?dir' "$path"; then
+    if grep -qiE 'store[-_]?dir|pnpmfile' "$path"; then
       return 1
     fi
     return 0
   fi
   if [[ "$kind" == config ]]; then
-    awk '
+    targets="$(awk '
       { line = tolower($0) }
-      line ~ /store[-_]?dir/ {
-        if (line !~ /^[[:space:]]*["\047]?store[-_]?dir["\047]?[[:space:]]*[=:][[:space:]]*["\047]?\// || line ~ /\$\{/) exit 1
-      }' "$path" || return 1
+      line ~ /store[-_]?dir|pnpmfile/ {
+        if (line ~ /\$\{/) exit 1
+        if (match(line, /^[[:space:]]*["\047]?(store[-_]?dir|(global[-_]?)?pnpmfile)["\047]?[[:space:]]*[=:][[:space:]]*["\047]?/)) {
+          value = substr($0, RSTART + RLENGTH)
+          sub(/["\047]?[[:space:]]*$/, "", value)
+          if (value !~ /^\//) exit 1
+          if (line ~ /pnpmfile/) print value
+          next
+        }
+        exit 1
+      }' "$path")" || return 1
   fi
   digest="$(sha256_stream <"$path")" || return 1
   printf '%s %s %s\n' "$kind" "$label" "$digest"
+  if [[ -n "$targets" ]]; then
+    while IFS= read -r target; do
+      fingerprint_input "$target" target "$target" || return 1
+    done <<<"$targets"
+  fi
+}
+
+# Hash every file under a pnpm global configuration directory, following links;
+# an entry that is not a readable regular file refuses sharing.
+fingerprint_directory() {
+  local directory="$1" listing entry
+  [[ -e "$directory" || -L "$directory" ]] || return 0
+  [[ -d "$directory" ]] || return 1
+  listing="$(find -L "$directory" ! -type d -print 2>/dev/null | LC_ALL=C sort)" || return 1
+  [[ -n "$listing" ]] || return 0
+  while IFS= read -r entry; do
+    [[ -e "$entry" || -L "$entry" ]] || return 1
+    fingerprint_input "$entry" config "$entry" || return 1
+  done <<<"$listing"
+}
+
+# Follow symlinks to the file npm sees as process.execPath; fail on a loop.
+resolve_links() {
+  local path="$1" target count=0
+  while [[ -L "$path" ]]; do
+    count=$((count + 1))
+    [[ "$count" -le 16 ]] || return 1
+    target="$(readlink "$path")" || return 1
+    case "$target" in
+      /*) path="$target" ;;
+      *) path="$(dirname "$path")/$target" ;;
+    esac
+  done
+  printf '%s\n' "$path"
 }
 
 # Everything pnpm consults when it chooses a store, plus the exact pin (in the
-# artifact key) and every lockfile from the record up to /. Records with the
-# same key resolve the same store and version, so one observation serves all.
+# artifact key) and every lockfile from the record up to /: the user and npm
+# global config files, every file in the pnpm config directories, configured
+# pnpmfile targets, and the hashed environment. Records with the same key
+# resolve the same store and version, so one observation serves all.
 store_dedupe_key_at() {
-  local repo="$1" artifact_key="$2" context_home="$3" config_home="$4" material="$5" directory name device label
+  local repo="$1" artifact_key="$2" context_home="$3" config_home="$4" node="$5" context="$6" material="$7"
+  local environment_digest directory name device label line prefix resolved node_prefix
   device="$(path_device "$repo")" || return 1
   [[ "$device" =~ ^[0-9]+$ ]] || return 1
+  environment_digest="$(sed -n 's/^environment //p' "$context")"
+  [[ -n "$environment_digest" ]] || return 1
+  prefix="$(sed -n 's/^prefix //p' "$context")"
+  if [[ -n "$prefix" && "$prefix" != /* ]]; then
+    return 1
+  fi
+  resolved="$(resolve_links "$node")" || return 1
+  node_prefix="$(canonical_dir "$(dirname "$resolved")")" || return 1
+  node_prefix="$(dirname "$node_prefix")"
   {
-    printf 'groundwork pnpm store context v1\n%s\ndevice %s\n' "$artifact_key" "$device"
+    printf 'groundwork pnpm store context v2\n%s\ndevice %s\nenvironment %s\n' \
+      "$artifact_key" "$device" "$environment_digest"
     directory="$repo"
     while :; do
       for name in .npmrc pnpm-workspace.yaml package.json .pnpmfile.cjs .pnpmfile.mjs pnpm-lock.yaml; do
@@ -604,30 +720,48 @@ store_dedupe_key_at() {
       [[ "$directory" != / ]] || break
       directory="$(dirname "$directory")"
     done
-    fingerprint_input "$config_home/pnpm/rc" config "$config_home/pnpm/rc" || return 1
-    fingerprint_input "$context_home/Library/Preferences/pnpm/rc" config \
-      "$context_home/Library/Preferences/pnpm/rc" || return 1
+    # The user config applies even when the record is outside HOME.
+    fingerprint_input "$context_home/.npmrc" config "$context_home/.npmrc" || return 1
+    # npm's global config lives under its prefix: an explicit one, else two
+    # levels above node, both as launched and as resolved.
+    for directory in "$(dirname "$(dirname "$node")")" "$node_prefix" ${prefix:+"$prefix"}; do
+      fingerprint_input "$directory/etc/npmrc" config "$directory/etc/npmrc" || return 1
+    done
+    fingerprint_directory "$config_home/pnpm" || return 1
+    fingerprint_directory "$context_home/Library/Preferences/pnpm" || return 1
+    while IFS= read -r line; do
+      case "$line" in
+        "target "*) fingerprint_input "${line#target }" target "${line#target }" || return 1 ;;
+      esac
+    done <"$context"
   } >"$material" || return 1
   sha256_stream <"$material"
 }
 
-# Write this record's Corepack artifact key and store dedupe key; either is
-# empty when the record's context cannot be proven shareable.
+# Write this record's Corepack artifact key, its within-run store dedupe key,
+# and its cross-run cache key; each is empty when the record's context cannot
+# be proven shareable. The environment is read per record, in the record's own
+# directory, so a per-directory mise [env] difference splits the key.
 record_probe_keys() {
   local index="$1" repo="$2" declaration="$3" launcher fields cache xdg_cache local_cache context_home env_file proxy node
-  local pnpm_home data_home_field config_home_field store_env target directory value key dedupe config_home
+  local pnpm_home data_home_field config_home_field target directory value key dedupe config_home canonical
+  local context="$discovery_work/$index.context" environment_digest share
   : >"$discovery_work/$index.key"
   : >"$discovery_work/$index.dedupe"
+  : >"$discovery_work/$index.cachekey"
   launcher="$(command -v pnpm || true)"
   if [[ "$launcher" == */mise/shims/pnpm ]]; then
-    fields="$(cd "$repo" && "${offline_probe_env[@]}" mise exec -- /bin/bash -c "$pnpm_context_script" 2>/dev/null)" || return 0
+    environment_digest="$(cd "$repo" && "${offline_probe_env[@]}" mise exec -- /bin/bash -c "$pnpm_context_script" 2>/dev/null |
+      "${offline_probe_env[@]}" awk -v context="$context" "$context_stream_awk" | LC_ALL=C sort | sha256_stream)" || return 0
   else
-    fields="$(cd "$repo" && /bin/bash -c "$pnpm_context_script")" || return 0
+    environment_digest="$(cd "$repo" && /bin/bash -c "$pnpm_context_script" |
+      "${offline_probe_env[@]}" awk -v context="$context" "$context_stream_awk" | LC_ALL=C sort | sha256_stream)" || return 0
   fi
-  [[ "$fields" != *$'\n'* ]] || return 0
-  awk -F'\t' 'NF != 11 { exit 1 }' <<<"$fields" || return 0
+  [[ -f "$context" ]] || return 0
+  IFS= read -r fields <"$context" || return 0
+  awk -F'\t' 'NF != 10 { exit 1 }' <<<"$fields" || return 0
   IFS=$'\t' read -r cache xdg_cache local_cache context_home env_file proxy node \
-    pnpm_home data_home_field config_home_field store_env <<<"$fields"
+    pnpm_home data_home_field config_home_field <<<"$fields"
   [[ "$context_home" == /* && "$proxy" == /* && "$node" == /* ]] || return 0
   # Bind every cache-location input without duplicating Corepack's fallback logic.
   # Relative/empty overrides have a cwd-dependent meaning, so never share them.
@@ -647,23 +781,23 @@ record_probe_keys() {
   case "$target" in */corepack/dist/pnpm.js) ;; *) return 0 ;; esac
   key="$(printf '%q|%q' "$fields" "$declaration")"
   printf '%s\n' "$key" >"$discovery_work/$index.key"
+  share="$(sed -n 's/^share //p' "$context")"
+  [[ "$share" == 1 ]] || return 0
   for value in "$pnpm_home" "$data_home_field" "$config_home_field"; do
     case "$value" in : | x:/*) ;; *) return 0 ;; esac
   done
-  # Only literal absolute store-dir variables are shareable; variables that
-  # redirect configuration files outside the fingerprint are not.
-  awk 'BEGIN { RS = "\036" }
-    NF {
-      name = tolower(substr($0, 1, index($0, "=") - 1))
-      value = substr($0, index($0, "=") + 1)
-      if (name ~ /store[-_]?dir$/ && value ~ /^\// && value !~ /\$\{/) next
-      exit 1
-    }' <<<"$store_env" || return 0
+  printf 'environment %s\n' "$environment_digest" >>"$context"
   config_home="$context_home/.config"
   [[ "$config_home_field" == : ]] || config_home="${config_home_field#x:}"
-  dedupe="$(store_dedupe_key_at "$repo" "$key" "$context_home" "$config_home" "$discovery_work/$index.material")" || dedupe=''
+  dedupe="$(store_dedupe_key_at "$repo" "$key" "$context_home" "$config_home" "$node" "$context" \
+    "$discovery_work/$index.material")" || dedupe=''
   rm -f -- "$discovery_work/$index.material"
+  [[ -n "$dedupe" ]] || return 0
+  # Device numbers can be reused by another volume across runs, so the
+  # cross-run key also binds the canonical record path.
+  canonical="$(canonical_dir "$repo")" || return 0
   printf '%s\n' "$dedupe" >"$discovery_work/$index.dedupe"
+  printf '%s\n%s\n' "$dedupe" "$canonical" | sha256_stream >"$discovery_work/$index.cachekey" || : >"$discovery_work/$index.cachekey"
 }
 
 # Discovery workers rebind this per record, as they do review_records and
@@ -721,16 +855,17 @@ observe_store_selection() {
     printf 'bad-version\n' >"$outcome"
     return 0
   fi
-  printf 'ok\t%s\t%s\n' "$store" "$version" >"$outcome"
+  printf 'ok\t%s\t%s\t%s\n' "$store" "$version" "$(date +%s)" >"$outcome"
 }
 
 # Apply an observed outcome (this record's own, or its store-context leader's)
-# to one record. A leader's exact-pin success becomes cacheable.
+# to one record. An exact-pin success becomes cacheable under the record's own
+# cross-run key.
 interpret_store_outcome() {
-  local index="$1" repo="$2" package_manager="$3" source="$4" kind store version expected_version canonical dedupe
+  local index="$1" repo="$2" package_manager="$3" source="$4" kind store version observed expected_version canonical cache_key
   local review_records="$discovery_work/$index.review"
   local store_selections="$discovery_work/$index.selection"
-  IFS=$'\t' read -r kind store version <"$discovery_work/$source.outcome" || return 1
+  IFS=$'\t' read -r kind store version observed <"$discovery_work/$source.outcome" || return 1
   expected_version="${package_manager#pnpm@}"
   expected_version="${expected_version%%+*}"
   case "$kind" in
@@ -761,11 +896,10 @@ interpret_store_outcome() {
     append_review "$repo" "$package_manager resolved pnpm $version; launcher drift, no store was touched"
     return 0
   fi
-  if [[ "$source" == "$index" ]]; then
-    IFS= read -r dedupe <"$discovery_work/$index.dedupe" || dedupe=''
-    if [[ -n "$dedupe" ]]; then
-      printf '%s\t%s\t%s\n' "$dedupe" "$store" "$version" >"$discovery_work/$index.cacheable"
-    fi
+  # Every record with a cross-run key keeps the age of the observation it used.
+  IFS= read -r cache_key <"$discovery_work/$index.cachekey" || cache_key=''
+  if [[ -n "$cache_key" && "$observed" =~ ^[0-9]+$ ]]; then
+    printf '%s\t%s\t%s\t%s\n' "$cache_key" "$store" "$version" "$observed" >"$discovery_work/$index.cacheable"
   fi
   # pnpm reports where the store WOULD live, which is not a claim that it
   # exists. Quietly skip that ordinary state only after the lexical path proves
@@ -898,7 +1032,7 @@ queue_artifact_keys() {
 # one leader so a same-run miss is observed once. Records without a key never
 # share an observation.
 plan_probe_waves() {
-  local index repo package_manager key dedupe leader position cached
+  local index repo package_manager key dedupe leader position cached cache_key
   local leader_keys=() leader_indexes=() dedupe_keys=() dedupe_indexes=()
   : >"$discovery_work/leaders"
   : >"$discovery_work/followers"
@@ -922,8 +1056,12 @@ plan_probe_waves() {
       fi
       dedupe_keys[${#dedupe_keys[@]}]="$dedupe"
       dedupe_indexes[${#dedupe_indexes[@]}]="$index"
-      cached="$(awk -F'\t' -v key="$dedupe" '$1 == key { printf "ok\t%s\t%s\n", $2, $3; exit }' \
-        "$discovery_work/result-cache")"
+      IFS= read -r cache_key <"$discovery_work/$index.cachekey" || cache_key=''
+      cached=""
+      if [[ -n "$cache_key" ]]; then
+        cached="$(awk -F'\t' -v key="$cache_key" '$1 == key { printf "ok\t%s\t%s\t%s\n", $2, $3, $4; exit }' \
+          "$discovery_work/result-cache")"
+      fi
       if [[ -n "$cached" ]]; then
         printf '%s\n' "$cached" >"$discovery_work/$index.outcome"
         printf '%s\t%s\t%s\n' "$index" "$repo" "$package_manager" >>"$discovery_work/cached"
@@ -987,6 +1125,7 @@ queue_store_probes() {
   done <"$discovery_work/followers"
   discovery_pool_drain
   [[ "$discovery_pool_failed" -eq 0 ]] || return 0
+  [[ ! -s "$discovery_work/cached" ]] || : >"$discovery_work/cache-used"
   while IFS=$'\t' read -r index repo package_manager; do
     interpret_store_outcome "$index" "$repo" "$package_manager" "$index"
     : >"$discovery_work/$index.cached"
@@ -1003,6 +1142,8 @@ queue_store_probes() {
 }
 
 # Read the cross-run result cache once. Any malformed byte makes it empty.
+# Rows older than the time-to-live are ignored, so a vanished Corepack
+# artifact or store cannot be trusted for long.
 load_result_cache() {
   : >"$discovery_work/result-cache"
   [[ -f "$discovery_cache" && ! -L "$discovery_cache" ]] || return 0
@@ -1012,10 +1153,11 @@ load_result_cache() {
   fi
   if awk -F'\t' -v header="$discovery_cache_header" '
       NR == 1 { if ($0 != header) bad = 1; next }
-      NF != 3 || length($1) != 64 || $1 !~ /^[0-9a-f]+$/ || $2 !~ /^\// || $2 ~ /[[:cntrl:]]/ ||
-        $3 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/ { bad = 1 }
+      NF != 4 || length($1) != 64 || $1 !~ /^[0-9a-f]+$/ || $2 !~ /^\// || $2 ~ /[[:cntrl:]]/ ||
+        $3 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/ || $4 !~ /^[0-9]+$/ { bad = 1 }
       END { exit (bad || NR == 0) }' "$discovery_cache" 2>/dev/null; then
-    tail -n +2 "$discovery_cache" >"$discovery_work/result-cache"
+    awk -F'\t' -v now="$(date +%s)" -v ttl="$((discovery_cache_ttl_days * 86400))" \
+      'NR > 1 && $4 <= now + 60 && now - $4 < ttl' "$discovery_cache" >"$discovery_work/result-cache"
   else
     echo '  Offline pnpm discovery: ignored an unreadable result cache; every store context is probed again.'
   fi
@@ -1108,6 +1250,7 @@ write_discovery_cache() {
   total="$(awk 'END {print NR + 0}' "$repository_records")" || return 1
   mkdir -p "$(dirname "$discovery_cache")" || return 1
   temporary="$discovery_cache.tmp.$$"
+  discovery_cache_temporary="$temporary"
   {
     printf '%s\n' "$discovery_cache_header"
     while [[ "$index" -lt "$total" ]]; do
@@ -1122,6 +1265,7 @@ write_discovery_cache() {
     rm -f -- "$temporary"
     return 1
   }
+  discovery_cache_temporary=""
 }
 
 select_representative() {
@@ -1211,6 +1355,7 @@ fi
 discovery_escalation_runs=3
 pnpm_discovery_failed=0
 pnpm_discovery_reason=""
+selections_from_cache=0
 # Cross-run store observations, keyed by the full store context. A run that
 # may prune on cadence, is forced, or carries a pending pnpm repair re-probes
 # every context, so a scheduled prune and its repair always act on fresh
@@ -1218,7 +1363,8 @@ pnpm_discovery_reason=""
 state_home="${XDG_STATE_HOME:-}"
 [[ "$state_home" == /* ]] || state_home="$HOME/.local/state"
 discovery_cache="$state_home/groundwork/pnpm-discovery-cache.tsv"
-discovery_cache_header="groundwork pnpm discovery cache v1"
+discovery_cache_header="groundwork pnpm discovery cache v2"
+discovery_cache_ttl_days=7
 discovery_cache_read=1
 if [[ -f "$pending_dir/pnpm" || "$force" -eq 1 ]]; then
   discovery_cache_read=0
@@ -1276,6 +1422,7 @@ if command -v pnpm >/dev/null 2>&1; then
     fi
   else
     merge_discovery_records 1
+    [[ ! -e "$probe_dir/discovery/cache-used" ]] || selections_from_cache=1
     incomplete_discovery_runs=0
     if [[ "$act" -eq 1 ]]; then
       rm -f -- "$pnpm_discovery_incomplete_runs"
@@ -1340,8 +1487,17 @@ elif [[ "$last_attempt_days" -lt 0 || "$last_attempt_days" -ge "$high_water_retr
   measure_pnpm_candidates
   if [[ "$pnpm_sizes_complete" -eq 1 &&
     "$pnpm_total" -ge $((high_water_gib * 1024 * 1024 * 1024)) ]]; then
-    pnpm_due=1
-    pnpm_due_reason="automatic stores exceed the ${high_water_gib} GiB high-water mark"
+    if [[ "$selections_from_cache" -eq 1 ]]; then
+      # Pre-prune revalidation passes --store-dir, so it cannot notice that a
+      # cached selection now resolves elsewhere. Defer to a fresh discovery.
+      pnpm_due_reason="automatic stores exceed the ${high_water_gib} GiB high-water mark, but some selections came from the result cache; the prune is deferred to the next run, which probes every store context fresh"
+      if [[ "$act" -eq 1 ]]; then
+        rm -f -- "$discovery_cache"
+      fi
+    else
+      pnpm_due=1
+      pnpm_due_reason="automatic stores exceed the ${high_water_gib} GiB high-water mark"
+    fi
   elif [[ "$pnpm_sizes_complete" -ne 1 ]]; then
     pnpm_due_reason="machine-wide success was ${last_success_days} days ago; high-water measurement was incomplete"
   else
