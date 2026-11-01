@@ -294,12 +294,18 @@
       <p>Global Python tools intentionally use the Groundwork-managed Python line, which moves only after the owner approves a bump, so it is not automatically the newest Python release. Heavy dependencies such as NumPy and SciPy need mature wheel coverage; when a tool runs on a too-new Python, <code>uv</code> can fall back to a slow source build and fail on a normal Mac because no Fortran compiler is installed. Keep the global tool Python on the Groundwork-managed version, and choose newer Python versions per project with <code>mise use python@...</code> only when that project needs them.</p>
 
       <h3>Leftovers from Aider and Python 3.12</h3>
-      <p>Groundwork no longer installs Aider; Claude Code, Codex, OpenCode, and Grok Build cover the same work. On a machine set up by an earlier version, the first <code>chezmoi apply</code> after this change runs a one-time cleanup: if <code>uv tool list</code> shows <code>aider-chat</code>, it runs <code>uv tool uninstall aider-chat</code> and says so. chezmoi records that the cleanup ran, so it does not run again, and an Aider you reinstall yourself later is left alone. It does not touch your Aider config. Files such as <code>~/.aider.conf.yml</code>, <code>~/.aider.model.settings.yml</code>, and other <code>~/.aider*</code> files are safe to delete by hand if you no longer use Aider.</p>
+      <p>Groundwork no longer installs Aider; Claude Code, Codex, OpenCode, and Grok Build cover the same work. On a machine set up by an earlier version, the first <code>chezmoi apply</code> after this change runs a one-time cleanup: if <code>uv tool list</code> shows <code>aider-chat</code>, it runs <code>uv tool uninstall aider-chat</code> and says so. If that uninstall fails, the apply reports an error and the next apply tries again. Once it succeeds, chezmoi records that the cleanup ran, so it does not run again, and an Aider you reinstall yourself later is left alone. It does not touch your Aider config. Files such as <code>~/.aider.conf.yml</code>, <code>~/.aider.model.settings.yml</code>, and other <code>~/.aider*</code> files are safe to delete by hand if you no longer use Aider.</p>
       <p>mise now manages only Python 3.15. Earlier configs also kept Python 3.12 for Aider; that install stays on disk until you remove it. <code>mise prune</code> removes versions no config still requests, so run it with <code>--dry-run</code> first to see what it would delete:</p>
       <div class="terminal">
         <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">remove unused runtimes</span></div>
         <pre><code><span class="prompt">$ </span>mise prune --dry-run
 <span class="prompt">$ </span>mise prune</code></pre>
+      </div>
+      <p>Optional: the old Aider install could also leave a Python 3.12 that <code>uv</code> downloaded and manages on its own, outside mise. The cleanup does not remove it. Check for it, and remove it by hand if nothing else of yours uses it:</p>
+      <div class="terminal">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">remove uv's Python 3.12</span></div>
+        <pre><code><span class="prompt">$ </span>uv python list --only-installed
+<span class="prompt">$ </span>uv python uninstall 3.12</code></pre>
       </div>
 
       <h3>"command not found" right after install</h3>

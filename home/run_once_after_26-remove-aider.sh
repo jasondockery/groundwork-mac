@@ -4,7 +4,7 @@ set -euo pipefail
 # Groundwork no longer ships Aider. Earlier versions installed it as a uv tool,
 # so remove only that tool environment, once. chezmoi records this script's
 # content hash after it succeeds, so an Aider the user reinstalls later is
-# left alone. User config such as ~/.aider* is never touched; it is safe to
+# left alone. A failed uninstall exits non-zero so the next apply retries. User config such as ~/.aider* is never touched; it is safe to
 # delete by hand.
 
 for _brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
@@ -20,6 +20,7 @@ if uv tool list 2>/dev/null | grep -Eq '^aider-chat([[:space:]]|$)'; then
   if uv tool uninstall aider-chat; then
     echo "Removed aider-chat. Leftover ~/.aider* files are yours; delete them by hand if unused."
   else
-    echo "Could not remove aider-chat; run: uv tool uninstall aider-chat" >&2
+    echo "Could not remove aider-chat; the next chezmoi apply retries. Or run: uv tool uninstall aider-chat" >&2
+    exit 1
   fi
 fi

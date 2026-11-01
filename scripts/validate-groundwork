@@ -17831,6 +17831,8 @@ EOF
   test -x "$aider_cleanup"
   grep -Eq "^[[:space:]]*if uv tool list 2>/dev/null \| grep -Eq '\^aider-chat\(\[\[:space:\]\]\|\\\$\)'; then\$" "$aider_cleanup"
   grep -Eq '^[[:space:]]*if uv tool uninstall aider-chat; then$' "$aider_cleanup"
+  # A failed uninstall must fail the run_once script so chezmoi retries it.
+  grep -Eq '^[[:space:]]*exit 1$' "$aider_cleanup"
   assert_no_matches "the Aider cleanup must run once, not on every apply" \
     rg -n -F -e 'uv tool uninstall aider-chat' --glob '!run_once_*' home
   assert_no_matches "the Aider cleanup must not touch user config" rg -n -e '\b(rm|trash|mv|unlink)\b[^#]*\.aider' home
