@@ -71,7 +71,9 @@ fi
 # Install the tools declared in mise's global config (Node LTS, pnpm, Python).
 # `mise activate` only puts tools on PATH — it never installs them — so without this they're
 # declared but missing. Idempotent: already-installed versions are skipped.
-if command -v mise >/dev/null 2>&1; then
+# A full update-all installs and upgrades in its one mise lane after this
+# apply, so it is skipped here to keep that section to a single run.
+if [[ "${GROUNDWORK_UPDATE_SCOPE:-}" != maintenance ]] && command -v mise >/dev/null 2>&1; then
   mise install || true
 fi
 

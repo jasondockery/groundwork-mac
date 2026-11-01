@@ -1997,6 +1997,16 @@ mise_status=0
 if [[ "$homebrew_mutation_failed" -eq 1 ]]; then
   echo "Groundwork: mise upgrades were skipped because Homebrew mutation failed." >&2
 elif command -v mise >/dev/null 2>&1; then
+  # The tools hook skips `mise install` under this scope so the whole mise
+  # section runs once, here. Install stays best-effort as it is in the hook: a
+  # missing tool is retried by the next apply and never blocks the upgrade.
+  mise_install_status=0
+  mise install || mise_install_status=$?
+  case "$mise_install_status" in
+    0) ;;
+    129 | 130 | 143) exit "$mise_install_status" ;;
+    *) echo "Groundwork: mise install exited $mise_install_status; a declared tool may be missing until the next apply." >&2 ;;
+  esac
   # The same 5-day floor the renovate-config preset applies to repo
   # dependencies, now applied to the machine: don't adopt a release the world
   # has not had time to notice was poisoned. It filters only fuzzy versions
