@@ -68,6 +68,11 @@ MULTIPLEXER_KEY_ORIGINS = {
 
 # These executables support another public command or an automatic hook. They
 # are not standalone learner interfaces.
+# Retired commands keep a one-line shim that points to their replacement. They
+# are not learner interfaces, so the catalog does not list them.
+RETIRED_EXECUTABLES = {
+    "groundwork-profile",
+}
 INTERNAL_EXECUTABLES = {
     "groundwork-apps-start",
     "groundwork-brew-refetch",
@@ -148,13 +153,10 @@ def read_profiles(path: pathlib.Path = PROFILES) -> list[dict[str, object]]:
         "os",
         "arch",
         "headless",
-        "work",
         "xcode",
         "beta",
         "game_dev",
         "password_manager",
-        "profile_preset",
-        "environment_role",
         "release_posture",
     )
     profiles: list[dict[str, object]] = []
@@ -172,7 +174,7 @@ def read_profiles(path: pathlib.Path = PROFILES) -> list[dict[str, object]]:
             names.add(name)
             if row["os"] not in {"darwin", "linux"}:
                 fail(f"{path}: {name}: unsupported os {row['os']!r}")
-            for field in ("headless", "work", "xcode", "beta", "game_dev"):
+            for field in ("headless", "xcode", "beta", "game_dev"):
                 row[field] = parse_bool(str(row[field]), f"{path}: {name}: {field}")
             profiles.append(row)
     if not profiles:
@@ -195,10 +197,7 @@ def profile_data(profile: dict[str, object]) -> dict[str, object]:
         "signingkey": "",
         "obsidian_vault_name": "docs",
         "game_dev": profile["game_dev"],
-        "profile_preset": profile["profile_preset"],
-        "environment_role": profile["environment_role"],
         "release_posture": profile["release_posture"],
-        "work": profile["work"],
         "headless": profile["headless"],
         "xcode": profile["xcode"],
         "beta": profile["beta"],
@@ -382,7 +381,7 @@ def shipped_executables(root: pathlib.Path = ROOT) -> set[str]:
     names = set()
     for path in (root / "home/dot_local/bin").glob("executable_*"):
         name = path.name.removeprefix("executable_").removesuffix(".tmpl")
-        if name not in INTERNAL_EXECUTABLES:
+        if name not in INTERNAL_EXECUTABLES | RETIRED_EXECUTABLES:
             names.add(name)
     return names
 

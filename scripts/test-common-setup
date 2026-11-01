@@ -40,6 +40,10 @@ class CommonSetupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
+    def assert_retired_keys_dropped(self, data):
+        for key in ("work", "environment_role", "profile_preset"):
+            self.assertNotIn(key, data)
+
     def test_ai_tools_and_tailscale_across_platform_architecture_and_legacy_role(self):
         for platform in ("darwin", "linux"):
             for arch in ("arm64", "amd64"):
@@ -929,9 +933,7 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         data = tomllib.loads(result.stdout)["data"]
         self.assertEqual({key: data[key] for key in ("docker_backend", "personal_apps", "work_extensions", "git_identity")},
                          dict(docker_backend="none", personal_apps=True, work_extensions=False, git_identity="personal"))
-        self.assertFalse(data["work"])
-        self.assertEqual(data["environment_role"], "personal")
-        self.assertEqual(data["profile_preset"], "personal-current")
+        self.assert_retired_keys_dropped(data)
         self.assertEqual(data["release_posture"], "preview")
         self.assertIn("Retired work-managed setting ignored; this Mac uses the common setup.", result.stdout)
 
@@ -945,12 +947,10 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Retired work-managed setting ignored; this Mac uses the common setup.", result.stdout)
         data = tomllib.loads(result.stdout)["data"]
-        self.assertEqual(data["environment_role"], "personal")
-        self.assertEqual(data["profile_preset"], "personal-current")
+        self.assert_retired_keys_dropped(data)
         self.assertEqual(data["release_posture"], "preview")
         self.assertTrue(data["personal_apps"])
         self.assertFalse(data["work_extensions"])
-        self.assertFalse(data["work"])
         self.assertEqual(data["git_identity"], "work")
 
         divergent = self.render(
@@ -962,13 +962,12 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         self.assertFalse(divergent_data["personal_apps"])
         self.assertFalse(divergent_data["work_extensions"])
 
-        fresh = self.render("home/.chezmoi.toml.tmpl", init=True, work=False)
+        fresh = self.render("home/.chezmoi.toml.tmpl", init=True)
         self.assertEqual(fresh.returncode, 0, fresh.stderr)
         self.assertNotIn("Retired work-managed setting ignored", fresh.stdout)
         fresh_data = tomllib.loads(fresh.stdout)["data"]
-        self.assertEqual(fresh_data["environment_role"], "personal")
-        self.assertEqual(fresh_data["profile_preset"], "personal-current")
-        self.assertFalse(fresh_data["work"])
+        self.assert_retired_keys_dropped(fresh_data)
+        self.assertEqual(fresh_data["release_posture"], "current")
 
         git = self.text("home/dot_gitconfig.tmpl", work=True)
         self.assertIn("email = work@example.com", git)
@@ -978,7 +977,7 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
                             personal_apps=False, work_extensions=True)
         self.assertEqual(first.returncode, 0, first.stderr)
         migrated = tomllib.loads(first.stdout)["data"]
-        self.assertFalse(migrated["work"])
+        self.assert_retired_keys_dropped(migrated)
         self.assertEqual(migrated["git_identity"], "work")
         second = self.render("home/.chezmoi.toml.tmpl", init=True,
                              **{**migrated, "personal_apps": False, "work_extensions": True})
@@ -986,7 +985,7 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         data = tomllib.loads(second.stdout)["data"]
         self.assertFalse(data["personal_apps"])
         self.assertTrue(data["work_extensions"])
-        self.assertFalse(data["work"])
+        self.assert_retired_keys_dropped(data)
         self.assertNotIn("Retired work-managed setting ignored", second.stdout)
 
     def test_retired_work_flag_keeps_the_work_git_email(self):
@@ -994,7 +993,7 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         self.assertEqual(implied.returncode, 0, implied.stderr)
         implied_data = tomllib.loads(implied.stdout)["data"]
         self.assertEqual(implied_data["git_identity"], "work")
-        self.assertFalse(implied_data["work"])
+        self.assert_retired_keys_dropped(implied_data)
         git = self.text("home/dot_gitconfig.tmpl", work=True)
         self.assertIn("email = work@example.com", git)
 
@@ -1019,7 +1018,7 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         self.assertIn("email = ci@example.com", missing.stdout)
         self.assertNotIn("email = work@example.com", missing.stdout)
 
-        fresh = self.render("home/.chezmoi.toml.tmpl", init=True, work=False)
+        fresh = self.render("home/.chezmoi.toml.tmpl", init=True)
         self.assertEqual(fresh.returncode, 0, fresh.stderr)
         self.assertEqual(tomllib.loads(fresh.stdout)["data"]["git_identity"], "personal")
         role_only = self.render(

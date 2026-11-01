@@ -1,11 +1,12 @@
 {{- /* One compatibility boundary for independent developer preferences.
-The retired work-managed profile is not a setup switch. A stored work flag,
-environment_role=managed, or profile_preset=work-managed is ignored for new
-choices. The legacy seed (personal apps off, infrastructure extensions on) is
-replaced by the common Mac defaults. An explicit divergence is kept.
-A stored work=true with no git_identity is the old email selector: record
-git_identity=work so regeneration does not switch those commits to the
-personal address. An explicit git_identity still wins. */ -}}
+Environment profiles are retired (specs/release-posture.md). A stored work
+flag, environment_role=managed, or profile_preset=work-managed is read here
+once and never chooses anything new. The legacy seed (personal apps off,
+infrastructure extensions on) is replaced by the common defaults. An explicit
+divergence is kept. A stored work=true with no git_identity is the old email
+selector: record git_identity=work so regeneration does not switch those
+commits to the personal address. An explicit git_identity still wins. The
+config template stops writing the retired keys, so this runs once. */ -}}
 {{- $legacyWork := and (hasKey . "work") .work -}}
 {{- $legacyManaged := or $legacyWork (and (hasKey . "environment_role") (eq (toString .environment_role) "managed")) (and (hasKey . "profile_preset") (eq (toString .profile_preset) "work-managed")) -}}
 {{- $settings := dict "docker_backend" "colima" "git_identity" "personal" "personal_apps" true "work_extensions" false -}}

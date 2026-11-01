@@ -137,7 +137,7 @@
 
       <div class="callout note">
         <span class="label">The rule</span>
-        <p><code>.chezmoi.os</code> decides what the operating system can support. The saved setup answers in <code>~/.config/chezmoi/chezmoi.toml</code> decide the machine role: work or personal, normal Mac or server/CI Mac, optional Unity, optional Xcode.</p>
+        <p><code>.chezmoi.os</code> decides what the operating system can support. The saved setup answers in <code>~/.config/chezmoi/chezmoi.toml</code> decide the rest: normal Mac or server/CI Mac, optional Unity, optional Xcode, and release posture.</p>
       </div>
 
       <h2><span class="hash" aria-hidden="true">#</span>What changes by platform</h2>
@@ -242,20 +242,20 @@
       <p>Most Macs should use the default desktop profile. The server/CI prompt exists for the unusual case: a Mac used as a remote runner, build box, or agent host with no logged-in desktop workflow.</p>
       <table class="keytable">
         <tr><td><strong>Independent preferences</strong></td><td>Choose the container backend, Git identity, optional personal apps, work extensions, and Apple Silicon local inference separately in <code>groundwork-configure</code>. Local inference stays off until you enable it. See <a href="local-inference.md">local inference</a>.</td></tr>
-        <tr><td><strong>Server/CI Mac?</strong></td><td>Skips the desktop layer. Most personal and work laptops should answer no.</td></tr>
+        <tr><td><strong>Server/CI Mac?</strong></td><td>Skips the desktop layer. Most laptops should answer no.</td></tr>
         <tr><td><strong>Unity tools?</strong></td><td>Optional. Installs Unity Hub and related editor extensions for the Unity FPS track.</td></tr>
         <tr><td><strong>Xcode?</strong></td><td>Optional. Attempts the Mac App Store Xcode install for native Apple/iOS development; first launch and signing remain manual.</td></tr>
       </table>
 
-      <h2><span class="hash" aria-hidden="true">#</span>Check your saved profile</h2>
-      <p>Ask Groundwork for the interpreted state before reading its storage. These commands separate platform, Linux distribution, and environment profile instead of collapsing them into one label:</p>
+      <h2><span class="hash" aria-hidden="true">#</span>Check your saved settings</h2>
+      <p>Ask Groundwork for the interpreted state before reading its storage. These commands separate platform, Linux distribution, and saved settings instead of collapsing them into one label:</p>
       <div class="terminal">
-        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">profile.sh</span></div>
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">settings.sh</span></div>
         <pre><code><span class="prompt">$ </span>groundwork-platform         <span class="comment"># darwin, linux, wsl2, wsl1, wsl-unknown, unsupported</span>
 <span class="prompt">$ </span>groundwork-distro --family  <span class="comment"># Linux/WSL bootstrap family</span>
-<span class="prompt">$ </span>groundwork-profile show     <span class="comment"># seed, role, posture, multiplexer, Xcode/beta, headless, OS channel</span></code></pre>
+<span class="prompt">$ </span>groundwork-doctor --browser <span class="comment"># release posture, Xcode/beta, managed browser</span></code></pre>
       </div>
-      <p>To change a machine setting or mutable preference, run <code>groundwork-configure</code>. It owns independent environment role and stable-versus-preview posture plus dependent Xcode beta alongside the saved baseline answers, changes only what you select, previews the resulting <code>chezmoi diff</code>, and applies the selected desired state only after confirmation. Use <code>groundwork-profile set current|preview</code> as the narrower release-posture shortcut. <code>groundwork-profile edit</code> opens the stored config directly for exceptional review.</p>
+      <p>To change a machine setting or mutable preference, run <code>groundwork-configure</code>. It shows every saved answer, owns the stable-versus-preview release posture plus dependent Xcode beta alongside the baseline answers, changes only what you select, previews the resulting <code>chezmoi diff</code>, and applies the selected desired state only after confirmation. <code>groundwork-configure --release-posture current|preview</code> opens the same transaction with posture preselected.</p>
 
       <div class="pagenav">
         <a href="setup.html"><span class="dir">← Prev</span>Setup &amp; chezmoi</a>

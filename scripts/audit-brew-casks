@@ -8,9 +8,8 @@ set -euo pipefail
 # `--require-sha`, so an unchecked cask would fail the bundle and would put an
 # unverified artifact on every new machine.
 #
-# Browser selection: every desktop Mac posture (current, preview, xcode, and
-# a retired managed role) renders brave-browser and not Google Chrome. Headless renders
-# no GUI browser. Brave is checksummed, so it lives in the main Brewfile.
+# Browser selection: every desktop Mac posture (current, preview, and xcode)
+# renders brave-browser and not Google Chrome. Headless renders no GUI browser. Brave is checksummed, so it lives in the main Brewfile.
 # Sparkle owns later updates; this audit does not add an upgrade lane.
 #
 # Needs macOS, Homebrew, chezmoi, jq, and network access, so this is a receipt
@@ -34,47 +33,45 @@ render_profile() {
   # Every conditional cask branch, not just the default one: password managers
   # (bitwarden / 1password) and the Unity game-dev set are gated on setup
   # answers, so auditing one profile would leave them unaudited.
-  local work="$1" pw="$2" game="$3"
+  local pw="$1" game="$2"
   chezmoi --source "$PWD" execute-template --init \
-    --promptBool "work=$work,headless=false,reset_existing_configs=false,game_dev=$game,xcode=false" \
+    --promptBool "headless=false,reset_existing_configs=false,game_dev=$game,xcode=false" \
     --promptString 'name=x,email_personal=x@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name=' \
     --promptChoice "password_manager=$pw" \
     <home/dot_config/homebrew/Brewfile.tmpl \
     | sed -n 's/^cask "\([^"]*\)".*/\1/p'
 }
 
-for work in false true; do
-  for pw in none bitwarden 1password; do
-    for game in false true; do
-      profile="work=$work pw=$pw game_dev=$game"
-      # Capture BEFORE iterating: a `while read` fed by process substitution
-      # keeps going when the renderer dies, so a broken template would "audit"
-      # zero casks and report success. Fail loudly instead.
-      if ! rendered="$(render_profile "$work" "$pw" "$game" 2>/dev/null)"; then
-        echo "FAIL: Brewfile rendering failed for profile: $profile" >&2
-        exit 1
+for pw in none bitwarden 1password; do
+  for game in false true; do
+    profile="pw=$pw game_dev=$game"
+    # Capture BEFORE iterating: a `while read` fed by process substitution
+    # keeps going when the renderer dies, so a broken template would "audit"
+    # zero casks and report success. Fail loudly instead.
+    if ! rendered="$(render_profile "$pw" "$game" 2>/dev/null)"; then
+      echo "FAIL: Brewfile rendering failed for profile: $profile" >&2
+      exit 1
+    fi
+    if [[ -z "$rendered" ]]; then
+      echo "FAIL: profile rendered zero casks ($profile) — the audit would have proved nothing." >&2
+      exit 1
+    fi
+    while IFS= read -r cask; do
+      [[ -n "$cask" ]] || continue
+      all_casks+=("$cask")
+      if [[ "$cask" == "google-chrome" || "$cask" == "google-chrome@beta" ]]; then
+        echo "VIOLATION $cask is in the Brewfile ($profile)." >&2
+        echo "          Chrome is no longer Groundwork-managed." >&2
+        status=1
       fi
-      if [[ -z "$rendered" ]]; then
-        echo "FAIL: profile rendered zero casks ($profile) — the audit would have proved nothing." >&2
-        exit 1
-      fi
-      while IFS= read -r cask; do
-        [[ -n "$cask" ]] || continue
-        all_casks+=("$cask")
-        if [[ "$cask" == "google-chrome" || "$cask" == "google-chrome@beta" ]]; then
-          echo "VIOLATION $cask is in the Brewfile ($profile)." >&2
-          echo "          Chrome is no longer Groundwork-managed." >&2
-          status=1
-        fi
-      done <<<"$rendered"
-    done
+    done <<<"$rendered"
   done
 done
 
 render_browser_profile() {
-  local posture="$1" role="$2" headless="$3" xcode="$4"
+  local posture="$1" headless="$2" xcode="$3"
   chezmoi --source "$PWD" execute-template \
-    --override-data "{\"headless\":$headless,\"xcode\":$xcode,\"release_posture\":\"$posture\",\"environment_role\":\"$role\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
+    --override-data "{\"headless\":$headless,\"xcode\":$xcode,\"release_posture\":\"$posture\",\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
     <home/dot_config/homebrew/Brewfile.browser.tmpl \
     | sed -n 's/^cask "\([^"]*\)".*/\1/p'
 }
@@ -87,27 +84,22 @@ expect_brave() {
   }
 }
 
-current_browser="$(render_browser_profile current personal false false)" \
+current_browser="$(render_browser_profile current false false)" \
   || {
     echo "FAIL: current browser profile did not render." >&2
     exit 1
   }
-preview_browser="$(render_browser_profile preview personal false false)" \
+preview_browser="$(render_browser_profile preview false false)" \
   || {
     echo "FAIL: preview browser profile did not render." >&2
     exit 1
   }
-xcode_browser="$(render_browser_profile current personal false true)" \
+xcode_browser="$(render_browser_profile current false true)" \
   || {
     echo "FAIL: xcode browser profile did not render." >&2
     exit 1
   }
-managed_browser="$(render_browser_profile current managed false false)" \
-  || {
-    echo "FAIL: retired managed role browser profile did not render." >&2
-    exit 1
-  }
-headless_browser="$(render_browser_profile current personal true false)" \
+headless_browser="$(render_browser_profile current true false)" \
   || {
     echo "FAIL: headless browser profile did not render." >&2
     exit 1
@@ -115,7 +107,6 @@ headless_browser="$(render_browser_profile current personal true false)" \
 expect_brave "current" "$current_browser"
 expect_brave "preview" "$preview_browser"
 expect_brave "xcode" "$xcode_browser"
-expect_brave "retired-managed-role" "$managed_browser"
 [[ -z "$headless_browser" ]] || {
   printf 'FAIL: headless selected a GUI browser:\n%s\n' "$headless_browser" >&2
   exit 1
@@ -124,7 +115,7 @@ expect_brave "retired-managed-role" "$managed_browser"
 render_main_brewfile() {
   local headless="$1"
   chezmoi --source "$PWD" execute-template --init \
-    --promptBool "work=false,headless=$headless,reset_existing_configs=false,game_dev=false,xcode=false" \
+    --promptBool "headless=$headless,reset_existing_configs=false,game_dev=false,xcode=false" \
     --promptString 'name=x,email_personal=x@example.com,email_work=,code_dir=~/code,signingkey=,obsidian_vault_name=' \
     --promptChoice "password_manager=bitwarden" \
     --override-data "{\"headless\":$headless,\"chezmoi\":{\"os\":\"darwin\",\"arch\":\"arm64\"}}" \
