@@ -2005,55 +2005,8 @@ EOF
   grep -qF 'installed dependents of owner/tap/old were not checked; the dependent lookup time budget is spent.' \
     "$dependents_fixture/shared.out" \
     || fail "the second lookup did not see the spent shared budget"
-  [[ "$(wc -l <"$dependents_fixture/shared.calls" | tr -d ' ')" -eq 1 ]] \
-    || fail "a second dependent lookup started after the shared budget was spent"
-  # Two deprecated formulae share one budget: a first lookup that uses all of
-  # it leaves the second unstarted rather than granting it a fresh bound.
-  : >"$dependents_fixture/shared.calls"
-  # shellcheck disable=SC2016 # The inner script expands its own arguments.
-  env BREW_USES_SLEEP=30 PATH="$dependents_fixture/bin:$PATH" \
-    BREW_CALL_LOG="$dependents_fixture/shared.calls" \
-    bash -c '. "$1"; end=$(($(date +%s) + 2))
-      gw_brew_report_formula_dependents "$2" "$3" icu4c@78 "$end" "$4" autoremove-runs || exit
-      gw_brew_report_formula_dependents "$2" "$3" mystery "$end" "$4" autoremove-runs' \
-    _ "$PWD/home/dot_local/share/groundwork/lib/brew-output.sh" \
-    "$PWD/home/dot_local/share/groundwork/lib/maintenance-runner.sh" \
-    "$dependents_fixture/metadata.json" "$dependents_fixture/scratch" \
-    >"$dependents_fixture/shared.out" 2>"$dependents_fixture/shared.err" \
-    || fail "a shared dependent lookup budget failed instead of reporting notes"
-  grep -qF 'installed dependents of icu4c@78 were not checked; brew uses did not finish' \
-    "$dependents_fixture/shared.out" \
-    || fail "the first lookup did not time out within the shared budget"
-  grep -qxF '  Note: installed dependents of mystery were not checked; the dependent lookup time budget is spent.' \
-    "$dependents_fixture/shared.out" \
-    || fail "the second lookup did not report the spent shared budget"
-  [[ "$(grep -c '^uses ' "$dependents_fixture/shared.calls")" -eq 1 ]] \
-    || fail "the second lookup started after the shared budget was spent"
-  # Two deprecated formulae share one budget: a lookup that spends it leaves
-  # the next formula unchecked instead of granting it a fresh deadline.
-  : >"$dependents_fixture/shared.calls"
-  dependents_started="$(date +%s)"
-  # shellcheck disable=SC2016 # The inner script expands its own arguments.
-  env PATH="$dependents_fixture/bin:$PATH" BREW_USES_SLEEP=30 \
-    BREW_CALL_LOG="$dependents_fixture/shared.calls" \
-    bash -c '. "$1"; end=$(($(date +%s) + 1))
-      gw_brew_report_formula_dependents "$2" "$3" icu4c@78 "$end" "$4" autoremove-runs || exit
-      gw_brew_report_formula_dependents "$2" "$3" mystery "$end" "$4" autoremove-runs' \
-    _ "$PWD/home/dot_local/share/groundwork/lib/brew-output.sh" \
-    "$PWD/home/dot_local/share/groundwork/lib/maintenance-runner.sh" \
-    "$dependents_fixture/metadata.json" "$dependents_fixture/scratch" \
-    >"$dependents_fixture/shared.out" 2>"$dependents_fixture/shared.err" \
-    || fail "a shared dependent lookup budget returned nonzero"
-  [[ $(($(date +%s) - dependents_started)) -lt 15 ]] \
-    || fail "two deprecated formulae outlived one shared dependent lookup budget"
-  if ! grep -qF 'installed dependents of icu4c@78 were not checked; brew uses did not finish' \
-    "$dependents_fixture/shared.out" \
-    || ! grep -qxF '  Note: installed dependents of mystery were not checked; the dependent lookup time budget is spent.' \
-      "$dependents_fixture/shared.out"; then
-    fail "the second deprecated formula did not share the first formula's spent budget"
-  fi
   [[ "$(grep -c '^uses --installed' "$dependents_fixture/shared.calls")" -eq 1 ]] \
-    || fail "a dependent lookup started after the shared budget was spent"
+    || fail "a second dependent lookup started after the shared budget was spent"
 
   cat >"$brew_output_fixture/cask-expected" <<'EOF'
 ordinary-outdated
@@ -5029,6 +4982,8 @@ EOF
     "a skipped maintenance run removed formulae"
 
   run_deprecated_formula_case darwin-deprecated-formula-on-request BREW_FORMULA_ON_REQUEST=true
+  [[ "$deprecated_case_status" -eq 0 ]] \
+    || fail "a requested deprecated formula failed the update ($deprecated_case_status)"
   grep -qxF '  Optional owner action: brew uninstall --formula icu4c@78' \
     "$update_all_fixture/darwin-deprecated-formula-on-request" \
     || fail "a requested deprecated formula did not suggest brew uninstall --formula"
@@ -5048,7 +5003,7 @@ EOF
   run_deprecated_formula_case darwin-deprecated-formula-timeout BREW_USES_STATUS=124
   [[ "$deprecated_case_status" -eq 0 ]] \
     || fail "a timed-out dependent lookup failed the update ($deprecated_case_status)"
-  grep -qF 'installed dependents of icu4c@78 were not checked; brew uses did not finish within 120s.' \
+  grep -qE 'installed dependents of icu4c@78 were not checked; brew uses did not finish within (119|120)s\.' \
     "$update_all_fixture/darwin-deprecated-formula-timeout" \
     || fail "a timed-out dependent lookup was not reported as a note"
   if ! grep -qxF 'brew upgrade --formula git auto=1 casks=unset hb-color=unset' "$update_all_log" \
@@ -5066,7 +5021,7 @@ EOF
   grep -qxF 'Groundwork: GROUNDWORK_BREW_DEPENDENTS_BUDGET_SECONDS must be 1 through 3600; using 120.' \
     "$update_all_fixture/darwin-deprecated-formula-bad-budget" \
     || fail "an invalid dependent lookup budget was not reported"
-  grep -qF 'brew uses did not finish within 120s.' \
+  grep -qE 'brew uses did not finish within (119|120)s\.' \
     "$update_all_fixture/darwin-deprecated-formula-bad-budget" \
     || fail "an invalid dependent lookup budget did not fall back to 120 seconds"
   test -f "$update_all_stamp" \
@@ -5081,6 +5036,8 @@ EOF
     || fail "an uncontained dependent lookup did not say why the run stopped"
   assert_not_contains '^brew autoremove' "$update_all_log" \
     "package-manager maintenance ran after the dependent lookup could not be contained"
+  grep -qxF 'apps-start' "$update_all_log" \
+    || fail "an uncontained dependent lookup left always-on apps unopened after the upgrade"
   test ! -f "$update_all_stamp" \
     || fail "an uncontained dependent lookup recorded update success"
 

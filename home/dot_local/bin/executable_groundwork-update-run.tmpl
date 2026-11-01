@@ -1257,9 +1257,15 @@ EOF
     brew_verified_updated_count="$brew_attempted_count"
     clear_update_pending "homebrew-upgrade"
   fi
+  {{- if and (eq .chezmoi.os "darwin") (not .headless) }}
+  if [[ "$homebrew_status" -eq 0 ]]; then
+    "$HOME/.local/bin/groundwork-apps-start" || true
+  fi
+  {{- end }}
   # Report, never remove, what keeps each deprecated or disabled formula
   # installed. This runs after the upgrade lanes so its advice describes the
-  # installed set that package-manager maintenance (brew autoremove) will see.
+  # installed set that package-manager maintenance (brew autoremove) will see,
+  # and after always-on apps are reopened so a stop here cannot leave them quit.
   if [[ -s "$formula_deprecated" ]]; then
     # One cumulative bound covers every lookup, so many deprecated formulae
     # cannot multiply the time this report-only step takes.
@@ -1300,11 +1306,6 @@ EOF
       done <"$formula_deprecated"
     fi
   fi
-  {{- if and (eq .chezmoi.os "darwin") (not .headless) }}
-  if [[ "$homebrew_status" -eq 0 ]]; then
-    "$HOME/.local/bin/groundwork-apps-start" || true
-  fi
-  {{- end }}
   if [[ "$homebrew_status" -eq 0 ]]; then
     brew_lane_status="current-or-updated"
   else
