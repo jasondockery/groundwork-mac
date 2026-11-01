@@ -4202,6 +4202,15 @@ EOF
   assert_not_contains 'Errors: none observed' \
     "$update_all_fixture/silent-brew-failure" \
     "an authoritative Homebrew failure claimed that no error was observed"
+  # Installing declared mise tools is configuration convergence and survives a
+  # failed Homebrew upgrade; only the release-floored mise upgrade is skipped.
+  grep -qxF 'mise install' "$update_all_log" \
+    || fail "a failed Homebrew upgrade suppressed mise install of declared tools"
+  assert_not_contains '^mise upgrade' "$update_all_log" \
+    "a failed Homebrew upgrade still ran the mise upgrade"
+  grep -qF 'mise upgrades were skipped because Homebrew mutation failed' \
+    "$update_all_fixture/silent-brew-failure" \
+    || fail "a failed Homebrew upgrade did not say why mise upgrades were skipped"
   test ! -e "$update_all_stamp"
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 

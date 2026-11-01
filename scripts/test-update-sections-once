@@ -89,7 +89,8 @@ exit 0''')
 fi
 [[ "${1:-}" == which ]] && exit 1
 printf 'mise %s\\n' "$*" >>"$SECTIONS_LOG"
-echo "mise fixture section: $1"''')
+echo "mise fixture section: $1"
+[[ "${1:-}" != install ]] || exit "${MISE_INSTALL_STATUS:-0}"''')
         self.script(self.bin / 'claude', 'echo "1.0.0 (Claude Code)"')
         self.script(self.bin / 'groundwork-cleanup', f'''printf 'groundwork-cleanup %s\\n' "$*" >>"$SECTIONS_LOG"
 echo '  {DISCOVERY_MARK}'
@@ -139,11 +140,12 @@ printf 'homebrew\\tcompleted\\nnpm\\tnot-installed\\npnpm\\tnot-due\\nowner-revi
         self.assertEqual(result.returncode, 0, result.stderr)
         destination.write_text(result.stdout, encoding='utf-8')
 
-    def update_all(self, *args):
+    def update_all(self, *args, extra_env=None):
         env = self.isolated_env()
         # The runner prepends the real Homebrew prefixes; with no brew there the
         # fixture bin and the system tools are all it can resolve.
         env.update(PATH=f'{self.bin}:/usr/bin:/bin', SECTIONS_LOG=str(self.log))
+        env.update(extra_env or {})
         result = subprocess.run([str(self.bin / 'update-all'), *args], env=env,
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                 cwd=self.home, timeout=120)
@@ -169,6 +171,14 @@ printf 'homebrew\\tcompleted\\nnpm\\tnot-installed\\npnpm\\tnot-due\\nowner-revi
         install = log.index('mise install')
         self.assertGreater(install, apply_done, transcript)
         self.assertEqual(log[install + 1], 'mise upgrade --minimum-release-age 5d', transcript)
+
+    def test_failed_mise_install_degrades_the_mise_lane(self):
+        result, log = self.update_all(extra_env={'MISE_INSTALL_STATUS': '1'})
+        transcript = result.stdout + result.stderr + '\n' + '\n'.join(log)
+        self.assertEqual(result.returncode, 0, transcript)
+        self.assertIn('mise upgrade --minimum-release-age 5d', log, transcript)
+        self.assertRegex(result.stdout, r'mise runtimes +current-or-updated · install incomplete \(exit 1\)',
+                         transcript)
 
     def test_configuration_only_update_keeps_the_hook_sections_once(self):
         result, log = self.update_all('--config-only')
