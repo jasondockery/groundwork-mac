@@ -49,6 +49,8 @@ The wrapper builds with:
   --label dev.roost.ephemeral=true
   --label dev.roost.built=<RFC 3339 UTC timestamp, generated here>
   -t <project>/scratch:<purpose>
+  --secret id=github_token,env=GH_TOKEN (or env=GITHUB_TOKEN) when either is
+    set and no github_token secret was forwarded
 and prints the resulting image ID. groundwork-docker-tidy removes the image
 after the grace window; same-session exact-ID cleanup through --rm-after is
 still the ideal.
@@ -161,6 +163,22 @@ while ((forward_index < forward_count)); do
   esac
   forward_index=$((forward_index + 1))
 done
+
+# Dockerfiles that resolve GitHub releases (Groundwork's apply step) read an
+# optional github_token BuildKit secret. Docker reads its value from the named
+# variable, so the token never reaches argv, a build arg, or an image layer.
+github_secret_forwarded=0
+for arg in ${forward[@]+"${forward[@]}"}; do
+  [[ "$arg" != *id=github_token* ]] || github_secret_forwarded=1
+done
+if [[ "$github_secret_forwarded" -eq 0 ]]; then
+  if [[ -n "${GH_TOKEN:-}" ]]; then
+    forward+=(--secret "id=github_token,env=GH_TOKEN")
+  elif [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    forward+=(--secret "id=github_token,env=GITHUB_TOKEN")
+  fi
+fi
+unset github_secret_forwarded
 
 # Derive the project from the context when not overridden: the containing git
 # repository's name, or the directory's own name. Docker repository name

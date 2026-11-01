@@ -50,7 +50,10 @@ COPY --chown=$USER:$USER .chezmoiroot /opt/groundwork/.chezmoiroot
 COPY --chown=$USER:$USER .chezmoiversion /opt/groundwork/.chezmoiversion
 COPY --chown=$USER:$USER home /opt/groundwork/home
 COPY --chown=$USER:$USER docker/chezmoi.headless.toml /home/$USER/.config/chezmoi/chezmoi.toml
-RUN chezmoi --source /opt/groundwork apply
+# The run_after hooks resolve GitHub releases; CI passes its token as a BuildKit
+# secret so the lookup is authenticated. The env exists only for this RUN and is
+# never written to the image config, history, or a layer.
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN chezmoi --source /opt/groundwork apply
 # The smoke entrypoint is not chezmoi source. Copy it after apply so a script
 # edit does not rebuild the apply layer.
 COPY --chown=$USER:$USER scripts/smoke-docker-image /opt/groundwork/scripts/smoke-docker-image

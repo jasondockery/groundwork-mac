@@ -762,8 +762,14 @@ exit 99
         installer = binaries / 'curl'
         installer.write_text(r'''#!/usr/bin/env python3
 import os, pathlib, sys
-pathlib.Path(os.environ['FIXTURE_CALLS']).write_text('installer requested')
 output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])
+if '--config' in sys.argv:
+    sys.stdin.read()
+    pathlib.Path(sys.argv[sys.argv.index('-D') + 1]).write_text('HTTP/2 200\r\n\r\n')
+    output.write_text('[\n  {\n    "tag_name": "v0.0.1-nightly.20261018.1",\n  }\n]\n')
+    print('200', end='')
+    sys.exit(0)
+pathlib.Path(os.environ['FIXTURE_CALLS']).write_text('installer requested')
 output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "$HOME/.local/bin/t3"\n')
 ''')
         installer.chmod(0o755)
@@ -786,7 +792,9 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
                         installed.chmod(0o755)
                     elif installed.exists():
                         installed.unlink()
-                    environment = dict(os.environ, HOME=str(home), PATH=f'{binaries}:/usr/bin:/bin',
+                    environment = {key: value for key, value in os.environ.items()
+                                   if key not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+                    environment.update(HOME=str(home), PATH=f'{binaries}:/usr/bin:/bin',
                                        GROUNDWORK_UPDATE_SCOPE=scope, FIXTURE_OS=os_name,
                                        FIXTURE_CALLS=str(calls), FIXTURE_T3=str(fresh),
                                        T3CODE_INSTALL_BIN_DIR=str(installed.parent))
