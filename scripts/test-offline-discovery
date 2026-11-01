@@ -158,6 +158,9 @@ esac''')
         shims.mkdir(parents=True)
         self.script(shims / 'pnpm', 'exec "$HOME/.local/bin/mise" exec -- "$REVIEW_RUNTIME_BIN/pnpm" "$@"')
         self.script(self.bin / 'mise', """[[ "${1:-}" == exec && "${2:-}" == -- ]] || exit 1
+printf 'mise exec offline=%s auto=%s exec=%s not-found=%s task=%s\\n' "${MISE_OFFLINE-unset}" \\
+  "${MISE_AUTO_INSTALL-unset}" "${MISE_EXEC_AUTO_INSTALL-unset}" \\
+  "${MISE_NOT_FOUND_AUTO_INSTALL-unset}" "${MISE_TASK_RUN_AUTO_INSTALL-unset}" >>"$REVIEW_CALLS"
 shift 2
 export COREPACK_HOME="$(cat .corepack-cache)"
 export PATH="$REVIEW_RUNTIME_BIN:$PATH"
@@ -177,8 +180,14 @@ exec "$@"
                 (self.bin / 'mise').write_text(script)
                 result = self.run_cleanup()
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(self.calls.read_text().count('pnpm store path'), 2)
+                calls = self.calls.read_text()
+                self.assertEqual(calls.count('pnpm store path'), 2)
                 self.assertIn('2 store probes, 1 known misses reused', result.stdout)
+                mise_calls = [line for line in calls.splitlines() if line.startswith('mise exec')]
+                # Three Corepack-context probes plus two shimmed store probes that miss.
+                self.assertEqual(len(mise_calls), 5, calls)
+                for line in mise_calls:
+                    self.assertEqual(line, 'mise exec offline=1 auto=0 exec=0 not-found=0 task=0')
 
     def test_explicit_environment_file_named_default_never_shares_misses(self):
         self.env['COREPACK_ENV_FILE'] = 'default'
@@ -211,6 +220,65 @@ exec "$@"
         state = self.home / '.local/state/groundwork'
         self.assertFalse((state / 'pnpm-prune-last-attempt').exists())
         self.assertFalse((state / 'pnpm-prune-last-success').exists())
+
+    def test_incomplete_discovery_keeps_completed_notes_and_diagnostics(self):
+        broken = self.root / 'broken-json'
+        broken.mkdir()
+        (broken / 'package.json').write_text('{not json')
+        prerelease = self.root / 'prerelease'
+        prerelease.mkdir()
+        (prerelease / 'package.json').write_text(json.dumps({'packageManager': 'pnpm@10.0.0-rc.1'}))
+        with self.records.open('a') as records:
+            records.write(f'{broken}\tfixture\n{prerelease}\tfixture\n')
+        self.repository('uncached', offline=True, pin='41.0.0')
+        slow = self.repository('hangs')
+        (slow / '.hang').touch()
+        self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        review = result.stdout.split('Review recommended', 1)[1]
+        self.assertIn('invalid or unreadable JSON', review)
+        self.assertIn('prerelease pnpm pins are review-only', review)
+        self.assertIn('pnpm@41.0.0 is uncached', review)
+        self.assertIn("completed records' notes and diagnostics kept", review)
+        self.assertNotIn(str(slow), review)
+        logs = list((self.home / '.local/state/groundwork/logs').glob('pnpm-offline-probes.*'))
+        self.assertEqual(len(logs), 1, result.stdout)
+        self.assertIn('Network access disabled', logs[0].read_text())
+        self.assertNotIn(' store prune', self.calls.read_text())
+
+    def test_repeated_incomplete_discovery_names_its_limits_and_escalates(self):
+        slow = self.repository('hangs')
+        (slow / '.hang').touch()
+        self.env['GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS'] = '1'
+        self.env['GROUNDWORK_PNPM_DISCOVERY_JOBS'] = '3'
+        counter = self.home / '.local/state/groundwork/pnpm-discovery-incomplete-runs'
+        report = self.run_cleanup()
+        self.assertEqual(report.returncode, 0, report.stdout + report.stderr)
+        self.assertFalse(counter.exists())
+        for run in (1, 2, 3):
+            result = self.run_cleanup('--yes')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Discovery limits: GROUNDWORK_PNPM_DISCOVERY_DEADLINE_SECONDS=1, '
+                          'GROUNDWORK_PNPM_DISCOVERY_JOBS=3 (at most 16).', result.stdout)
+            self.assertEqual(counter.read_text(), f'{run}\n')
+            if run < 3:
+                self.assertIn(f'Consecutive incomplete discoveries: {run} (owner review after 3).',
+                              result.stdout)
+                self.assertNotIn('have not been cleaned', result.stdout)
+        self.assertIn('Warning: pnpm stores have not been cleaned for 3 runs', result.stdout)
+        review = result.stdout.split('Review recommended', 1)[1]
+        self.assertIn('pnpm stores have not been cleaned for 3 runs', review)
+        self.assertIn('GROUNDWORK_PNPM_DISCOVERY_JOBS (now 3, at most 16)', review)
+        self.assertIn('Package-manager maintenance completed.', result.stdout)
+        counter.write_text('garbage\n')
+        result = self.run_cleanup('--yes')
+        self.assertEqual(counter.read_text(), '1\n')
+        (slow / '.hang').unlink()
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('complete.', result.stdout)
+        self.assertFalse(counter.exists())
 
     def test_discovery_timeout_reports_its_receipt_status(self):
         slow = self.repository('hangs')
