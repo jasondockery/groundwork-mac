@@ -10,19 +10,25 @@
 {{- fail "Groundwork supports WSL2, not WSL1: WSL1 filesystem and syscall behavior differ from real Linux. From PowerShell, check with `wsl --list --verbose` and convert with `wsl --set-version <DistributionName> 2`, then rerun setup." -}}
 {{- end -}}
 {{- end -}}
-{{- /* The work flag is a retired setup switch. Read a stored bool so an old
-config still renders and migrates once, but never choose apps, role, or preset
-from it. The render below always writes work = false: developer-settings has
-already captured git_identity, so the migration is finished and later choices
-(and the migration comment) are not reverted or repeated. */ -}}
+{{- /* Retired environment-profile keys: work, environment_role, and
+profile_preset. Read them once so an old config still renders, then drop them:
+the [data] block below never writes them again. developer-settings has already
+captured anything they still decide (git_identity for a stored work=true), and
+the only other carry-over is the preview mapping for release_posture below.
+See specs/release-posture.md. */ -}}
 {{- $work := and (hasKey . "work") .work -}}
+{{- $storedPreset := "" -}}
+{{- if hasKey . "profile_preset" -}}
+{{- $storedPreset = toString .profile_preset -}}
+{{- end -}}
+{{- $retiredWorkManaged := or $work (eq $storedPreset "work-managed") (and (hasKey . "environment_role") (eq (toString .environment_role) "managed")) -}}
 {{- $headless := false -}}
 {{- if eq .chezmoi.os "darwin" -}}
 {{- $headless = promptBoolOnce . "headless" "Is this a server or CI Mac with no desktop apps, which most Macs are not (yes or no; Enter keeps the default: no)" false -}}
 {{- else -}}
 {{- /* Native Linux is a supported desktop, not just a server: default to
 headless only when nothing indicates a graphical session. A desktop Ubuntu
-should not be defaulted into the server profile just for not being a Mac.
+should not be defaulted into the server setup just for not being a Mac.
 Two literal prompts, not one computed default, so the named default in the
 question text always matches the real one. */ -}}
 {{- $graphical := or (env "DISPLAY") (env "WAYLAND_DISPLAY") -}}
@@ -62,54 +68,27 @@ answers. */ -}}
 {{- if hasKey . "install_chrome" -}}
 {{- $legacyInstallChrome = .install_chrome -}}
 {{- end -}}
-{{- /* Bootstrap establishes a usable machine; mutable application-channel
-preferences belong to groundwork-configure. A fresh install seeds the common
-stable profile. There is no work-managed profile. A stored work-managed preset
-or managed role migrates to personal/current and never fails the render.
-Existing personal and disposable presets survive regeneration.
-See specs/environment-profiles-and-release-posture.md. */ -}}
-{{- $validPresets := list "personal-current" "personal-preview" "disposable-experimental" -}}
-{{- $defaultPreset := "personal-current" -}}
-{{- $profilePreset := $defaultPreset -}}
-{{- $retiredPreset := false -}}
-{{- if and (hasKey . "profile_preset") (eq (toString .profile_preset) "work-managed") -}}
-{{- $retiredPreset = true -}}
-{{- else if and (hasKey . "profile_preset") (has (toString .profile_preset) $validPresets) -}}
-{{- $profilePreset = toString .profile_preset -}}
-{{- end -}}
-{{- /* Role and posture are stored separately so a user can later change one
-without the other, and so a preset is only ever a starting value. */ -}}
-{{- $environmentRole := "personal" -}}
+{{- /* Release posture is the one mutable application-channel preference.
+groundwork-configure owns the change, so bootstrap never asks. A fresh install
+is current. A stored posture wins. With no stored posture, a retired
+profile_preset ending in -preview maps to preview; anything else is current. */ -}}
 {{- $releasePosture := "current" -}}
-{{- if eq $profilePreset "personal-preview" -}}
-{{- $releasePosture = "preview" -}}
-{{- else if eq $profilePreset "disposable-experimental" -}}
-{{- $environmentRole = "disposable" -}}
-{{- $releasePosture = "preview" -}}
-{{- end -}}
-{{- /* A stored role or posture wins over the preset-derived seed above. The
-preset only chooses starting values. personal and disposable stay independent
-of posture. managed is retired: it becomes personal and does not fail. */ -}}
-{{- $retiredRole := false -}}
-{{- if and (hasKey . "environment_role") (eq (toString .environment_role) "managed") -}}
-{{- $retiredRole = true -}}
-{{- $environmentRole = "personal" -}}
-{{- else if and (hasKey . "environment_role") (has (toString .environment_role) (list "personal" "disposable")) -}}
-{{- $environmentRole = toString .environment_role -}}
-{{- end -}}
 {{- if and (hasKey . "release_posture") (has (toString .release_posture) (list "current" "preview")) -}}
 {{- $releasePosture = toString .release_posture -}}
+{{- else if hasSuffix "-preview" $storedPreset -}}
+{{- $releasePosture = "preview" -}}
 {{- end -}}
 {{- /* Terminal multiplexer selection. A fresh installation is invited to pick
 Herdr (the recommended AI-native path), tmux, both, or neither. Existing
-Groundwork installations predate this field but already manage tmux, so the
-presence of profile_preset is the migration marker: seed those machines to
-tmux without prompting or silently changing their established workflow. */ -}}
+Groundwork installations predate this field but already manage tmux. Those
+older configs all carry the retired profile_preset key, so its presence is the
+migration marker: seed those machines to tmux without prompting or silently
+changing their established workflow. */ -}}
 {{- $storedTerminalMultiplexer := includeTemplate "terminal-multiplexer-selection" (dict "root" . "missing" "__groundwork_missing__") | trim -}}
 {{- $terminalMultiplexer := "herdr" -}}
 {{- if ne $storedTerminalMultiplexer "__groundwork_missing__" -}}
 {{- $terminalMultiplexer = $storedTerminalMultiplexer -}}
-{{- else if hasKey . "profile_preset" -}}
+{{- else if ne $storedPreset "" -}}
 {{- $terminalMultiplexer = "tmux" -}}
 {{- else -}}
 {{- $muxByNum := dict "1" "herdr" "2" "tmux" "3" "both" "4" "none" -}}
@@ -129,8 +108,8 @@ own IOKit values do not match the widely repeated "15ms per unit" folklore — s
 naming millisecond equivalents would be inventing precision.
 
 Fast is the default because holding a key is a primary motion in a terminal
-(j/k in vim, arrow keys, backspace), not an edge case. Numbered menu for the
-same reason as the profile preset above: promptChoice is a type-to-match field.
+(j/k in vim, arrow keys, backspace), not an edge case. Numbered menu because
+promptChoice is a type-to-match field (specs/interactive-cli-and-chezmoi-interview.md).
 
 Asked on any DESKTOP, macOS or Linux, and on neither when headless. Key repeat
 belongs to the machine holding the physical keyboard, not the machine being
@@ -144,9 +123,9 @@ invite a claim Groundwork cannot keep. */ -}}
 {{- if and (hasKey . "key_repeat") (hasKey $numByKeyRepeat (toString .key_repeat)) -}}
 {{- $keyRepeatDefaultNum = index $numByKeyRepeat (toString .key_repeat) -}}
 {{- end -}}
-{{- /* Same stored-answer seed as the profile preset above: the question is
-skipped on headless hosts and on WSL2, but the value is written everywhere, so
-without this a stored answer reverts to "fast" on every regeneration. */ -}}
+{{- /* Stored-answer seed: the question is skipped on headless hosts and on
+WSL2, but the value is written everywhere, so without this a stored answer
+reverts to "fast" on every regeneration. */ -}}
 {{- $keyRepeat := "fast" -}}
 {{- if and (hasKey . "key_repeat") (hasKey $numByKeyRepeat (toString .key_repeat)) -}}
 {{- $keyRepeat = toString .key_repeat -}}
@@ -170,8 +149,8 @@ and tells you where to set it rather than pretending it applied. Promising
 {{- end -}}
 {{- if and (not $headless) (not $wsl) -}}
 {{- $keyRepeatChoice := promptChoiceOnce . "key_repeat" (printf "Key repeat when you hold a key down — type 1-3:\n  1. Fast (recommended) — starts repeating soon, repeats quickly\n  2. Standard — same start delay, slower repeat\n  3. Aggressive — same fast repeat, starts sooner; can repeat when you only meant to rest on a key\n%s (Enter keeps the default: %s)" $keyRepeatNote $keyRepeatDefaultNum) (list "1" "2" "3") $keyRepeatDefaultNum -}}
-{{- /* Same dual return domain as profile_preset: a digit on a fresh or --prompt
-run, the stored value string on an ordinary existing-config run. */ -}}
+{{- /* Dual return domain: a digit on a fresh or --prompt run, the stored
+value string on an ordinary existing-config run. */ -}}
 {{- if hasKey $keyRepeatByNum $keyRepeatChoice -}}
 {{- $keyRepeat = index $keyRepeatByNum $keyRepeatChoice -}}
 {{- else if hasKey $numByKeyRepeat $keyRepeatChoice -}}
@@ -188,7 +167,7 @@ bootstrap. Preserve an existing answer; a fresh install stays stable. */ -}}
 {{- end -}}
 {{- /* iMessage gateway is a mutable desktop-Mac role. groundwork-configure owns
 the change, so bootstrap never asks, including on Linux, WSL, and headless
-profiles. Default false, which is also what an existing machine gets before
+machines. Default false, which is also what an existing machine gets before
 the key exists. A stored bool is copied through on every platform; apply hooks
 honor it only on a graphical Mac. */ -}}
 {{- $imessageGateway := false -}}
@@ -233,13 +212,12 @@ machine gets before the key exists. */ -}}
 {{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 
 sourceDir = {{ .chezmoi.workingTree | quote }}
-{{- if or $work $retiredRole $retiredPreset }}
+{{- if $retiredWorkManaged }}
 
 # Retired work-managed setting ignored; this Mac uses the common setup.
 {{- end }}
 
 [data]
-    work = false
     docker_backend = {{ get $developer "docker_backend" | quote }}
     git_identity = {{ get $developer "git_identity" | quote }}
     personal_apps = {{ get $developer "personal_apps" }}
@@ -255,8 +233,6 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     obsidian_vault_name = {{ $obsidianVault | quote }}
     install_chrome = {{ $legacyInstallChrome }}
     key_repeat = {{ $keyRepeat | quote }}
-    profile_preset = {{ $profilePreset | quote }}
-    environment_role = {{ $environmentRole | quote }}
     release_posture = {{ $releasePosture | quote }}
     terminal_multiplexer = {{ $terminalMultiplexer | quote }}
     game_dev = {{ $gameDev }}

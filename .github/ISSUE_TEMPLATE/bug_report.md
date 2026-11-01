@@ -21,7 +21,7 @@ labels: bug
 - macOS version:
 - Apple Silicon or Intel:
 - Fresh Mac or existing setup:
-- Work machine prompt answer, if relevant:
+- Release posture (current or preview), if relevant:
 
 ## Notes
 

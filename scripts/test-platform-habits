@@ -34,12 +34,11 @@ class HabitsTests(unittest.TestCase):
         path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
         path.chmod(0o755)
 
-    def render(self, source, os_name="darwin", headless=False, work=False):
+    def render(self, source, os_name="darwin", headless=False):
         data = dict(name="CI", email_personal="ci@example.com", email_work="",
                     code_dir="~/code", reset_existing_configs=False, password_manager="none",
                     signingkey="", obsidian_vault_name="ci", game_dev=False,
-                    profile_preset="personal-current", environment_role="personal",
-                    release_posture="current", work=work, headless=headless, xcode=False,
+                    release_posture="current", headless=headless, xcode=False,
                     beta=False, terminal_multiplexer="both",
                     chezmoi=dict(os=os_name, arch="arm64", osRelease={"ID": "ubuntu"}))
         return subprocess.run(["chezmoi", "--config", str(self.config), "--source", str(REPO),
@@ -105,22 +104,21 @@ INSTALL''')
         self.stub("timeout", '[[ $1 == --kill-after=5s ]]; shift; [[ $1 == 300 || $1 == 15 ]]; shift; exec "$@"')
         self.stub("gtimeout", 'exec "$(dirname "$0")/timeout" "$@"')
 
-    def render_t3(self, platform="darwin", headless=False, work=False, brew=None):
-        rendered = self.render("home/run_after_21-t3-code.sh.tmpl", platform, headless, work)
+    def render_t3(self, platform="darwin", headless=False, brew=None):
+        rendered = self.render("home/run_after_21-t3-code.sh.tmpl", platform, headless)
         fixture_brew = brew or self.root / "absent-homebrew/bin/brew"
         for supported in ("/opt/homebrew/bin/brew", "/home/linuxbrew/.linuxbrew/bin/brew", "/usr/local/bin/brew"):
             rendered = rendered.replace(supported, str(fixture_brew))
         return rendered
 
-    def test_nightly_for_work_and_personal_cli_profiles(self):
+    def test_nightly_for_headless_cli(self):
         for platform, runtime in (("linux", "Linux"), ("darwin", "Darwin")):
-            for work in (False, True):
-                with self.subTest(platform=platform, work=work):
-                    self.t3_stubs(runtime)
-                    self.env["T3CODE_VERSION"] = "ambient-stable-pin"
-                    result = self.run_script(self.render_t3(platform, True, work))
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertTrue((self.home / ".local/bin/t3").is_file())
+            with self.subTest(platform=platform):
+                self.t3_stubs(runtime)
+                self.env["T3CODE_VERSION"] = "ambient-stable-pin"
+                result = self.run_script(self.render_t3(platform, True))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.home / ".local/bin/t3").is_file())
 
     def test_installer_failure_propagates(self):
         self.t3_stubs()
@@ -254,15 +252,13 @@ INSTALL''')
     def test_existing_stable_cli_migrates_to_nightly_on_desktop_macs(self):
         target = self.home / ".local/bin/t3"
         target.parent.mkdir(parents=True)
-        for work in (False, True):
-            with self.subTest(work=work):
-                target.write_text('#!/bin/sh\necho "t3 0.1.0"\n')
-                target.chmod(0o755)
-                self.t3_stubs("Darwin")
-                result = self.run_script(self.render_t3(work=work))
-                self.assertEqual(result.returncode, 0, result.stderr)
-                version = subprocess.check_output([str(target), "--version"], text=True, timeout=5)
-                self.assertIn("-nightly.", version)
+        target.write_text('#!/bin/sh\necho "t3 0.1.0"\n')
+        target.chmod(0o755)
+        self.t3_stubs("Darwin")
+        result = self.run_script(self.render_t3())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        version = subprocess.check_output([str(target), "--version"], text=True, timeout=5)
+        self.assertIn("-nightly.", version)
 
     def test_t3_resolves_homebrew_timeout_outside_incoming_path(self):
         self.t3_stubs("Darwin")
@@ -457,12 +453,12 @@ INSTALL''')
         self.assertIn("Preserving unusable", result.stderr)
         self.assertEqual(target.read_text(), "user-owned nonexecutable file")
 
-    def test_work_desktop_uses_nightly_app_and_cli(self):
-        brewfile = self.render("home/dot_config/homebrew/Brewfile.tmpl", work=True)
+    def test_desktop_uses_nightly_app_and_cli(self):
+        brewfile = self.render("home/dot_config/homebrew/Brewfile.tmpl")
         self.assertIn('cask "t3-code@nightly"', brewfile)
         self.assertIn('brew "herdr"', brewfile)
         self.t3_stubs("Darwin")
-        result = self.run_script(self.render_t3(work=True))
+        result = self.run_script(self.render_t3())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.home / ".local/bin/t3").is_file())
         self.assertIn('brew "coreutils"', brewfile)

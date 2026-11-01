@@ -3,7 +3,8 @@
 Status: partially implemented (2026-08-09, local review tranche). Shipped on
 `origin/main`: the guarded `groundwork-configure` transaction (`937ae11`). This
 tranche removes mutable release posture and Xcode beta from bootstrap and makes
-the settings editor their canonical owner. Open: the remaining raw-interview
+the settings editor their canonical owner. Environment profiles (role and
+preset) were later removed entirely (#129, `specs/release-posture.md`). Open: the remaining raw-interview
 prompt remediation (bool prompts still spell out `y/t = yes, n/f = no`; the
 password-manager prompt) and the full interactive test matrix — see the
 checklist. `skills/interactive-cli-ux` is the procedure an agent follows;
@@ -37,14 +38,14 @@ source (`internal/cmd/prompt.go`,
    `personal-preview` shared a nine-character prefix, so nothing was unique until
    the tenth character, while `disposable-experimental` submitted on a single
    letter. Selection effort was uneven, and the long shared prefix read as "it
-   ignored me". The later work-managed choice had the same shape and has been
-   removed.
+   ignored me". The later work-managed choice had the same shape. All of these
+   preset values are now retired.
 
 Re-running a plain `chezmoi init` does not re-ask (once-semantics: it reuses any
 field already saved). The built-in way back is `chezmoi init --prompt`, which
 forces `prompt*Once` to ask again — but it replays using the TEMPLATE's defaults,
 NOT the current stored answers, so pressing Enter through it can reset choices (an
-existing `personal-preview` back to `personal-current`).
+existing `standard` key repeat back to `fast`).
 Present it as "replays the full interview using template defaults; review every
 question and inspect the diff before applying", never a safe one-key reconfirm.
 `--promptDefaults` and the `--promptString`/`--promptChoice`/`--promptBool` pairs
@@ -58,23 +59,20 @@ is `groundwork-configure`.
 
 `chezmoi init` asks only for bootstrap-critical facts such as headless
 status, identity, code root, package-manager integration, and selected large
-toolchains. A fresh install seeds `profile_preset=personal-current`,
-`environment_role=personal`, and `release_posture=current` without asking a
-work-versus-personal or stable-versus-preview question. A stored `work=true`,
-`environment_role=managed`, or `profile_preset=work-managed` migrates to that
-common setup, with one notice line, and never fails. Other valid stored values
-are carried forward unchanged on every regeneration.
+toolchains. A fresh install seeds `release_posture=current` without asking a
+stable-versus-preview question. The retired environment-profile keys (`work`,
+`environment_role`, `profile_preset`) are read once on regeneration and never
+written back; a work-managed marker adds one notice line, and nothing fails.
+Other valid stored values are carried forward unchanged on every regeneration.
 
 `groundwork-configure` is the canonical interactive settings surface for
-mutable preferences, including independent `environment_role` and
-`release_posture` values plus dependent Xcode `beta`. It uses the same preview,
+mutable preferences, including `release_posture` plus dependent Xcode `beta`. It uses the same preview,
 confirmation, compare-before-swap, backup, and apply transaction as other saved
 settings. Xcode beta is visible only while Xcode is enabled; disabling Xcode
 stages `beta=false` in the same receipt, while returning Xcode to its original
-value removes only a dependency-created beta change. `profile_preset` remains
-bootstrap history rather than a live master switch. `groundwork-profile set
-current|preview` is a narrow power-user shortcut that delegates to that
-transaction; it is not a second writer. A confirmed transaction runs `chezmoi
+value removes only a dependency-created beta change. `groundwork-configure
+--release-posture current|preview` opens the same transaction with posture
+preselected; there is no second writer. A confirmed transaction runs `chezmoi
 apply` and reconciles the selected desired state immediately; `update-all` owns
 subsequent upgrades and maintenance. `groundwork-doctor` reports the current
 posture, and help searches for `beta` or `preview` point to
@@ -117,11 +115,12 @@ above the stored value.
 
 ## Implementation checklist
 
-- [x] Preserve existing profile/posture storage and derive a stable fresh-install
+- [x] Preserve existing posture storage and derive a stable fresh-install
       default without a release-preference prompt (local review tranche).
 - [x] Make `groundwork-configure` the canonical owner of release posture and
-      Xcode beta; make `groundwork-profile set` delegate to it; report posture in
-      doctor/help/first-run surfaces (local review tranche).
+      Xcode beta; report posture in doctor/help/first-run surfaces (local review
+      tranche). The `groundwork-profile` shortcut was later retired to a pointer
+      shim (#129).
 - [x] `groundwork-configure`: show current answers, change only chosen fields
       (current answer as default), render candidate, preview `chezmoi diff`, apply
       after confirmation, with an atomic lock + compare-before-swap promotion

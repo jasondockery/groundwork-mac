@@ -25,7 +25,7 @@ Groundwork installs the formula only when all of these are true:
 - the machine is macOS (`darwin`)
 - the architecture is Apple Silicon (`arm64`)
 
-That includes a headless Apple Silicon Mac. The formula is a command-line program. Intel Macs, Linux, and WSL keep a stored `true` and do not install it. `groundwork-profile` prints `inactive (stored enabled; Apple Silicon only)` in that case.
+That includes a headless Apple Silicon Mac. The formula is a command-line program. Intel Macs, Linux, and WSL keep a stored `true` and do not install it; `groundwork-configure` still shows the saved answer there.
 
 Ollama's macOS app documentation requires macOS Sonoma 14 or newer, with CPU and GPU support on Apple Silicon and CPU only on Intel ([macOS](https://docs.ollama.com/macos)). Intel is outside this path.
 

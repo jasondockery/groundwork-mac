@@ -10,14 +10,14 @@ Editors, multiplexers, launchers, and browsers are options to choose from, not t
 
 Groundwork targets AI-native developers, so it imposes no intentional delay on supported AI tools: it targets the newest Groundwork-supported release available through the configured official channel. Falling several releases behind can leave a user with incompatible MCP or hook behavior, delayed model support, and defects already corrected upstream, so a deliberately delayed posture is not offered. That freshness is a product invariant, not a preference a profile can turn off — but it is a promise about Groundwork's own behavior, not a claim to override organization policy or a vendor's staged rollout. When availability, compatibility, device policy, or external update ownership prevents an update, Groundwork says so rather than reporting the toolchain as current.
 
-Everything else is a choice about blast radius, made per surface rather than per personality. An environment declares how it is used — a personal machine or a disposable container — and Groundwork derives its application release channels from that. Every Mac uses that same setup. Preview channels are never selected without explicit profile or per-tool consent.
+Everything else is a choice about blast radius, made per surface rather than per personality. Each machine records one release posture, current or preview, and Groundwork derives its application release channels from that. Every machine starts on current. Preview channels are never selected without an explicit posture or per-tool choice.
 
 Four things stay true in every posture:
 
 - **Previews never weaken integrity.** Choosing a preview channel, such as the optional Xcode beta, does not relax checksum requirements, provenance checks, or update ownership.
 - **Supply-chain floors are not stability settings.** The pnpm, Renovate, and mise release-age windows exist because an ecosystem allows anonymous instant publish into a deep transitive tree. They address a different risk than "how new do I want my editor," and a preview posture does not switch them off. Homebrew applications and AI CLIs carry no such floor: those packages are curated and hand-picked.
 - **Project pins win.** A workstation with a newer runtime available still runs the version a repository pins. Release posture governs available tools, never repository contracts.
-- **The operating system is the user's call.** Groundwork records and diagnoses the system channel so a deliberate OS beta is not reported as accidental drift, but it never enrolls a machine in one or downloads it.
+- **The operating system is the user's call.** Groundwork never enrolls a machine in an OS beta or downloads one.
 
 Groundwork is a consumer of the shared dependency-automation system, not proof
 that the system works. Its dependency lane succeeds only when an eligible

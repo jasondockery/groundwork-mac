@@ -45,7 +45,7 @@ Behavior that governs the interview (from chezmoi's source and reference):
   when values exist — but it does NOT seed the current stored value as the
   default. Each prompt shows the TEMPLATE's default, which may differ from the
   saved answer, so pressing Enter through the interview can reset choices (an
-  existing `personal-preview` back to `personal-current`). Describe it as
+  existing `standard` key repeat back to `fast`). Describe it as
   "replays the full interview using template defaults; review every question
   and inspect the diff before applying" — never as a safe
   one-key reconfirm. `--promptDefaults` and the `--promptString`/
@@ -95,8 +95,8 @@ Any interview change must:
 - Keep choice labels separate from stored values, and normalize the DUAL return
   domain: on a fresh or `--prompt` run a numbered menu returns `1`/`2`/`3`/`4`,
   but on an ordinary existing-config run `promptChoiceOnce` returns the stored
-  value (`personal-preview`, ...) directly. Accept both and normalize to exactly
-  one stored value. On a forced re-prompt, map the current valid stored preset to
+  value (`standard`, ...) directly. Accept both and normalize to exactly
+  one stored value. On a forced re-prompt, map the current valid stored value to
   the numbered default so Enter does not silently reset it. Cover this with a
   table-driven fixture.
 - Test these states with an isolated temporary `HOME` and chezmoi config dir:

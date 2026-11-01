@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Retired command. Environment profiles were removed, and release posture is
+# one setting in groundwork-configure (specs/release-posture.md). This shim
+# only points there: it reads no configuration and changes nothing.
+echo "groundwork-profile was removed. Release posture (current or preview) is now one setting in groundwork-configure." >&2
+echo "Run: groundwork-configure" >&2
+case "${1-}" in
+  -h | --help) exit 0 ;;
+  *) exit 64 ;;
+esac

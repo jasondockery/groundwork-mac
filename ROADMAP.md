@@ -34,10 +34,8 @@ of the history replacement.
 | History | The public repository started in a new GitHub container with a reviewed clean root. Anonymous recursive HTTPS cloning passed. The owner deleted the former private backup container after publication. |
 | Machine acceptance | Physical shortcuts, provider authentication, and two-way Tailscale connections remain local acceptance steps. No installer or chezmoi apply was run on the reference machine during this review. |
 
-On 2026-10-29 the owner removed the work-managed environment profile. Every
-Groundwork Mac uses the same setup. A stored `work=true` value or
-`environment_role=managed` is ignored and migrated to that setup. MDM ownership
-checks in app adoption, app removal, and `update-all` stay in place.
+History: environment profiles were removed (work-managed on 2026-10-29, the
+rest in #129); one `release_posture` setting remains (`specs/release-posture.md`).
 
 The future container/resource-lifecycle tranche may add read-only inventory and
 exact-object cleanup only after its formal Compass authority handoff. It is not
@@ -533,7 +531,7 @@ done nor lost in review prose.
       Groundwork. The obsolete setup opt-in remains ignored compatibility input
       rather than a rendering failure.
       `scripts/audit-brew-casks` enforces the checksum rule across every
-      conditional profile (work, password manager, game-dev) and checks that
+      conditional setup answer (password manager, game-dev) and checks that
       desktop profiles select Brave. It is a required macOS CI job, not a
       manual habit.
 - [ ] Homebrew release-age floor (the one real remaining gap): Homebrew has no
@@ -880,8 +878,8 @@ which returns only the first match.
 ## chezmoi interview UX: navigable choices and re-run clarity
 
 Full design and acceptance contract in
-`specs/interactive-cli-and-chezmoi-interview.md` (numbered menu preserving the
-stored `profile_preset` contract, `chezmoi init --prompt` template-defaults
+`specs/interactive-cli-and-chezmoi-interview.md` (numbered menus preserving
+stored answers, `chezmoi init --prompt` template-defaults
 warning, cancellation-safe candidate transaction, existing-template
 remediation). Procedures: `skills/interactive-cli-ux`, `skills/chezmoi-change`.
 
@@ -1005,9 +1003,9 @@ richer; tmux sets `tmux-256color` inside), and lowered `history-limit` 100000 â†
       Redact command arguments that may hold secrets. Add a bounded Docker
       subsection only when a backend is installed: identify the active Docker
       Desktop or Colima backend, whether its VM is running, configured CPU and
-      memory, observed VM/swap pressure, and daemon disk summary. For work
-      profiles, name `colima stop` when the VM is idle; for personal profiles,
-      document Docker Desktop resource-limit review. Never rewrite backend VM
+      memory, observed VM/swap pressure, and daemon disk summary. For Colima,
+      name `colima stop` when the VM is idle; for Docker Desktop, document its
+      resource-limit review. Never rewrite backend VM
       settings until a stable vendor-supported configuration surface exists,
       and measure before changing `mountInotify`, tmux history, or VM defaults.
 - [ ] `groundwork-watch --performance --duration <t> --interval <t>`: an explicit
