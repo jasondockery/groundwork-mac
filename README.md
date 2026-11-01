@@ -180,7 +180,7 @@ These establish the machine baseline and are stored in `~/.config/chezmoi/chezmo
 | Install optional Unity game development tools? | `no` by default. Use `yes` to install Unity Hub and C# VS Code extensions for the Unity FPS track |
 | Install Xcode for native Apple/iOS development? | `no` by default. Use `yes` to attempt the App Store Xcode install for signing, simulators, SwiftUI/iOS/macOS builds, or Unity Apple-platform builds |
 
-Every Mac uses the same setup on stable application channels. Release posture (`current` or `preview`) and the optional Xcode beta channel are mutable preferences, so they do not lengthen bootstrap. Change them later with `groundwork-configure`; `groundwork-configure --release-posture preview` opens the same transaction with posture preselected. The Xcode beta choice appears only when Xcode is enabled, and disabling Xcode clears that dependent preference in the same receipt. Check the stored states with `groundwork-doctor --browser`. Settings from older setups are read once and dropped, so they never fail setup.
+Every Mac starts on stable channels. Release posture (`current` or `preview`) and the optional Xcode beta channel are mutable preferences, so they do not lengthen bootstrap. Change them later with `groundwork-configure`; `groundwork-configure --release-posture preview` opens the same transaction with posture preselected. The Xcode beta choice appears only when Xcode is enabled, and disabling Xcode clears that dependent preference in the same receipt. Check the stored states with `groundwork-doctor --browser`. Settings from older setups are read once and dropped, so they never fail setup.
 
 ## Finish-up checklist (the manual residue macOS requires)
 

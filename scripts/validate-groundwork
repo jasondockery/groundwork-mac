@@ -4615,10 +4615,10 @@ EOF
     "$update_all_fixture/darwin-runner"
   # The common Mac setup uses Colima. Pass that backend explicitly.
   render darwin false arm64 home/dot_local/bin/executable_groundwork-update-run.tmpl \
-    "$update_all_fixture/darwin-work-runner" false false false bitwarden \
+    "$update_all_fixture/darwin-colima-runner" false false false bitwarden \
     current colima
   chmod +x "$update_all_fixture/darwin-runner" \
-    "$update_all_fixture/darwin-work-runner"
+    "$update_all_fixture/darwin-colima-runner"
   cat >"$update_all_bin/groundwork-apps-start" <<'SH'
 #!/usr/bin/env bash
 printf 'apps-start\n' >>"$GROUNDWORK_TEST_LOG"
@@ -5943,7 +5943,7 @@ PY
   rm -rf "$update_all_home/.local/state/groundwork/update-all-pending"
 
   # Exact work-laptop regression: a vendor/manual ChatGPT bundle is present on
-  # a work profile while Homebrew owns other software. It must be reported and
+  # a managed laptop while Homebrew owns other software. It must be reported and
   # omitted from the Brewfile apply, but every safe managed lane still runs.
   # Ownership review is a successful-but-actionable receipt, not updater failure.
   manual_apps="$update_all_fixture/Work Applications"
@@ -5962,10 +5962,10 @@ PY
   HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_CASKS='ghostty' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-work-runner" \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/darwin-work-manual-chatgpt" 2>&1 || manual_exit=$?
   [[ "$manual_exit" -eq 0 ]] \
-    || fail "manual ChatGPT on a work profile surfaced as exit $manual_exit instead of action-required"
+    || fail "manual ChatGPT on a managed laptop surfaced as exit $manual_exit instead of action-required"
   grep -qF 'ChatGPT.app is installed but not package-manager-owned' \
     "$update_all_fixture/darwin-work-manual-chatgpt" \
     || fail "the exact work-laptop manual ChatGPT case was silent"
@@ -6007,7 +6007,7 @@ PY
   mkdir -p "$update_all_home/.Trash"
   : >"$update_all_log"
   awk '/groundwork_interactive_tty_available=0/ { found=1 } found { print }' \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/action-center-render"
   assert_not_contains 'GROUNDWORK_PROMPT_TTY|/dev/tty' \
     "$update_all_fixture/action-center-render" \
@@ -6017,7 +6017,7 @@ PY
     HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-work-runner" \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-colima-runner" \
     || fail "the consent-gated ChatGPT action sequence failed"
   grep -qF 'Let Homebrew manage ChatGPT.app? [y/N]' \
     "$update_all_fixture/darwin-chatgpt-actions"
@@ -6072,7 +6072,7 @@ PY
     HOME="$update_all_home" PATH="$update_all_path" GROUNDWORK_TEST_LOG="$update_all_log" \
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
-    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-work-runner" \
+    FAKE_PLATFORM=darwin "$update_all_fixture/darwin-colima-runner" \
     || fail "declining ChatGPT adoption failed the completed updater"
   grep -qxF 'app-adopt --check chatgpt' "$update_all_log" \
     || fail "the action center prompted without a fresh adoption eligibility check"
@@ -6086,7 +6086,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_ADOPT_STATUS=17 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" || action_failed_exit=$?
+    "$update_all_fixture/darwin-colima-runner" || action_failed_exit=$?
   [[ "$action_failed_exit" -eq 17 ]] \
     || fail "a requested ChatGPT adoption failure surfaced as $action_failed_exit"
   grep -qF 'Maintenance: succeeded' \
@@ -6116,7 +6116,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_ADOPT_CHECK_STATUS=18 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "an ineligible ChatGPT adoption failed otherwise completed maintenance"
   grep -qxF 'app-adopt --check chatgpt' "$update_all_log"
   assert_not_contains '^app-adopt --yes|^app-remove' "$update_all_log" \
@@ -6132,7 +6132,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_ADOPT_CHECK_STATUS=0 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "a no-longer-needed adoption check failed completed maintenance"
   grep -qxF 'app-adopt --check chatgpt' "$update_all_log"
   assert_not_contains '^app-adopt --yes' "$update_all_log" \
@@ -6151,7 +6151,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     ACTION_REMOVE_CHECK_STATUS=0 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "a no-longer-needed Classic removal check failed completed maintenance"
   grep -qxF 'app-adopt --yes chatgpt' "$update_all_log"
   grep -qxF 'app-remove --check chatgpt-classic' "$update_all_log"
@@ -6172,7 +6172,7 @@ PY
     NO_COLOR='' FORCE_COLOR='' GROUNDWORK_COLOR='' HOMEBREW_COLOR='' \
     GROUNDWORK_APPLICATIONS_DIR="$manual_apps" BREW_FORMULAE='' BREW_CASKS='ghostty' \
     FAIL_ACTION_RECEIPT_CP=1 FAKE_PLATFORM=darwin \
-    "$update_all_fixture/darwin-work-runner" || action_receipt_failure_exit=$?
+    "$update_all_fixture/darwin-colima-runner" || action_receipt_failure_exit=$?
   [[ "$action_receipt_failure_exit" -eq 1 ]] \
     || fail "action-receipt publication failure surfaced as $action_receipt_failure_exit"
   grep -qF 'durable post-update action receipt could not be published' \
@@ -6883,7 +6883,7 @@ EOF
   grep -qxF 'docker-info' "$update_all_log"
   grep -qxF 'docker-desktop-stop' "$update_all_log"
   assert_not_contains 'colima (start|stop)' "$update_all_log" \
-    "the personal profile changed the nonselected Colima backend"
+    "the Docker Desktop selection changed the nonselected Colima backend"
   grep -qF 'Docker scratch          completed' \
     "$update_all_fixture/docker-personal-approved" \
     || fail "the final receipt did not classify completed Docker maintenance"
@@ -6897,7 +6897,7 @@ EOF
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "an approved temporary Colima maintenance cycle failed"
   grep -qxF 'stopped' "$docker_runtime_state" \
     || fail "Colima was not restored to its original stopped state"
@@ -6907,7 +6907,7 @@ EOF
   [[ "$(grep -c '^colima-env COLIMA_HOME=unset$' "$update_all_log")" -eq 3 ]] \
     || fail "Colima was given COLIMA_HOME when ~/.colima does not exist"
   assert_not_contains 'docker-desktop-start|docker-desktop-stop' "$update_all_log" \
-    "the work profile changed the nonselected Docker Desktop backend"
+    "the Colima selection changed the nonselected Docker Desktop backend"
 
   check "update-all sets COLIMA_HOME when ~/.colima already exists"
   printf 'stopped\n' >"$docker_runtime_state"
@@ -6919,7 +6919,7 @@ EOF
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "an approved Colima cycle with an existing ~/.colima failed"
   [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/.colima$" "$update_all_log")" -eq 3 ]] \
     || fail "Groundwork did not set COLIMA_HOME for every Colima invocation, including start --help"
@@ -6942,7 +6942,7 @@ EOF
     COLIMA_HOME="$update_all_home/custom-colima" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "an approved Colima cycle with a user-set COLIMA_HOME failed"
   [[ "$(grep -c "^colima-env COLIMA_HOME=$update_all_home/custom-colima$" "$update_all_log")" -eq 3 ]] \
     || fail "Groundwork replaced a user-set COLIMA_HOME on start --help, start, or stop"
@@ -6961,7 +6961,7 @@ EOF
   HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=0 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/docker-work-running" 2>&1 \
     || fail "a work update with running Colima failed"
   grep -qxF 'running' "$docker_runtime_state" \
@@ -6977,7 +6977,7 @@ EOF
     HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     || fail "declining a temporary Colima start failed update-all"
   grep -qxF 'stopped' "$docker_runtime_state"
   assert_not_contains 'colima (start|stop)|docker-desktop-start|docker-desktop-stop' \
@@ -7380,7 +7380,7 @@ EOF
   env "${colima_clean_env[@]}" HOME="$update_all_home" PATH="$update_all_path" \
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-disk-zero-yaml" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "disk: 0 exited $update_all_status; expected a skip, not success or the start deadline"
@@ -7413,7 +7413,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_HOME="$colima_disk_root/empty-datadisk" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-empty-datadisk" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a 0-byte Colima data disk exited $update_all_status; expected a skip, not success or the start deadline"
@@ -7440,7 +7440,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_HOME="$colima_disk_root/healthy" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "a healthy COLIMA_HOME was blocked by disk: 0 under ~/.colima"
   grep -qxF 'colima start --runtime docker' "$update_all_log" \
     || fail "update-all did not start the COLIMA_HOME instance"
@@ -7466,7 +7466,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_PROFILE=work \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-profile-broken" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a broken COLIMA_PROFILE exited $update_all_status; expected a skip, not success or the start deadline"
@@ -7490,7 +7490,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_PROFILE=work \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-work-runner" \
+    DOCKER_TIDY_RUNNING_STATUS=0 "$update_all_fixture/darwin-colima-runner" \
     || fail "a healthy COLIMA_PROFILE was blocked by disk: 0 on the default profile"
   grep -qxF 'colima start --runtime docker' "$update_all_log" \
     || fail "update-all did not start the healthy COLIMA_PROFILE"
@@ -7514,7 +7514,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_PROFILE=work LIMA_HOME="$lima_root" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-lima-home" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a 0-byte LIMA_HOME datadisk exited $update_all_status; expected a skip"
@@ -7539,7 +7539,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     COLIMA_HOME="$colima_disk_root/missing-colima-home" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-missing-home" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "a missing COLIMA_HOME with a broken ~/.colima exited $update_all_status; expected a skip"
@@ -7565,7 +7565,7 @@ EOF
     GROUNDWORK_TEST_LOG="$update_all_log" FAKE_PLATFORM=darwin \
     XDG_CONFIG_HOME="$xdg_root" \
     DOCKER_RUNTIME_STATE_FILE="$docker_runtime_state" DOCKER_TIDY_STATUS=3 \
-    "$update_all_fixture/darwin-work-runner" \
+    "$update_all_fixture/darwin-colima-runner" \
     >"$update_all_fixture/colima-xdg-home" 2>&1 || update_all_status=$?
   [[ "$update_all_status" -ne 0 && "$update_all_status" -ne 124 ]] \
     || fail "an XDG-only Colima home exited $update_all_status; expected a skip"
@@ -17913,7 +17913,8 @@ EOF
   # config can still carry work, environment_role, and profile_preset. Each is
   # read once by a real `chezmoi init` regeneration, never fails the render, and
   # is never written back. A *-preview preset maps to preview only when no
-  # posture is stored.
+  # valid posture is stored; an invalid stored posture falls back to the same
+  # mapping instead of surviving.
   interview_migrate() { # name stored-lines; sets interview_rendered to the regenerated config
     local name="$1" lines="$2"
     grep -vE 'release_posture' "$interview_in" >"$out_dir/interview-$name.toml"
@@ -17939,6 +17940,8 @@ EOF
     'preset-disposable|    profile_preset = "disposable-experimental"|current' \
     'preset-work-managed|    profile_preset = "work-managed"|current' \
     'preset-preview-posture-current|    profile_preset = "personal-preview"\n    release_posture = "current"|current' \
+    'preset-preview-posture-invalid|    profile_preset = "personal-preview"\n    release_posture = "sideways"|preview' \
+    'preset-current-posture-invalid|    profile_preset = "personal-current"\n    release_posture = "sideways"|current' \
     'role-disposable|    environment_role = "disposable"|current' \
     'role-personal-posture-preview|    environment_role = "personal"\n    release_posture = "preview"|preview' \
     'work-false|    work = false|current'; do
@@ -17992,9 +17995,16 @@ EOF
   # where history is recorded, or in tests that feed them as old stored input.
   # Anything else, such as a template that writes them, a field, a doc that
   # teaches them, or a command that consumes them, fails here.
-  retired_profile_allow='^(home/\.chezmoi\.toml\.tmpl|home/\.chezmoitemplates/developer-settings|home/dot_local/bin/executable_groundwork-configure|home/dot_local/bin/executable_groundwork-profile|specs/release-posture\.md|specs/interactive-cli-and-chezmoi-interview\.md|skills/interactive-cli-ux/SKILL\.md|ROADMAP\.md|scripts/audit-docs-coverage|scripts/validate-groundwork|scripts/test-[a-z-]+|tests/test_[a-z_]+\.py)$'
-  retired_profile_hits="$(git -C "$repo" grep -lIE 'environment_role|profile_preset|groundwork-profile|personal-current|personal-preview|disposable-experimental' -- . ':!core' \
-    | grep -vE "$retired_profile_allow" || true)"
+  retired_profile_allow='^(home/\.chezmoi\.toml\.tmpl|home/\.chezmoitemplates/developer-settings|home/dot_local/bin/executable_groundwork-configure|home/dot_local/bin/executable_groundwork-profile|specs/release-posture\.md|specs/interactive-cli-and-chezmoi-interview\.md|scripts/audit-docs-coverage|scripts/validate-groundwork|scripts/test-[a-z-]+|tests/test_[a-z_]+\.py)$'
+  git -C "$repo" rev-parse --is-inside-work-tree >/dev/null \
+    || fail "the retired environment-profile guard could not read the repository at $repo"
+  retired_profile_rc=0
+  retired_profile_files="$(git -C "$repo" grep -lIE 'environment_role|profile_preset|groundwork-profile|personal-current|personal-preview|disposable-experimental' -- . ':!core')" \
+    || retired_profile_rc=$?
+  # git grep exits 1 for no match; anything higher is a failed search, not a pass.
+  [[ "$retired_profile_rc" -le 1 ]] \
+    || fail "the retired environment-profile guard's git grep failed (exit $retired_profile_rc)"
+  retired_profile_hits="$(grep -vE "$retired_profile_allow" <<<"$retired_profile_files" || true)"
   [[ -z "$retired_profile_hits" ]] \
     || fail "retired environment-profile names returned outside the migration and history allowlist: $(tr '\n' ' ' <<<"$retired_profile_hits")"
   assert_no_matches "the config template must never write a retired environment-profile key" \

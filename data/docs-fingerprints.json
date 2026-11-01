@@ -18,7 +18,7 @@
       "lastmod": "2026-08-13"
     },
     "apps.html": {
-      "sha256": "29aff7e3a54b763dc917a42ac10dd063adea5d60faed52a973e78fa6137ef7c9",
+      "sha256": "aede79f54678d07f52913ea0e2b30f6ff51a01f42b754f1246dda0bd5745e27b",
       "lastmod": "2026-11-01"
     },
     "cheatsheet.html": {
@@ -114,7 +114,7 @@
       "lastmod": "2026-10-16"
     },
     "installed.html": {
-      "sha256": "d6f0571b11886e2d4e95937d0dd3bb467ed14fe8b89fa57b04320cb85236e673",
+      "sha256": "f1feeb3e6cd1c19b52edeec1e589732d0e5efd1f1965eff0305ab9020292895b",
       "lastmod": "2026-11-01"
     },
     "keyboard.html": {
@@ -146,7 +146,7 @@
       "lastmod": "2026-08-13"
     },
     "platforms.html": {
-      "sha256": "68142b844bda56fd9aa78b224e4420a7c2841252beaf7cfb966af316cf314955",
+      "sha256": "f92bd84ee8240d440175a4192897ed4a89ec8622ea875a904d2f06d126273366",
       "lastmod": "2026-11-01"
     },
     "practice.html": {
@@ -162,7 +162,7 @@
       "lastmod": "2026-10-30"
     },
     "setup.html": {
-      "sha256": "9444b17769696c5070231b8c1271ff87aec7299e694178106f9bda59cc1c9107",
+      "sha256": "7dae63416063d58591ad17fabc1e6a61d442d71cca8e8d18b90f0f1b52c3832d",
       "lastmod": "2026-11-01"
     },
     "shell.html": {

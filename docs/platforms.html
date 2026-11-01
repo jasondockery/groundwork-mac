@@ -132,7 +132,7 @@
   <main id="main" class="main">
     <div class="content">
       <p class="eyebrow">Set up</p>
-      <h1>One path, a few machine profiles.</h1>
+      <h1>One path, a few kinds of machine.</h1>
       <p class="lead">Groundwork is organized around the learning path, not the operating system. The platform only decides which parts of the environment get installed: the shared terminal and agent layer everywhere, plus the Mac desktop layer where it makes sense.</p>
 
       <div class="callout note">
@@ -239,7 +239,7 @@
       <p>Daemon-wide state is a separate decision. <code>groundwork-docker-cache-tidy</code> handles dangling images, stopped containers, and builder cache — resources from <em>every project on this machine</em>, which is why it is its own command: it says so when it runs, it is a dry run by default, and neither <code>update-all</code> nor any scheduled or agent path ever invokes it. After reviewing that preview, <code>groundwork-docker-cache-tidy --yes</code> applies it only through a trusted CLI against a verified local Unix endpoint; each operation and the complete owner-run transaction are bounded. Its builder-cache step (<code>docker builder prune --keep-storage 5GB</code>) asks Docker to prune eligible cache for the selected builder while retaining a target — an honest cap request, not a guarantee that total cache lands under the number.</p>
 
       <h2><span class="hash" aria-hidden="true">#</span>Mac choices</h2>
-      <p>Most Macs should use the default desktop profile. The server/CI prompt exists for the unusual case: a Mac used as a remote runner, build box, or agent host with no logged-in desktop workflow.</p>
+      <p>Most Macs should use the default desktop setup. The server/CI prompt exists for the unusual case: a Mac used as a remote runner, build box, or agent host with no logged-in desktop workflow.</p>
       <table class="keytable">
         <tr><td><strong>Independent preferences</strong></td><td>Choose the container backend, Git identity, optional personal apps, work extensions, and Apple Silicon local inference separately in <code>groundwork-configure</code>. Local inference stays off until you enable it. See <a href="local-inference.md">local inference</a>.</td></tr>
         <tr><td><strong>Server/CI Mac?</strong></td><td>Skips the desktop layer. Most laptops should answer no.</td></tr>

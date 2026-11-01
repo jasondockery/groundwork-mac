@@ -53,8 +53,8 @@ These are not settings. No release posture may change them.
    preference. Homebrew applications and AI CLIs carry no floor.
 4. **Project pins win.** Release posture governs available workstation tools,
    never repository contracts.
-5. **No OS enrollment.** Groundwork records and diagnoses the system channel;
-   it never enrolls a machine in an OS beta or downloads one.
+5. **No OS enrollment.** Groundwork never enrolls a machine in an OS beta or
+   downloads one.
 
 ## The setting
 
@@ -484,8 +484,7 @@ Enforced by `scripts/validate-groundwork`:
    receipt. Bare global greedy remains forbidden; exact greedy-aware lanes may
    mutate only preclassified installed tokens. Manual/MDM apps remain unchanged.
 8. `groundwork-doctor` checks: posture vs installed channels, AI freshness,
-   vendor-updater status, policy blocks, unmanaged software, and the detected
-   OS channel. Groundwork records the OS channel and never enrolls a machine
-   in an OS beta.
+   vendor-updater status, policy blocks, and unmanaged software. Groundwork
+   never enrolls a machine in an OS beta.
 
 Hostile fixtures land with each phase, not after. Red-prove every branch.

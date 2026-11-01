@@ -8,9 +8,8 @@ description: Design and verify user-facing terminal prompts, menus, confirmation
 A prompt is a contract with a human under time pressure. Most prompt bugs are not
 crashes; they are a person confidently picking the wrong thing, or believing the
 tool ignored them. Groundwork's own `chezmoi init` shipped this exact failure:
-two choices (`personal-current`, `personal-preview`) hid behind a nine-character
-shared prefix, so a type-to-match field appeared to do nothing until the tenth
-keystroke. Design prompts so the failure is impossible, not merely documented.
+two choices (since retired) hid behind a nine-character shared prefix, so a
+type-to-match field appeared to do nothing until the tenth keystroke. Design prompts so the failure is impossible, not merely documented.
 
 If the prompt also mutates machine state (deletes, overwrites, installs), load
 `skills/safe-mutating-cli` as well. If it edits a chezmoi-managed file, load
