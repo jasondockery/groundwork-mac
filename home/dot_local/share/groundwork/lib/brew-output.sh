@@ -212,6 +212,107 @@ gw_brew_classify_formula_metadata() {
   rm -f -- "$observed_tokens" "$expected_sorted" "$observed_sorted"
 }
 
+# Explain why a deprecated or disabled formula is still installed. Report only:
+# this never removes anything. The lookup is a read-only observation, so a
+# failure, a malformed answer, or a spent time budget is printed as a note and
+# returns 0; only cancellation (125, 129, 130, 143) is returned to the caller.
+#
+# autoremove-runs means update-all's package-manager maintenance will run
+# brew autoremove after this report; autoremove-skipped means it will not.
+#
+# Usage: gw_brew_report_formula_dependents <runner-lib> <metadata-json> \
+#          <formula-full-name> <budget-end-epoch> <scratch-dir> \
+#          <autoremove-runs|autoremove-skipped>
+gw_brew_report_formula_dependents() {
+  local runner_lib="$1" metadata_file="$2" formula="$3" budget_end="$4"
+  local scratch_dir="$5" autoremove_mode="$6"
+  local now remaining dependents_file errors_file status=0 dependents=""
+  local on_request="" brew_error=""
+  now="$(date +%s)"
+  remaining=$((budget_end - now))
+  if [[ "$remaining" -lt 1 ]]; then
+    printf '  Note: installed dependents of %s were not checked; the dependent lookup time budget is spent.\n' \
+      "$formula"
+    return 0
+  fi
+  if [[ ! -r "$runner_lib" ]]; then
+    printf '  Note: installed dependents of %s were not checked; the bounded runner is missing.\n' \
+      "$formula"
+    return 0
+  fi
+  if ! dependents_file="$(mktemp "$scratch_dir/homebrew-uses.XXXXXX")" \
+    || ! errors_file="$(mktemp "$scratch_dir/homebrew-uses-errors.XXXXXX")"; then
+    [[ -z "${dependents_file:-}" ]] || rm -f -- "$dependents_file"
+    printf '  Note: installed dependents of %s could not be checked (no scratch file).\n' "$formula"
+    return 0
+  fi
+  (
+    # shellcheck disable=SC2034 # These globals are the sourced runner library's API.
+    deadline="$remaining" observe_deadline="$remaining" heartbeat=15 \
+      cancel_grace=2 poll_seconds=0.2 orphan_grace=5
+    # shellcheck source=/dev/null
+    . "$runner_lib" || exit 1
+    # Homebrew's own stderr goes to a scratch file; the runner's heartbeat and
+    # deadline notices stay on the terminal so a slow lookup is visible.
+    # shellcheck disable=SC2329 # Invoked through run_bounded_internal's argv.
+    gw_brew_uses_installed() {
+      HOMEBREW_NO_AUTO_UPDATE=1 brew uses --installed "$1" 2>"$errors_file"
+    }
+    run_bounded_internal "brew uses --installed $formula" "$remaining" "$dependents_file" \
+      gw_brew_uses_installed "$formula"
+  ) || status=$?
+  case "$status" in
+    125 | 129 | 130 | 143)
+      rm -f -- "$dependents_file" "$errors_file"
+      return "$status"
+      ;;
+  esac
+  if [[ "$status" -eq 0 ]] \
+    && ! awk 'NF != 1 || $0 !~ /^[A-Za-z0-9@+._-]+(\/[A-Za-z0-9@+._-]+){0,2}$/ { exit 1 }' \
+      "$dependents_file"; then
+    status=65
+  fi
+  if [[ "$status" -ne 0 ]]; then
+    brew_error="$(grep -m 1 -E '^Error: ' "$errors_file" 2>/dev/null | cut -c 1-200 || true)"
+    if [[ "$status" -eq 124 ]]; then
+      printf '  Note: installed dependents of %s were not checked; brew uses did not finish within %ss.\n' \
+        "$formula" "$remaining"
+    elif [[ "$status" -eq 65 ]]; then
+      printf '  Note: installed dependents of %s are unknown; brew uses returned an unexpected answer.\n' \
+        "$formula"
+    else
+      printf '  Note: installed dependents of %s could not be checked (brew uses exit %s).\n' \
+        "$formula" "$status"
+    fi
+    [[ -z "$brew_error" ]] || printf '  %s\n' "$brew_error"
+    printf '  Check by hand: brew uses --installed %s\n' "$formula"
+    rm -f -- "$dependents_file" "$errors_file"
+    return 0
+  fi
+  dependents="$(LC_ALL=C sort -u "$dependents_file" | paste -sd ' ' -)"
+  rm -f -- "$dependents_file" "$errors_file"
+  if [[ -n "$dependents" ]]; then
+    printf '  Still required by installed: %s\n' "$dependents"
+    printf '  It stays until those no longer depend on it; nothing was removed.\n'
+    return 0
+  fi
+  on_request="$(jq -r --arg formula "$formula" '
+      [.formulae[] | select(.full_name == $formula) | .installed[-1].installed_on_request]
+      | if length == 1 and (.[0] | type) == "boolean" then .[0] else "unknown" end
+    ' "$metadata_file" 2>/dev/null || true)"
+  if [[ "$on_request" == true ]]; then
+    printf '  Nothing installed depends on it, but it was installed on request, so brew autoremove keeps it.\n'
+    printf '  Optional owner action: brew uninstall --formula %s\n' "$formula"
+  elif [[ "$autoremove_mode" == autoremove-runs && "$on_request" == false ]]; then
+    printf '  Nothing installed depends on it; update-all maintenance runs brew autoremove next, which removes it.\n'
+  elif [[ "$autoremove_mode" == autoremove-runs ]]; then
+    printf '  Nothing installed depends on it; update-all maintenance runs brew autoremove next, which removes it if it was installed as a dependency.\n'
+  else
+    printf '  Nothing installed depends on it; update-all maintenance does not run brew autoremove in this run.\n'
+    printf '  Preview removal: brew autoremove --dry-run\n'
+  fi
+}
+
 # Classify one Homebrew metadata snapshot before update-all starts a cask
 # replacement. A cask on the declared vendor-updater list stays with its own
 # updater even when the cask is checksummed (Brave, installed with --require-sha,

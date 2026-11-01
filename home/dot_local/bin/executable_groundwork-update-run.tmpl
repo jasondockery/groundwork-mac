@@ -596,6 +596,10 @@ if command -v brew >/dev/null 2>&1; then
       homebrew_status=1
     fi
   fi
+  # Deprecated and disabled formulae are explained after the upgrade lanes,
+  # once the installed set those explanations describe has settled.
+  formula_deprecated="$runner_receipt_dir/homebrew-formula-deprecated"
+  : >"$formula_deprecated"
   if [[ "$homebrew_status" -eq 0 ]]; then
     while IFS=$'\t' read -r formula_token formula_disposition formula_reason \
       formula_installed _formula_available formula_extra; do
@@ -617,6 +621,7 @@ if command -v brew >/dev/null 2>&1; then
           brew_deprecated_count=$((brew_deprecated_count + 1))
           printf 'Groundwork owner action: formula %s is %s; review its replacement before removal.\n' \
             "$formula_token" "$formula_reason"
+          printf '%s\n' "$formula_token" >>"$formula_deprecated"
           ;;
         *)
           echo "Groundwork: the classified Homebrew formula disposition is unknown; no Homebrew upgrade was attempted." >&2
@@ -1257,6 +1262,50 @@ EOF
     "$HOME/.local/bin/groundwork-apps-start" || true
   fi
   {{- end }}
+  # Report, never remove, what keeps each deprecated or disabled formula
+  # installed. This runs after the upgrade lanes so its advice describes the
+  # installed set that package-manager maintenance (brew autoremove) will see,
+  # and after always-on apps are reopened so a stop here cannot leave them quit.
+  if [[ -s "$formula_deprecated" ]]; then
+    # One cumulative bound covers every lookup, so many deprecated formulae
+    # cannot multiply the time this report-only step takes.
+    brew_dependents_budget="${GROUNDWORK_BREW_DEPENDENTS_BUDGET_SECONDS:-120}"
+    if [[ ! "$brew_dependents_budget" =~ ^[1-9][0-9]{0,3}$ \
+      || "$brew_dependents_budget" -gt 3600 ]]; then
+      echo "Groundwork: GROUNDWORK_BREW_DEPENDENTS_BUDGET_SECONDS must be 1 through 3600; using 120." >&2
+      brew_dependents_budget=120
+    fi
+    brew_dependents_end=$(($(date +%s) + brew_dependents_budget))
+    brew_autoremove_mode=autoremove-skipped
+    if [[ "$homebrew_status" -eq 0 && "$skip_maintenance" -eq 0 \
+      && -x "$HOME/.local/bin/groundwork-cleanup" ]]; then
+      brew_autoremove_mode=autoremove-runs
+    fi
+    formula_still_installed="$runner_receipt_dir/homebrew-formula-installed-after"
+    if ! brew list --formula --full-name >"$formula_still_installed" 2>/dev/null; then
+      echo "Groundwork note: the installed formula list could not be re-read; deprecated formula dependents were not checked."
+    else
+      while IFS= read -r formula_token; do
+        grep -qxF -- "$formula_token" "$formula_still_installed" || continue
+        printf 'Groundwork: deprecated or disabled formula %s is still installed.\n' "$formula_token"
+        brew_dependents_status=0
+        gw_brew_report_formula_dependents \
+          "$HOME/.local/share/groundwork/lib/maintenance-runner.sh" \
+          "$formula_metadata" "$formula_token" "$brew_dependents_end" \
+          "$runner_receipt_dir" "$brew_autoremove_mode" || brew_dependents_status=$?
+        # Lookup failures are notes and return 0. 125 means the lookup's
+        # process tree could not be contained; 129/130/143 are cancellation.
+        case "$brew_dependents_status" in
+          0) ;;
+          125)
+            echo "Groundwork: stopped before package-manager maintenance: the dependent lookup could not be contained." >&2
+            exit 125
+            ;;
+          *) exit "$brew_dependents_status" ;;
+        esac
+      done <"$formula_deprecated"
+    fi
+  fi
   if [[ "$homebrew_status" -eq 0 ]]; then
     brew_lane_status="current-or-updated"
   else
