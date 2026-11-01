@@ -347,6 +347,78 @@ class AutoHandoverTests(Sandbox):
         self.assertFalse(os.path.lexists(native))
         self.assertFalse(failed.exists())
 
+    def record_failed(self, content):
+        failed = self.root / "state/groundwork/claude-handover-failed"
+        failed.parent.mkdir(parents=True, exist_ok=True)
+        failed.write_bytes(content)
+        return failed
+
+    def test_unreadable_or_odd_pause_records_retry_with_every_guard(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        for name, content, mode in (("invalid UTF-8", b"\xff\xfe native 2.4.1\n", 0o600),
+                                    ("odd content", b"native 2.4.1 homebrew\n", 0o600),
+                                    ("unreadable", b"native 2.4.1 homebrew 2.4.2\n", 0o000)):
+            with self.subTest(name):
+                failed = self.record_failed(content)
+                failed.chmod(mode)
+                self.pgrep_log.unlink(missing_ok=True)
+                result = self.run_helper("auto", "homebrew", extra={"LOGIN_SHELL_FAIL": "1"})
+                self.assertEqual(result.returncode, 76, result.stdout + result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("paused", result.stdout)
+                self.assertIn("-x claude", self.pgrep_log.read_text())
+                self.assertTrue(native.is_symlink())
+                self.assertEqual(failed.read_text(), "native 2.4.1 homebrew 2.4.2\n")
+                failed.unlink()
+
+    def test_native_version_change_lifts_the_pause(self):
+        native = self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        failed = self.record_failed(b"native 2.4.1 homebrew 2.4.2\n")
+        paused = self.run_helper("auto", "homebrew")
+        self.assertEqual(paused.returncode, 75)
+        self.assertIn("groundwork-claude-owner homebrew --yes clears the pause", paused.stdout)
+        native.unlink()
+        self.install("2.4.0", native=True)
+        result = self.run_helper("auto", "homebrew")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(os.path.lexists(native))
+        self.assertFalse(failed.exists())
+
+    def test_manual_handover_clears_the_pause(self):
+        self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        failed = self.record_failed(b"native 2.4.1 homebrew 2.4.2\n")
+        result = self.run_helper("homebrew", "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(failed.exists())
+
+    def test_manual_handover_puts_the_link_back_when_a_session_starts_mid_move(self):
+        native = self.install("2.4.1", native=True)
+        link = os.readlink(native)
+        self.install("2.4.2")
+        late = self.root / "late.tsv"
+        late.write_text("4242\tclaude\tclaude\n")
+        # The manual path checks once before the move (two pgrep calls), then after it.
+        result = self.run_helper("homebrew", "--yes",
+                                 extra={"FAKE_PGREP_SWITCH_AT": "3", "FAKE_PROCS_LATE": str(late)})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Claude Code is running (PID 4242)", result.stderr)
+        self.assertIn("Native link put back", result.stdout)
+        self.assertEqual(os.readlink(native), link)
+        self.assertEqual(list(self.backups.iterdir()), [])
+
+    def test_failed_cleanup_does_not_hide_the_original_error(self):
+        self.install("2.4.1", native=True)
+        self.install("2.4.2")
+        with mock.patch("os.rename", side_effect=OSError("rename refused")), \
+                mock.patch("pathlib.Path.rmdir", side_effect=OSError("rmdir refused")):
+            _, status, stdout, _ = self.run_main(["auto", "homebrew"])
+        self.assertEqual(status, 75, stdout)
+        self.assertIn("rename refused", stdout)
+        self.assertNotIn("rmdir refused", stdout)
+
     def test_failed_login_with_an_occupied_native_path_keeps_the_backup(self):
         native = self.install("2.4.1", native=True)
         self.install("2.4.2")
@@ -588,7 +660,19 @@ class UpdateRunSectionTests(Sandbox):
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         return rendered.stdout
 
-    def run_block(self, owner, status, interactive):
+    def summary(self):
+        """The update summary's Warning and Result lines, with other counts at zero."""
+        source = UPDATE_RUN.read_text(encoding="utf-8")
+        start = source.index('if [[ "$brew_warning_count" -gt 0 || "$pnpm_discovery_warning_count" -gt 0 \\\n')
+        end = source.index("printf '\\nResult\\n  SUCCESS%s\\n' \"$result_suffix\"\n")
+        text = source[start:end] + "printf '\\nResult\\n  SUCCESS%s\\n' \"$result_suffix\"\n"
+        self.assertNotIn("{{", text)
+        zeros = ("brew_warning_count pnpm_discovery_warning_count owner_review_count "
+                 "brew_cask_action_review_count machine_app_action_count brew_deprecated_count "
+                 "brew_disabled_count brew_deferred_running_count").split()
+        return "".join(f"{name}=0\n" for name in zeros) + text
+
+    def run_block(self, owner, status, interactive, summary=False):
         log = self.root / "helper.log"
         self.script(self.bin / "groundwork-claude-owner",
                     f'printf "%s stdin-tty=%s\\n" "$*" "$([[ -t 0 ]] && echo 1 || echo 0)" >>{log}\n'
@@ -599,7 +683,8 @@ class UpdateRunSectionTests(Sandbox):
         script = ("set -euo pipefail\n"
                   f"groundwork_interactive_tty_available={1 if interactive else 0}\n"
                   + ("exec 7<&0\n" if interactive else "")
-                  + block + 'echo "warning=$claude_handover_warning"\n')
+                  + block + 'echo "warning=$claude_handover_warning"\n'
+                  + (self.summary() if summary else ""))
         leader, follower = pty.openpty()
         try:
             result = subprocess.run(["/bin/bash", "-c", script], env=self.env, stdin=follower,
@@ -610,6 +695,16 @@ class UpdateRunSectionTests(Sandbox):
         calls = log.read_text().splitlines() if log.exists() else []
         log.unlink(missing_ok=True)
         return result, calls
+
+    def test_undone_handover_reaches_the_warning_summary(self):
+        result, _ = self.run_block("homebrew", 76, interactive=False, summary=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("\nWarning\n  Claude Code             handover undone · the login shell did not "
+                      "resolve Homebrew's claude; check shell overrides\n", result.stdout)
+        self.assertIn("\nResult\n  SUCCESS · 1 WARNING(S)\n", result.stdout)
+        result, _ = self.run_block("homebrew", 75, interactive=False, summary=True)
+        self.assertNotIn("Warning", result.stdout)
+        self.assertIn("\nResult\n  SUCCESS\n", result.stdout)
 
     def test_owner_and_terminal_reach_the_helper(self):
         result, calls = self.run_block(None, 0, interactive=True)

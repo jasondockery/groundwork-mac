@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Preview or explicitly change the known Claude native/Homebrew ownership."""
+import contextlib
 import os
 from pathlib import Path
 import re
@@ -291,10 +292,15 @@ def put_back(native, saved, snapshot):
     try:
         unchanged(saved, snapshot)
         saved.unlink()
-        saved.parent.rmdir()
-        print(f"Native link put back: {native}. The backup {saved.parent} is no longer needed and was removed.")
     except (OSError, RuntimeError):
         print(f"Native link put back: {native}. The backup {saved.parent} was kept.")
+        return True
+    try:
+        saved.parent.rmdir()
+    except OSError:
+        print(f"Native link put back: {native}. Its backup copy was removed; inspect what else is in {saved.parent}.")
+        return True
+    print(f"Native link put back: {native}. The backup {saved.parent} is no longer needed and was removed.")
     return True
 
 
@@ -315,7 +321,9 @@ def hand_over(native, snapshot, managed_real, backups, ready=lambda: None,
         os.rename(native, saved)
     except BaseException:
         if not os.path.lexists(saved):
-            backup.rmdir()
+            # Best effort: a failed cleanup must not replace the original error.
+            with contextlib.suppress(OSError):
+                backup.rmdir()
         raise
     try:
         # A different entry moved into the backup is preserved, never relinked.
@@ -377,11 +385,14 @@ def auto(owner, home, native, versions, backups):
     attempt = f"native {dotted(native_version)} homebrew {dotted(managed_version)}\n"
     try:
         repeated = failed.is_file() and failed.read_text(encoding="utf-8") == attempt
-    except OSError:
-        repeated = True
+    except (OSError, ValueError):
+        # Unreadable or odd content is not a recorded failure: retry, with every
+        # guard still in force, and a new failure rewrites the file.
+        repeated = False
     if repeated:
         print(f"Claude Code: automatic handover paused; the login shell did not select Homebrew's claude "
-              f"for these versions ({failed}). It retries when either version changes.")
+              f"for native {dotted(native_version)} and Homebrew {dotted(managed_version)} ({failed}). "
+              "It retries when either version changes; groundwork-claude-owner homebrew --yes clears the pause.")
         return SKIPPED
     if not os.isatty(0):
         return skip("no interactive terminal; run groundwork-claude-owner homebrew --yes")
