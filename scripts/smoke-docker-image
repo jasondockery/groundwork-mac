@@ -8,4 +8,11 @@ for tool in codex claude grok opencode; do
 done
 tailscale version
 
+# The T3 hook skips its install, rather than failing the build, when the
+# GitHub API rate limit blocks its release lookup.
+if ! command -v t3 >/dev/null; then
+  echo "smoke-docker-image: t3 is missing from the image. Check the docker build log for 'skipping the T3 Code install because the GitHub API rate limit was reached'; rebuild with GH_TOKEN or GITHUB_TOKEN set so the lookup is authenticated." >&2
+  exit 1
+fi
+
 exec zsh -ic 'rg --version && nvim --version && tmux -V && herdr --version && t3 --version && mise --version && uv --version && zoxide --version && atuin --version && starship --version && lazygit --version && delta --version && eza --version && sesh --version && cd /opt/groundwork && scripts/test-developer-tool-visibility --require-runtime-tools --source-less-runtime-smoke && echo OK'
