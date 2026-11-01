@@ -189,6 +189,9 @@ class HandoverTests(unittest.TestCase):
         (zdot / '.zprofile').write_text('export PATH=' + shlex.quote(self.env['PATH']) + '\n')
         self.env['ZDOTDIR'] = str(zdot)
         self.env['SHELL'] = shutil.which('zsh')
+        # Outside HOME so file snapshots stay exact; native and rollback write here.
+        self.env['XDG_STATE_HOME'] = str(self.root / 'state')
+        self.decline = self.root / 'state/groundwork/claude-handover-declined'
         self.helper = REPO / 'home/dot_local/bin/executable_groundwork-claude-owner'
 
     def run_owner(self, *args):
@@ -219,9 +222,11 @@ class HandoverTests(unittest.TestCase):
         self.assertEqual(self.run_owner('homebrew', '--yes').returncode, 0)
         self.assertEqual(self.run_owner('rollback', str(backup)).returncode, 0)
         self.assertFalse(native.is_symlink())
+        self.assertFalse(self.decline.exists())
         restored = self.run_owner('rollback', str(backup), '--yes')
         self.assertEqual(restored.returncode, 0, restored.stderr)
         self.assertEqual(native.resolve(), target)
+        self.assertTrue(self.decline.is_file())
         occupied = self.run_owner('rollback', str(backup), '--yes')
         self.assertNotEqual(occupied.returncode, 0)
         self.assertIn('occupied', occupied.stderr)
@@ -251,10 +256,12 @@ class HandoverTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('older than', result.stderr)
         self.assertEqual(before, self.snapshot())
+        self.assertFalse(self.decline.exists())
         result = self.run_owner('native')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('claude update', result.stdout)
         self.assertEqual(before, self.snapshot())
+        self.assertTrue(self.decline.is_file())
 
     def test_manual_and_failed_probes_preserve_every_file(self):
         self.install_claude('2.4.2')

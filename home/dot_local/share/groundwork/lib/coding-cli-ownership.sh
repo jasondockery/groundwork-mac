@@ -134,3 +134,126 @@ gw_claude_dual_install_report() {
   printf 'Point the T3 Code Claude provider Binary path at the chosen owner: %s\n' "$chosen"
   return 0
 }
+
+# The first executable named $1 in the colon-separated directory list $2.
+gw_cli_path_lookup() {
+  local name="$1" directory directories=()
+  IFS=: read -r -a directories <<<"$2"
+  for directory in ${directories[@]+"${directories[@]}"}; do
+    [[ "$directory" == /* ]] || continue
+    if [[ -f "$directory/$name" && -x "$directory/$name" ]]; then
+      printf '%s\n' "$directory/$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Report only: which claude T3 Code would start, and whether a Claude provider
+# Binary path names a missing file. T3's settings are never written.
+#
+# What this relies on, from T3 Code's documentation and source (2026-11):
+# - The server's settings live in settings.json in its userdata directory
+#   (documented), under ${T3CODE_HOME:-~/.t3} (the documented default). With
+#   no file, every setting is at its default.
+# - A Claude instance is providerInstances.<id> with driver "claudeAgent"; its
+#   Binary path is config.binaryPath, default "claude", and ~ expands to HOME.
+#   That shape comes from source, not a documented format, and has changed
+#   before, so an unrecognized file is reported as unknown, never guessed at.
+# - The desktop app reads PATH from "$SHELL -ilc" and puts it ahead of its
+#   own inherited PATH, so a bare name resolves on that login-shell PATH.
+# jq extracts only each Claude instance id and its binaryPath; no other field
+# (environment variables, secrets) is read or printed.
+gw_t3_claude_report() {
+  local owner="${1:-homebrew}" native="$HOME/.local/bin/claude" t3_home settings
+  local jq_bin entries login_shell output login_path="" brew_bin prefix
+  local homebrew_claude="/opt/homebrew/bin/claude" id setting where resolved real
+  case "$owner" in homebrew | native) ;; *) owner=homebrew ;; esac
+  t3_home="${T3CODE_HOME:-}"
+  [[ "$t3_home" == /* ]] || t3_home="$HOME/.t3"
+  if [[ ! -d "$t3_home" ]]; then
+    echo "T3 Code: $t3_home not found; Claude resolution not checked."
+    return 0
+  fi
+  settings="$t3_home/userdata/settings.json"
+  brew_bin="${GROUNDWORK_BREW_BIN:-}"
+  [[ -n "$brew_bin" ]] || brew_bin="$(command -v brew || true)"
+  if [[ -n "$brew_bin" ]] && prefix="$(gw_cli_bounded "$brew_bin" --prefix 2>/dev/null)" \
+    && [[ "$prefix" == /* && "$prefix" != *$'\n'* ]]; then
+    homebrew_claude="$prefix/bin/claude"
+  fi
+  entries=""
+  if [[ -e "$settings" ]]; then
+    jq_bin="$(command -v jq || true)"
+    if [[ -z "$jq_bin" ]]; then
+      echo "T3 Code warning: jq is unavailable, so the Claude Binary path in $settings was not read."
+      return 0
+    fi
+    # One TSV row per Claude instance: its id, then binaryPath ("" when unset).
+    # shellcheck disable=SC2016 # $config is jq syntax, not a shell expansion.
+    if ! entries="$("$jq_bin" -r '
+        if type == "object" and ((.providerInstances // {}) | type) == "object" then
+          (.providerInstances // {}) | to_entries[]
+          | select((.value | type) == "object" and .value.driver == "claudeAgent")
+          | (.value.config // {}) as $config
+          | if ($config | type) == "object" and (($config.binaryPath // "") | type) == "string"
+            then [.key, ($config.binaryPath // "")] | @tsv
+            else error("unrecognized") end
+        else error("unrecognized") end' "$settings" 2>/dev/null)"; then
+      echo "T3 Code warning: $settings is not in a format Groundwork recognizes, so the Claude Binary path was not checked."
+      echo "Check it in T3 Code: Settings > Providers > Claude > Binary path."
+      return 0
+    fi
+  fi
+  # No Claude entry means the built-in instance with every default.
+  [[ -n "$entries" ]] || entries="claudeAgent"$'\t'
+  login_shell="${SHELL:-}"
+  [[ "$login_shell" == /* && -x "$login_shell" ]] || login_shell="$(command -v zsh || true)"
+  # shellcheck disable=SC2016 # The login shell expands $PATH, not this one.
+  if [[ -n "$login_shell" ]] \
+    && output="$(gw_cli_bounded "$login_shell" -ilc 'printf "\nGROUNDWORK_T3_PATH=%s\n" "$PATH"' </dev/null 2>/dev/null)"; then
+    login_path="$(printf '%s\n' "$output" | sed -n 's/^GROUNDWORK_T3_PATH=//p' | tail -n 1)"
+  fi
+  while IFS=$'\t' read -r id setting; do
+    if [[ ! "$id" =~ ^[A-Za-z0-9_.-]+$ || "$setting" == *\\* ]]; then
+      echo "T3 Code warning: a Claude instance in $settings has an id or Binary path Groundwork cannot read safely; check Settings > Providers."
+      continue
+    fi
+    where="providerInstances.$id.config.binaryPath in $settings"
+    # T3 Code expands a leading ~ in Binary path; match it on this literal value.
+    # shellcheck disable=SC2088
+    case "$setting" in "") setting=claude ;; "~") setting="$HOME" ;; "~/"*) setting="$HOME/${setting#\~/}" ;; esac
+    case "$setting" in
+      /*)
+        if [[ ! -f "$setting" || ! -x "$setting" ]]; then
+          printf 'T3 Code warning: Claude instance %s has Binary path %s, which no longer exists or is not executable.\n' "$id" "$setting"
+          printf 'In T3 Code, open Settings > Providers > %s and clear Binary path, or set it to %s (%s).\n' "$id" "$homebrew_claude" "$where"
+          continue
+        fi
+        resolved="$setting"
+        ;;
+      */*)
+        printf 'T3 Code warning: Claude instance %s has a relative Binary path, so Groundwork cannot tell what it runs (%s).\n' "$id" "$where"
+        continue
+        ;;
+      *)
+        if [[ -z "$login_path" ]]; then
+          printf 'T3 Code warning: Claude instance %s runs %s from PATH, but the login-shell PATH T3 Code reads could not be observed.\n' "$id" "$setting"
+          continue
+        fi
+        if ! resolved="$(gw_cli_path_lookup "$setting" "$login_path")"; then
+          printf 'T3 Code warning: Claude instance %s cannot resolve %s on the login-shell PATH T3 Code uses.\n' "$id" "$setting"
+          printf 'Install Claude Code for the chosen owner, or set Binary path to %s (%s).\n' "$homebrew_claude" "$where"
+          continue
+        fi
+        ;;
+    esac
+    real="$(gw_cli_resolve "$resolved" || true)"
+    printf 'T3 Code: Claude instance %s would run %s%s.\n' "$id" "$resolved" "${real:+ (resolves to $real)}"
+    if [[ "$owner" == homebrew && ! -e "$native" && ! -L "$native" ]] \
+      && [[ "$resolved" == "$native" || "$real" == "$HOME/.local/share/claude/versions/"* ]]; then
+      printf 'T3 Code warning: that is the native copy, after the handover to Homebrew. Clear Binary path or set it to %s (%s).\n' "$homebrew_claude" "$where"
+    fi
+  done <<<"$entries"
+  return 0
+}

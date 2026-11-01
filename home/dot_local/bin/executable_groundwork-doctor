@@ -12,7 +12,8 @@ Options:
   --shell       run only the shell runtime section
   --runtimes    run only the runtime release-age section
   --node-toolchain  run only the Node/pnpm ownership section
-  --ai-tools    run only the Claude Code command-ownership section
+  --ai-tools    run only the Claude Code command-ownership and T3 Code
+                resolution section
   --commit-identity
                 run only the commit identity guard section
   --browser     run only the managed-browser section
@@ -42,6 +43,10 @@ Sections (all run by default):
                 without failing, when both the native ~/.local/bin/claude and
                 the Homebrew claude-code@latest cask are installed, naming the
                 claude_code_owner choice and how to remove the other copy.
+                Also reports which claude T3 Code would start, and warns when
+                that is the native copy after a handover, when nothing
+                resolves, or when its Claude Binary path names a missing file.
+                T3 Code's settings are read, never changed.
   Commit identity
                 the groundwork-core commit identity guard: whether the user-level
                 hooks are installed and point at the pinned guard, whether a
@@ -1374,8 +1379,11 @@ ai_tools_section() {
   fi
   # shellcheck source=/dev/null
   . "$ownership_lib"
+  local owner
+  owner="$(gw_doctor_selected_claude_code_owner)"
   gw_claude_ownership_report
-  gw_claude_dual_install_report "$(gw_doctor_selected_claude_code_owner)"
+  gw_claude_dual_install_report "$owner"
+  gw_t3_claude_report "$owner"
 }
 
 # The pinned core's owner remote pattern list: next to the installed guard's

@@ -16,14 +16,51 @@ HELP = """Usage:
   groundwork-claude-owner homebrew [--yes]
   groundwork-claude-owner native
   groundwork-claude-owner rollback BACKUP_DIRECTORY [--yes]
+  groundwork-claude-owner auto OWNER
 
 Preview is the default. --yes explicitly authorizes moving the verified native
 symlink into a private backup, or restoring it into an unoccupied command path.
 Native version files, settings, credentials, and PATH are preserved.
 Probes have a cumulative 45-second deadline. Interrupting preserves the backup;
 use the printed rollback command after inspecting any partial result.
+
+native, and a confirmed rollback, record a decline in
+$XDG_STATE_HOME/groundwork/claude-handover-declined (default ~/.local/state).
+It keeps update-all's automatic handover off until homebrew --yes selects
+Homebrew explicitly, which clears it.
+
+auto is the step update-all runs with the saved claude_code_owner. It hands
+over only when OWNER is homebrew, there is no decline, stdin is a terminal,
+the native command is a verified symlink, Homebrew's version is the same or
+newer, no Claude Code process is running, and the deadline leaves time to
+verify. Otherwise it changes nothing, prints why, and exits 75.
 """
 DEADLINE = time.monotonic() + 45
+# The automatic handover starts only with this much of the deadline left, so
+# the fresh login-shell verification is not cut short after the move.
+AUTO_RESERVE = 20
+SKIPPED = 75
+# A Claude Code process is any process, of any user, that matches either rule:
+#   1. its process name is exactly "claude" (pgrep -x). That is the Homebrew
+#      cask and a native install started through ~/.local/bin/claude. The match
+#      is exact and case-sensitive, so Claude.app ("Claude"), "Claude Helper",
+#      claude-squad and other names that only contain "claude" never match.
+#   2. its first argument (pgrep -f, anchored at the start of the command line)
+#      is "claude" or a path ending in "/claude"; a native build under
+#      .../.local/share/claude/versions/X.Y.Z, because a process started
+#      through a symlink can be named after its target; or node or bun running
+#      a "claude" script or the npm package's cli.js. Only the first argument
+#      counts, so an editor, pager or grep given a file named claude does not.
+# Commands with a space in their path can only match rule 1.
+CLAUDE_COMMAND_LINE = (
+    r"^(([^ ]*/)?claude"
+    r"|[^ ]*/\.local/share/claude/versions/[0-9]+\.[0-9]+\.[0-9]+"
+    r"|([^ ]*/)?(node|bun) ([^ ]*/)?(claude|@anthropic-ai/claude-code/cli\.m?js))( |$)"
+)
+
+
+class HandoverIncomplete(RuntimeError):
+    """The native link already moved; the printed rollback line applies."""
 
 
 def fail(message):
@@ -101,6 +138,168 @@ def private_directory(path):
         fail(f"Expected a private directory owned by you: {path}")
 
 
+def decline_marker(home):
+    state = os.environ.get("XDG_STATE_HOME", "")
+    root = Path(state) if state.startswith("/") else home / ".local/state"
+    return root / "groundwork/claude-handover-declined"
+
+
+def create_parents(directory):
+    # Validate the full existing parent chain before creating any state.
+    ancestor = directory
+    while not ancestor.exists() and not ancestor.is_symlink():
+        ancestor = ancestor.parent
+    plain_parents(ancestor / "placeholder")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    plain_parents(directory / "placeholder")
+
+
+def record_decline(marker, reason):
+    create_parents(marker.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix=".claude-handover-", dir=marker.parent)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(f"{reason} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+    os.replace(temporary, marker)
+    print(f"Recorded the decline in {marker}; update-all will not hand Claude Code to Homebrew.")
+    print("To select Homebrew later, run groundwork-claude-owner homebrew --yes; it clears the decline.")
+
+
+def clear_decline(marker):
+    if marker.is_symlink() or marker.is_file():
+        marker.unlink()
+        print(f"Cleared the earlier decline: {marker}")
+
+
+def pgrep_arguments(platform, pgrep):
+    # macOS pgrep leaves out its own ancestors unless -a is given, which would
+    # hide the Claude Code session that started update-all. procps pgrep never
+    # does, and its -a means something else (print the command line).
+    ancestors = ["-a"] if platform == "darwin" else []
+    return ([pgrep, *ancestors, "-x", "claude"],
+            [pgrep, *ancestors, "-f", CLAUDE_COMMAND_LINE])
+
+
+def claude_processes(platform=sys.platform):
+    """Return running PIDs, or raise when the answer is not certain."""
+    pgrep = shutil.which("pgrep")
+    if not pgrep:
+        fail("pgrep is unavailable, so a running Claude Code cannot be ruled out")
+    pids = set()
+    for args in pgrep_arguments(platform, pgrep):
+        remaining = DEADLINE - time.monotonic()
+        if remaining <= 0:
+            fail("the deadline expired while checking for Claude Code processes")
+        try:
+            result = subprocess.run(args, capture_output=True, text=True,
+                                    timeout=min(5, remaining))
+        except (OSError, subprocess.SubprocessError) as error:
+            fail(f"the process check failed ({error})")
+        lines = result.stdout.split()
+        # Status 1 with output, or 0 with anything but PIDs, is not an answer.
+        if result.returncode == 1 and not lines:
+            continue
+        if result.returncode == 0 and lines and all(line.isdigit() for line in lines):
+            pids.update(lines)
+            continue
+        fail(f"the process check was ambiguous (pgrep exit {result.returncode})")
+    return sorted(pids, key=int)
+
+
+def homebrew_copy():
+    brew = shutil.which("brew")
+    if not brew:
+        fail("Homebrew is unavailable. Keep the current owner and inspect PATH.")
+    prefix = Path(probe([brew, "--prefix"]))
+    if not prefix.is_absolute():
+        fail("Homebrew returned an invalid prefix.")
+    managed = prefix / "bin/claude"
+    managed_real = resolve(managed)
+    if not managed_real.is_relative_to(prefix / "Caskroom/claude-code@latest"):
+        fail(f"Unrecognized Homebrew executable ownership: {managed_real}")
+    return managed, managed_real
+
+
+def hand_over(native, snapshot, managed_real, backups, ready=lambda: None):
+    create_parents(backups)
+    private_directory(backups)
+    ready()
+    backup = Path(tempfile.mkdtemp(prefix="native-", dir=backups))
+    saved = backup / "claude"
+    unchanged(native, snapshot)
+    print(f"Backup directory: {backup}", flush=True)
+    print(f"Rollback: groundwork-claude-owner rollback {shlex.quote(str(backup))} --yes", flush=True)
+    unchanged(native, snapshot)
+    # Rename preserves the actual entry even if an updater replaced it after
+    # the last check. Never unlink a command selected only by its pathname.
+    os.rename(native, saved)
+    try:
+        unchanged(saved, snapshot)
+        fresh_command(managed_real)
+    except (OSError, RuntimeError) as error:
+        raise HandoverIncomplete(str(error)) from error
+
+
+def auto(owner, home, native, versions, backups):
+    if owner != "homebrew" or not os.path.lexists(native):
+        return 0
+
+    def skip(reason):
+        print(f"Claude Code warning: automatic handover to Homebrew skipped: {reason}. Nothing was changed.")
+        return SKIPPED
+
+    try:
+        managed, managed_real = homebrew_copy()
+    except (OSError, RuntimeError):
+        return 0  # No recognized Homebrew copy, so there is nothing to hand over.
+    effective = shutil.which("claude")
+    try:
+        if effective and resolve(Path(effective)) == managed_real:
+            return 0
+    except (OSError, RuntimeError):
+        pass
+    marker = decline_marker(home)
+    if os.path.lexists(marker):
+        print(f"Claude Code: automatic handover is off; you kept the native copy ({marker}).")
+        print("To select Homebrew, run groundwork-claude-owner homebrew --yes.")
+        return 0
+    try:
+        snapshot = native_link(native, versions)
+    except (OSError, RuntimeError) as error:
+        return skip(f"{native} is not a verified native symlink ({error})")
+    if effective != str(native):
+        return skip(f"PATH selects {effective or 'no claude'}, not {native}")
+    try:
+        native_version = version(snapshot[2])
+        managed_version = version(managed)
+    except (OSError, RuntimeError) as error:
+        return skip(str(error))
+    if managed_version < native_version:
+        return skip(f"Homebrew {'.'.join(map(str, managed_version))} is older than native "
+                    f"{'.'.join(map(str, native_version))}")
+    if not os.isatty(0):
+        return skip("no interactive terminal; run groundwork-claude-owner homebrew --yes")
+
+    def ready():
+        if DEADLINE - time.monotonic() < AUTO_RESERVE:
+            fail("the deadline does not leave time to verify a handover")
+        running = claude_processes()
+        if running:
+            fail(f"Claude Code is running (PID {', '.join(running)}); quit it, then run update-all again")
+
+    try:
+        ready()
+        print(f"Claude Code: handing {native} over to Homebrew {managed} automatically "
+              f"(claude_code_owner = \"homebrew\").", flush=True)
+        hand_over(native, snapshot, managed_real, backups, ready)
+    except HandoverIncomplete:
+        raise
+    except (OSError, RuntimeError) as error:
+        return skip(str(error))
+    print("Homebrew ownership verified. To keep the native copy instead, run the Rollback line above;")
+    print("it also turns the automatic handover off.")
+    return 0
+
+
 def fresh_command(expected):
     shell = shutil.which("zsh")
     if not shell:
@@ -121,7 +320,8 @@ def main(args):
     valid = (args in (["status"], ["native"], ["homebrew"], ["homebrew", "--yes"])
              or (len(args) in (2, 3) and args[0] == "rollback"
                  and not args[1].startswith("-")
-                 and (len(args) == 2 or args[2] == "--yes")))
+                 and (len(args) == 2 or args[2] == "--yes"))
+             or (len(args) == 2 and args[0] == "auto" and args[1] in ("homebrew", "native")))
     if not valid:
         print(HELP, file=sys.stderr)
         return 64
@@ -132,10 +332,14 @@ def main(args):
     versions = home / ".local/share/claude/versions"
     backups = home / ".local/state/groundwork/claude-handover"
     confirmed = args[-1] == "--yes"
+    marker = decline_marker(home)
+    if args[0] == "auto":
+        return auto(args[1], home, native, versions, backups)
     if args[0] == "native":
         native_link(native, versions)
         print(f"Native ownership preserved: {native} (version {version(native)}).")
         print("Update through the native owner with: claude update")
+        record_decline(marker, "native")
         return 0
     if args[0] == "rollback":
         backup = Path(args[1])
@@ -156,6 +360,7 @@ def main(args):
         # Exclusive link creation cannot overwrite a concurrently created path.
         os.symlink(snapshot[1], native)
         print("Native link restored. The private backup remains available.")
+        record_decline(marker, "rollback")
         fresh_command(snapshot[2])
         return 0
     effective = shutil.which("claude")
@@ -165,20 +370,15 @@ def main(args):
     print(f"Resolved executable: {effective_real or 'unavailable'}")
     effective_version = version(effective_real) if effective_real else None
     print(f"Effective version: {effective_version or 'unavailable'}")
-    brew = shutil.which("brew")
-    if not brew:
-        fail("Homebrew is unavailable. Keep the current owner and inspect PATH.")
-    prefix = Path(probe([brew, "--prefix"]))
-    if not prefix.is_absolute():
-        fail("Homebrew returned an invalid prefix.")
-    managed = prefix / "bin/claude"
-    managed_real = resolve(managed)
-    if not managed_real.is_relative_to(prefix / "Caskroom/claude-code@latest"):
-        fail(f"Unrecognized Homebrew executable ownership: {managed_real}")
+    managed, managed_real = homebrew_copy()
     managed_version = version(managed)
     print(f"Homebrew command: {managed} (version {managed_version})")
+    if os.path.lexists(marker):
+        print(f"Automatic handover: off; native was kept ({marker}).")
     if effective_real == managed_real:
         print("Homebrew already owns the effective command; no change needed.")
+        if args[0] == "homebrew" and confirmed:
+            clear_decline(marker)
         return 0
     print(f"Proposed ownership change: move only {native} to a private backup.")
     print("To keep native ownership, run groundwork-claude-owner native.")
@@ -195,24 +395,8 @@ def main(args):
     if not confirmed:
         print("Preview only. Repeat with --yes to select Homebrew explicitly.")
         return 0
-    # Validate the full existing parent chain before creating any backup state.
-    ancestor = backups
-    while not ancestor.exists() and not ancestor.is_symlink():
-        ancestor = ancestor.parent
-    plain_parents(ancestor / "placeholder")
-    backups.mkdir(mode=0o700, parents=True, exist_ok=True)
-    private_directory(backups)
-    backup = Path(tempfile.mkdtemp(prefix="native-", dir=backups))
-    saved = backup / "claude"
-    unchanged(native, snapshot)
-    print(f"Backup directory: {backup}", flush=True)
-    print(f"Rollback: groundwork-claude-owner rollback {shlex.quote(str(backup))} --yes", flush=True)
-    unchanged(native, snapshot)
-    # Rename preserves the actual entry even if an updater replaced it after
-    # the last check. Never unlink a command selected only by its pathname.
-    os.rename(native, saved)
-    unchanged(saved, snapshot)
-    fresh_command(managed_real)
+    hand_over(native, snapshot, managed_real, backups)
+    clear_decline(marker)
     print("Homebrew ownership verified. Update through update-all or Homebrew.")
     return 0
 
