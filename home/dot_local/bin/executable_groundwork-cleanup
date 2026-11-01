@@ -546,37 +546,40 @@ for name in $names; do
 done'
 
 # Read the context stream. The context file receives the paths line, the share
-# verdict, an explicit npm prefix, and absolute pnpmfile targets; stdout
+# verdict and the effective npm prefix; stdout
 # receives hash material only: npm and pnpm configuration variables (including
 # credentials, so they are hashed, not stored) and every variable whose value
 # differs from this process's, which is what a per-directory mise [env] adds.
 # Run this under offline_probe_env so the switches discovery itself injects
 # compare equal.
 # shellcheck disable=SC2016 # An awk program, not shell.
-context_stream_awk='BEGIN { RS = "\036"; share = 1; prefix = "" }
+context_stream_awk='BEGIN { RS = "\036"; share = 1; environment_prefix = ""; config_prefix = "" }
 NR == 1 { print > context; next }
 {
   eq = index($0, "=")
   if (eq < 2) { share = 0; next }
   name = substr($0, 1, eq - 1)
   value = substr($0, eq + 1)
+  # One line per entry for sort; the separator byte keeps embedded newlines distinct.
+  hashed = value
+  gsub(/\n/, "\035", hashed)
   seen[name] = 1
   lower = tolower(name)
   if (lower ~ /^(npm|pnpm)_config_/ || lower == "prefix") {
-    print "config " name "=" value
+    print "config " name "=" hashed
     setting = lower
     sub(/^(npm|pnpm)_config_/, "", setting)
     gsub(/-/, "_", setting)
-    if (setting ~ /^(userconfig|globalconfig|global_dir)$/) share = 0
+    if (setting ~ /^(userconfig|globalconfig|global_dir|workspace_dir|pnpmfile|global_pnpmfile)$/) share = 0
     if (setting == "store_dir" && (value !~ /^\// || value ~ /\$\{/)) share = 0
-    if (setting ~ /^(global_)?pnpmfile$/) {
-      if (value !~ /^\// || value ~ /\$\{/ || value ~ /\n/) share = 0
-      else print "target " value > context
+    if (lower == "prefix") environment_prefix = value
+    else if (setting == "prefix") {
+      if (config_prefix != "" && config_prefix != value) share = 0
+      config_prefix = value
     }
-    if (setting == "prefix" && lower != "prefix") prefix = value
-    else if (lower == "prefix" && prefix == "") prefix = value
   }
-  if (name !~ /^__MISE_/ && (!(name in ENVIRON) || ENVIRON[name] != value)) print "directory " name "=" value
+  if (lower == "destdir") share = 0
+  if (name !~ /^__MISE_/ && (!(name in ENVIRON) || ENVIRON[name] != value)) print "directory " name "=" hashed
 }
 END {
   for (name in ENVIRON) {
@@ -584,6 +587,8 @@ END {
     if (name == "PWD" || name == "OLDPWD" || name == "SHLVL" || name == "_" || name ~ /^AWK/) continue
     print "unset " name
   }
+  if (environment_prefix != "" && config_prefix != "" && environment_prefix != config_prefix) share = 0
+  prefix = config_prefix != "" ? config_prefix : environment_prefix
   if (prefix ~ /\n/) share = 0
   print "share " share > context
   print "prefix " prefix > context
@@ -610,49 +615,36 @@ path_device() {
 }
 
 # One store-selection input: absent, or a readable regular file whose store-dir
-# and pnpmfile settings are all literal absolute paths. A relative, computed,
-# or unrecognized one resolves per directory, so it makes the record
-# ineligible to share. A configured pnpmfile target is hashed too, and must
-# exist. Lockfiles configure nothing, so they are only hashed. A manifest is
-# not hashed, because branches edit scripts and dependencies without changing
-# store selection; any store-dir or pnpmfile mention in it refuses sharing.
+# settings are all literal absolute paths. A record never shares when its store
+# could depend on something not fingerprinted here: a relative or computed
+# store-dir, any configured pnpmfile or global-pnpmfile (pnpm runs their
+# updateConfig hooks even for `store path`), configDependencies (their plugin
+# pnpmfiles load the same way), or a userconfig/globalconfig redirect.
+# Lockfiles configure nothing, so they are only hashed. A manifest is not
+# hashed, because branches edit scripts and dependencies without changing
+# store selection; any such setting mentioned in it refuses sharing.
 # The label is location-independent for the record's own files and the
 # absolute path for a shared ancestor's.
 fingerprint_input() {
-  local path="$1" kind="$2" label="$3" digest targets="" target
-  if [[ "$kind" == target ]]; then
-    [[ -f "$path" && -r "$path" ]] || return 1
-  fi
+  local path="$1" kind="$2" label="$3" digest
   [[ -e "$path" || -L "$path" ]] || return 0
   [[ -f "$path" && -r "$path" ]] || return 1
   if [[ "$kind" == manifest ]]; then
-    if grep -qiE 'store[-_]?dir|pnpmfile' "$path"; then
+    if grep -qiE 'store[-_]?dir|pnpmfile|configdependencies|userconfig|globalconfig' "$path"; then
       return 1
     fi
     return 0
   fi
   if [[ "$kind" == config ]]; then
-    targets="$(awk '
+    awk '
       { line = tolower($0) }
-      line ~ /store[-_]?dir|pnpmfile/ {
-        if (line ~ /\$\{/) exit 1
-        if (match(line, /^[[:space:]]*["\047]?(store[-_]?dir|(global[-_]?)?pnpmfile)["\047]?[[:space:]]*[=:][[:space:]]*["\047]?/)) {
-          value = substr($0, RSTART + RLENGTH)
-          sub(/["\047]?[[:space:]]*$/, "", value)
-          if (value !~ /^\//) exit 1
-          if (line ~ /pnpmfile/) print value
-          next
-        }
-        exit 1
-      }' "$path")" || return 1
+      line ~ /pnpmfile|configdependencies|userconfig|globalconfig/ { exit 1 }
+      line ~ /store[-_]?dir/ {
+        if (line !~ /^[[:space:]]*["\047]?store[-_]?dir["\047]?[[:space:]]*[=:][[:space:]]*["\047]?\// || line ~ /\$\{/) exit 1
+      }' "$path" || return 1
   fi
   digest="$(sha256_stream <"$path")" || return 1
   printf '%s %s %s\n' "$kind" "$label" "$digest"
-  if [[ -n "$targets" ]]; then
-    while IFS= read -r target; do
-      fingerprint_input "$target" target "$target" || return 1
-    done <<<"$targets"
-  fi
 }
 
 # Hash every file under a pnpm global configuration directory, following links;
@@ -686,12 +678,12 @@ resolve_links() {
 
 # Everything pnpm consults when it chooses a store, plus the exact pin (in the
 # artifact key) and every lockfile from the record up to /: the user and npm
-# global config files, every file in the pnpm config directories, configured
-# pnpmfile targets, and the hashed environment. Records with the same key
+# global config files, every file in the pnpm config directories, the repo's
+# writability, and the hashed environment. Records with the same key
 # resolve the same store and version, so one observation serves all.
 store_dedupe_key_at() {
   local repo="$1" artifact_key="$2" context_home="$3" config_home="$4" node="$5" context="$6" material="$7"
-  local environment_digest directory name device label line prefix resolved node_prefix
+  local environment_digest directory name device label prefix resolved node_prefix
   device="$(path_device "$repo")" || return 1
   [[ "$device" =~ ^[0-9]+$ ]] || return 1
   environment_digest="$(sed -n 's/^environment //p' "$context")"
@@ -704,11 +696,21 @@ store_dedupe_key_at() {
   node_prefix="$(canonical_dir "$(dirname "$resolved")")" || return 1
   node_prefix="$(dirname "$node_prefix")"
   {
-    printf 'groundwork pnpm store context v2\n%s\ndevice %s\nenvironment %s\n' \
+    printf 'groundwork pnpm store context v3\n%s\ndevice %s\nenvironment %s\n' \
       "$artifact_key" "$device" "$environment_digest"
+    if [[ -w "$repo" ]]; then
+      printf 'writable 1\n'
+    else
+      printf 'writable 0\n'
+    fi
     directory="$repo"
     while :; do
-      for name in .npmrc pnpm-workspace.yaml package.json .pnpmfile.cjs .pnpmfile.mjs pnpm-lock.yaml; do
+      # pnpm loads a default pnpmfile and installed config-dependency plugin
+      # pnpmfiles from the lockfile or workspace directory; either refuses.
+      [[ ! -e "$directory/.pnpmfile.cjs" && ! -L "$directory/.pnpmfile.cjs" ]] || return 1
+      [[ ! -e "$directory/.pnpmfile.mjs" && ! -L "$directory/.pnpmfile.mjs" ]] || return 1
+      [[ ! -e "$directory/node_modules/.pnpm-config" && ! -L "$directory/node_modules/.pnpm-config" ]] || return 1
+      for name in .npmrc pnpm-workspace.yaml package.json pnpm-lock.yaml; do
         label="$directory/$name"
         [[ "$directory" != "$repo" ]] || label="record/$name"
         case "$name" in
@@ -729,11 +731,6 @@ store_dedupe_key_at() {
     done
     fingerprint_directory "$config_home/pnpm" || return 1
     fingerprint_directory "$context_home/Library/Preferences/pnpm" || return 1
-    while IFS= read -r line; do
-      case "$line" in
-        "target "*) fingerprint_input "${line#target }" target "${line#target }" || return 1 ;;
-      esac
-    done <"$context"
   } >"$material" || return 1
   sha256_stream <"$material"
 }
@@ -1365,14 +1362,14 @@ state_home="${XDG_STATE_HOME:-}"
 discovery_cache="$state_home/groundwork/pnpm-discovery-cache.tsv"
 discovery_cache_header="groundwork pnpm discovery cache v2"
 discovery_cache_ttl_days=7
+# Cadence ages are read once, here, and reused by the due decision after
+# discovery, so a day boundary crossed mid-run cannot make the two disagree.
+last_success_days="$(state_age_days "$pnpm_success")"
+last_attempt_days="$(state_age_days "$pnpm_attempt")"
 discovery_cache_read=1
-if [[ -f "$pending_dir/pnpm" || "$force" -eq 1 ]]; then
+if [[ -f "$pending_dir/pnpm" || "$force" -eq 1 ||
+  "$last_success_days" -lt 0 || "$last_success_days" -ge "$monthly_days" ]]; then
   discovery_cache_read=0
-elif [[ "$act" -eq 1 ]]; then
-  cache_success_days="$(state_age_days "$pnpm_success")"
-  if [[ "$cache_success_days" -lt 0 || "$cache_success_days" -ge "$monthly_days" ]]; then
-    discovery_cache_read=0
-  fi
 fi
 sha256_tool=""
 if command -v shasum >/dev/null 2>&1; then
@@ -1463,8 +1460,6 @@ measure_pnpm_candidates() {
   pnpm_sizes_measured=1
 }
 
-last_success_days="$(state_age_days "$pnpm_success")"
-last_attempt_days="$(state_age_days "$pnpm_attempt")"
 pnpm_due=0
 pnpm_due_reason=""
 if [[ "$pnpm_discovery_failed" -ne 0 ]]; then
@@ -1487,17 +1482,8 @@ elif [[ "$last_attempt_days" -lt 0 || "$last_attempt_days" -ge "$high_water_retr
   measure_pnpm_candidates
   if [[ "$pnpm_sizes_complete" -eq 1 &&
     "$pnpm_total" -ge $((high_water_gib * 1024 * 1024 * 1024)) ]]; then
-    if [[ "$selections_from_cache" -eq 1 ]]; then
-      # Pre-prune revalidation passes --store-dir, so it cannot notice that a
-      # cached selection now resolves elsewhere. Defer to a fresh discovery.
-      pnpm_due_reason="automatic stores exceed the ${high_water_gib} GiB high-water mark, but some selections came from the result cache; the prune is deferred to the next run, which probes every store context fresh"
-      if [[ "$act" -eq 1 ]]; then
-        rm -f -- "$discovery_cache"
-      fi
-    else
-      pnpm_due=1
-      pnpm_due_reason="automatic stores exceed the ${high_water_gib} GiB high-water mark"
-    fi
+    pnpm_due=1
+    pnpm_due_reason="automatic stores exceed the ${high_water_gib} GiB high-water mark"
   elif [[ "$pnpm_sizes_complete" -ne 1 ]]; then
     pnpm_due_reason="machine-wide success was ${last_success_days} days ago; high-water measurement was incomplete"
   else
@@ -1505,6 +1491,16 @@ elif [[ "$last_attempt_days" -lt 0 || "$last_attempt_days" -ge "$high_water_retr
   fi
 else
   pnpm_due_reason="machine-wide success was ${last_success_days} days ago"
+fi
+# Pre-prune revalidation passes --store-dir, so it cannot notice that a cached
+# selection now resolves elsewhere. Whatever made a prune due, never act on
+# cached selections: defer, drop the cache, and let the next run probe fresh.
+if [[ "$pnpm_due" -eq 1 && "$selections_from_cache" -eq 1 ]]; then
+  pnpm_due=0
+  pnpm_due_reason="$pnpm_due_reason, but some selections came from the result cache; the prune is deferred to the next run, which probes every store context fresh"
+  if [[ "$act" -eq 1 ]]; then
+    rm -f -- "$discovery_cache"
+  fi
 fi
 if [[ "$act" -eq 0 ||
   ("$pnpm_due" -eq 1 && -s "$store_candidates") ]] && [[ "$pnpm_sizes_measured" -eq 0 ]]; then

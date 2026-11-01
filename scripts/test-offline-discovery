@@ -38,7 +38,7 @@ class OfflineTests(unittest.TestCase):
         (config / 'repos.conf').write_text('trusted_pnpm_store_root = ' + str(self.stores) + '\n')
         (self.bin / 'jq').symlink_to(shutil.which('jq'))
         (self.bin / 'node').symlink_to('/usr/bin/true')
-        self.script(self.bin / 'groundwork-repos', 'cat "$REVIEW_RECORDS"')
+        self.script(self.bin / 'groundwork-repos', 'sleep "${REVIEW_REPOS_DELAY:-0}"; cat "$REVIEW_RECORDS"')
         self.script(self.bin / 'mise', 'exit 1')
         self.script(self.bin / 'brew', '''case "$1" in
 --cache) printf '%s\\n' "$HOME/cache" ;;
@@ -293,7 +293,7 @@ exec "$@"
         first = self.run_cleanup('--yes')
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         lines = self.cache().read_text().splitlines()
-        self.assertEqual(lines[0], 'groundwork pnpm discovery cache v2')
+        self.assertEqual(lines[0], 'groundwork pnpm discovery cache v2')  # row format, not key version
         self.assertEqual(len(lines), 4, lines)
         for line in lines[1:]:
             self.assertIn('\t' + str(self.stores / 'v40') + '\t' + FIXTURE_PIN + '\t', line)
@@ -473,21 +473,122 @@ exit 1""")
                 self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
                 self.env.pop(name)
 
-    def test_pnpmfile_targets_are_hashed_and_relative_ones_refuse_sharing(self):
-        hook = self.root / 'hooks/global.cjs'
+    def assert_refused(self, repos):
+        """Two records whose store could depend on something unfingerprinted: each
+        probes alone, and acting mode caches neither."""
+        self.calls.unlink(missing_ok=True)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'{len(repos)} store probes for {len(repos)} pinned records; 0 shared in this run',
+                      result.stdout)
+        self.assertEqual(self.cache().read_text().splitlines(), ['groundwork pnpm discovery cache v2'])
+
+    def reset_records(self):
+        for child in self.root.glob('wt*'):
+            shutil.rmtree(child)
+        self.records.write_text('')
+
+    def test_pnpmfiles_and_config_dependencies_refuse_sharing_and_caching(self):
+        hook = self.root / 'hooks/any.cjs'
         hook.parent.mkdir()
         hook.write_text('module.exports = {}\n')
-        (self.home / '.npmrc').write_text(f'global-pnpmfile={hook}\n')
+        cases = {
+            'default .pnpmfile.cjs at the record': lambda repos: [
+                (repo / '.pnpmfile.cjs').write_text('module.exports = {}\n') for repo in repos],
+            'default .pnpmfile.mjs at the workspace dir': lambda repos: (
+                self.root / '.pnpmfile.mjs').write_text('export default {}\n'),
+            'pnpmfile in .npmrc': lambda repos: [
+                (repo / '.npmrc').open('a').write(f'pnpmfile={hook}\n') for repo in repos],
+            'global-pnpmfile in ~/.npmrc': lambda repos: (
+                self.home / '.npmrc').write_text(f'global-pnpmfile={hook}\n'),
+            'pnpmfile in pnpm-workspace.yaml': lambda repos: [
+                (repo / 'pnpm-workspace.yaml').write_text(f'pnpmfile: {hook}\n') for repo in repos],
+            'configDependencies': lambda repos: [
+                (repo / 'pnpm-workspace.yaml').write_text('configDependencies:\n  plugin: 1.0.0+sha512-x\n')
+                for repo in repos],
+            'installed config-dependency plugins': lambda repos: [
+                (repo / 'node_modules/.pnpm-config/plugin').mkdir(parents=True) for repo in repos],
+            'npm_config_pnpmfile': lambda repos: self.env.__setitem__('npm_config_pnpmfile', str(hook)),
+            'PNPM_CONFIG_GLOBAL_PNPMFILE': lambda repos: self.env.__setitem__(
+                'PNPM_CONFIG_GLOBAL_PNPMFILE', str(hook)),
+        }
+        for label, setup in cases.items():
+            with self.subTest(label=label):
+                self.reset_records()
+                for stray in (self.root / '.pnpmfile.mjs', self.home / '.npmrc'):
+                    stray.unlink(missing_ok=True)
+                self.env.pop('npm_config_pnpmfile', None)
+                self.env.pop('PNPM_CONFIG_GLOBAL_PNPMFILE', None)
+                repos = self.worktrees(2)
+                setup(repos)
+                self.assert_refused(repos)
+
+    def test_workspace_dir_and_config_redirects_refuse_sharing(self):
+        cases = (
+            ('env', 'PNPM_CONFIG_WORKSPACE_DIR', '/elsewhere'),
+            ('env', 'pnpm_config_workspace_dir', '/elsewhere'),
+            ('env', 'npm_config_workspace_dir', '/elsewhere'),
+            ('env', 'NPM_CONFIG_WORKSPACE_DIR', '/elsewhere'),
+            ('env', 'DESTDIR', '/staging'),
+            ('npmrc', 'globalconfig', '/elsewhere/npmrc'),
+            ('npmrc', 'userconfig', '/elsewhere/npmrc'),
+        )
+        for kind, name, value in cases:
+            with self.subTest(name=name, kind=kind):
+                self.reset_records()
+                repos = self.worktrees(2)
+                if kind == 'env':
+                    self.env[name] = value
+                else:
+                    for repo in repos:
+                        with (repo / '.npmrc').open('a') as config:
+                            config.write(f'{name}={value}\n')
+                self.assert_refused(repos)
+                self.env.pop(name, None)
+
+    def test_conflicting_prefix_settings_refuse_sharing(self):
+        repos = self.worktrees(2)
+        self.env['PREFIX'] = str(self.root / 'prefix-a')
+        self.env['npm_config_prefix'] = str(self.root / 'prefix-a')
+        result = self.run_cleanup()
+        self.assertIn('1 store probes for 2 pinned records; 1 shared in this run', result.stdout)
+        self.env['npm_config_prefix'] = str(self.root / 'prefix-b')
+        self.assert_refused(repos)
+
+    @unittest.skipIf(os.geteuid() == 0, 'root can write a read-only directory')
+    def test_repository_writability_splits_the_store_context(self):
+        repos = self.worktrees(2)
+        repos[1].chmod(0o555)
+        self.addCleanup(repos[1].chmod, 0o755)
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
+
+    def test_cadence_is_read_once_so_a_mid_run_day_boundary_cannot_prune_cached_selections(self):
         self.worktrees(2)
-        self.cache_cycle(lambda: hook.write_text('module.exports = { hooks: {} }\n'))
-        hook.unlink()
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The last success turns 30 days old two seconds into the next run;
+        # discovery is held for four, so a second reading would see it due.
+        success = self.home / '.local/state/groundwork/pnpm-prune-last-success'
+        success.write_text(f'{int(time.time()) - 30 * 86400 + 2} boundary\n')
+        self.env['REVIEW_REPOS_DELAY'] = '4'
         self.calls.unlink()
-        result = self.run_cleanup()
-        self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
-        (self.home / '.npmrc').write_text('pnpmfile=hooks/local.cjs\n')
-        self.calls.unlink()
-        result = self.run_cleanup()
-        self.assertIn('2 store probes for 2 pinned records; 0 shared in this run', result.stdout)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('1 from the result cache', result.stdout)
+        self.assertIn('Maintenance not due: machine-wide success was 29 days ago', result.stdout)
+        self.assertNotIn(' store prune', self.calls.read_text())
+
+    def test_report_mode_probes_fresh_when_monthly_maintenance_is_due(self):
+        self.worktrees(2)
+        result = self.run_cleanup('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        success = self.home / '.local/state/groundwork/pnpm-prune-last-success'
+        success.write_text(f'{int(time.time()) - 31 * 86400} old\n')
+        report = self.run_cleanup()
+        self.assertIn('pnpm maintenance may run, so every store context is probed fresh', report.stdout)
+        self.assertIn('0 from the result cache', report.stdout)
 
     def test_a_per_directory_mise_environment_splits_the_store_context(self):
         proxy = (self.bin / 'pnpm').resolve()
