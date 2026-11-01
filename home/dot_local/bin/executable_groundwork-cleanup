@@ -760,11 +760,11 @@ record_probe_keys() {
   : >"$discovery_work/$index.cachekey"
   launcher="$(command -v pnpm || true)"
   if [[ "$launcher" == */mise/shims/pnpm ]]; then
-    environment_digest="$(cd "$repo" && "${offline_probe_env[@]}" mise exec -- /bin/bash -c "$pnpm_context_script" 2>/dev/null |
-      "${offline_probe_env[@]}" awk -v context="$context" "$context_stream_awk" | LC_ALL=C sort | sha256_stream)" || return 0
+    environment_digest="$(cd "$repo" && "${offline_probe_env[@]}" mise exec -- /bin/bash -c "$pnpm_context_script" 2>/dev/null \
+      | "${offline_probe_env[@]}" awk -v context="$context" "$context_stream_awk" | LC_ALL=C sort | sha256_stream)" || return 0
   else
-    environment_digest="$(cd "$repo" && /bin/bash -c "$pnpm_context_script" |
-      "${offline_probe_env[@]}" awk -v context="$context" "$context_stream_awk" | LC_ALL=C sort | sha256_stream)" || return 0
+    environment_digest="$(cd "$repo" && /bin/bash -c "$pnpm_context_script" \
+      | "${offline_probe_env[@]}" awk -v context="$context" "$context_stream_awk" | LC_ALL=C sort | sha256_stream)" || return 0
   fi
   [[ -f "$context" ]] || return 0
   IFS= read -r fields <"$context" || return 0
