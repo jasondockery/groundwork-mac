@@ -1879,7 +1879,7 @@ SH
       || fail "a real silence lost the generic quiet diagnostic at ${quiet_seconds}s"
     grep -qF 'kill -TERM -- -700' "$brew_output_fixture/plain-silence-$quiet_seconds" \
       || fail "a real silence lost the process-group kill hint"
-    assert_not_contains 'waiting for your password' \
+    assert_not_contains 'waiting for you to authenticate' \
       "$brew_output_fixture/plain-silence-$quiet_seconds" \
       "a sudo already running its command was reported as waiting to authenticate"
   done
