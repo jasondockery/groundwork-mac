@@ -864,7 +864,8 @@ gw_brew_cancel_group() {
 }
 
 # Find a sudo in the nested group that is sitting at its password prompt.
-# Input is `ps -axo pid=,ppid=,pgid=,stat=,tty=,args=`; output is the sudo pid,
+# Input is `ps -axww -o pid=,ppid=,pgid=,stat=,tty=,args=` (ww: BSD ps otherwise
+# cuts a non-terminal listing at 79 columns); output is the sudo pid,
 # a tab, and the command it will run (empty when ps hid sudo's arguments, which
 # macOS does for another user's process and shows as "(sudo)").
 #
@@ -881,21 +882,14 @@ gw_brew_waiting_sudo() {
   local pgid="$1"
   [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
   LC_ALL=C awk -v pgid="$pgid" '
-    # Homebrew always ends sudo options with "--", and ps has already lost the
-    # quoting, so anything without that separator is named only when the word
-    # after sudo is plainly not an option. Homebrew may route through env(1)
-    # with NAME=value words first; those are skipped to reach the real program.
+    # Homebrew runs `/usr/bin/sudo [-u root] [-A] -E NAME=value ... -- exe args`.
+    # ps has already lost the quoting, so only the words after the first "--"
+    # are named; without that separator the command stays unnamed.
     function sudo_command(args,   count, word, first, i, command) {
       count = split(args, word, /[ \t]+/)
       first = 0
       for (i = 2; i <= count; i++) if (word[i] == "--") { first = i + 1; break }
-      if (!first && count >= 2 && word[2] !~ /^-/) first = 2
-      if (!first) return ""
-      if (first <= count && word[first] ~ /(^|\/)env$/) {
-        first++
-        while (first <= count && word[first] ~ /^[A-Za-z_][A-Za-z0-9_]*=/) first++
-      }
-      if (first > count) return ""
+      if (!first || first > count) return ""
       command = word[first]
       sub(/.*\//, "", command)
       for (i = first + 1; i <= count; i++) command = command " " word[i]
@@ -934,10 +928,12 @@ gw_brew_waiting_sudo() {
     }'
 }
 
-# The quiet check. A sudo at its prompt gets one plain line and then its prompt
-# back, so "Password:" stays the last thing on screen; later checks print
-# nothing while that same sudo still waits, because a repeat would only push the
-# prompt away again. Any other silence keeps the generic diagnostic. Writes to
+# The quiet check. A waiting sudo gets one plain line, and later checks print
+# nothing while that same sudo still waits, because a repeat would only push its
+# prompt away. The line stays neutral about how: with Touch ID for sudo, sudo
+# waits on a dialog without having printed a prompt or turned echo off, so
+# reprinting "Password:" could lead someone to type a password that echoes and
+# lands in the transcript. Any other silence keeps the generic diagnostic. Writes to
 # stdout; the watchdog points it at the terminal. GW_BREW_ANNOUNCED_SUDO carries
 # the announced pid between checks.
 gw_brew_quiet_notice() {
@@ -948,7 +944,7 @@ gw_brew_quiet_notice() {
     sudo_command="${waiting#*$'\t'}"
     [[ "$sudo_pid" != "${GW_BREW_ANNOUNCED_SUDO:-}" ]] || return 0
     GW_BREW_ANNOUNCED_SUDO="$sudo_pid"
-    printf '\r\nGroundwork: sudo is waiting for your password%s. Type it and press Enter; nothing echoes.\r\nPassword:' \
+    printf '\r\nGroundwork: sudo is waiting for you to authenticate (Touch ID or password)%s.\r\n' \
       "${sudo_command:+ (for: $sudo_command)}"
     return 0
   fi
@@ -1037,7 +1033,7 @@ gw_brew_watchdog() {
     elif [[ "$now" -ge "$next_stall" ]]; then
       listing=""
       [[ -z "$pty_pgid" ]] \
-        || listing="$(ps -axo pid=,ppid=,pgid=,stat=,tty=,args= 2>/dev/null)" || listing=""
+        || listing="$(ps -axww -o pid=,ppid=,pgid=,stat=,tty=,args= 2>/dev/null)" || listing=""
       gw_brew_quiet_notice "$label" "$((now - last_progress))" "$pty_pgid" "$listing" \
         >/dev/tty || true
       next_stall=$((now + stall))
