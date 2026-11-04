@@ -1848,6 +1848,42 @@ SH
   test ! -e "$brew_output_fixture/invalid-bound-receipt" \
     || fail "an invalid Homebrew deadline mutated the receipt"
 
+  # The quiet check reads a process listing, so a fake one is the whole input.
+  # BSD ps marks a sleeper idle (I) after 20 seconds, as the prompting sudo is.
+  sudo_waiting_listing='  700   690   700 Ss+  ttys009 /bin/bash -c workload
+  701   700   700 S+   ttys009 /opt/homebrew/opt/ruby/bin/ruby brew.rb upgrade --cask discord
+  702   701   700 Is+  ttys009 /usr/bin/sudo -E -- /usr/bin/env LC_ALL=C /bin/launchctl print gui/501/com.discord.discord.ShipIt
+  650   640   650 Ss+  ttys003 -zsh'
+  # A sudo that already authenticated has a child: it is running the command,
+  # so a quiet installer underneath it is a real silence, not a password wait.
+  plain_silence_listing='  700   690   700 Ss+  ttys009 /bin/bash -c workload
+  701   700   700 S+   ttys009 /opt/homebrew/opt/ruby/bin/ruby brew.rb upgrade --cask docker-desktop
+  702   701   700 Is+  ttys009 /usr/bin/sudo -E -- /usr/sbin/installer -pkg Docker.pkg -target /
+  703   702   700 S+   ttys009 /usr/sbin/installer -pkg Docker.pkg -target /'
+  # shellcheck disable=SC2034 # Read by the sourced library's quiet check.
+  GW_BREW_ANNOUNCED_SUDO=""
+  gw_brew_quiet_notice "Homebrew cask fixture" 180 700 "$sudo_waiting_listing" \
+    >"$brew_output_fixture/sudo-notice-first"
+  printf '\r\nGroundwork: sudo is waiting for your password (for: launchctl print gui/501/com.discord.discord.ShipIt). Type it and press Enter; nothing echoes.\r\nPassword:' \
+    | cmp -s - "$brew_output_fixture/sudo-notice-first" \
+    || fail "a sudo waiting at its prompt did not get one password line ending on its prompt"
+  gw_brew_quiet_notice "Homebrew cask fixture" 360 700 "$sudo_waiting_listing" \
+    >"$brew_output_fixture/sudo-notice-repeat"
+  test ! -s "$brew_output_fixture/sudo-notice-repeat" \
+    || fail "the quiet check repeated itself under a sudo that was still waiting"
+  for quiet_seconds in 180 360; do
+    gw_brew_quiet_notice "Homebrew cask fixture" "$quiet_seconds" 700 "$plain_silence_listing" \
+      >"$brew_output_fixture/plain-silence-$quiet_seconds"
+    grep -qF "Groundwork: Homebrew cask fixture is still running; no output for ${quiet_seconds}s." \
+      "$brew_output_fixture/plain-silence-$quiet_seconds" \
+      || fail "a real silence lost the generic quiet diagnostic at ${quiet_seconds}s"
+    grep -qF 'kill -TERM -- -700' "$brew_output_fixture/plain-silence-$quiet_seconds" \
+      || fail "a real silence lost the process-group kill hint"
+    assert_not_contains 'waiting for your password' \
+      "$brew_output_fixture/plain-silence-$quiet_seconds" \
+      "a sudo already running its command was reported as waiting for a password"
+  done
+
   cat >"$brew_output_fixture/formula-expected" <<'EOF'
 git
 homebrew/core/ripgrep

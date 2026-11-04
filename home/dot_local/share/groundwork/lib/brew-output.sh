@@ -863,6 +863,109 @@ gw_brew_cancel_group() {
   return 0
 }
 
+# Find a sudo in the nested group that is sitting at its password prompt.
+# Input is `ps -axo pid=,ppid=,pgid=,stat=,tty=,args=`; output is the sudo pid,
+# a tab, and the command it will run (empty when ps hid sudo's arguments, which
+# macOS does for another user's process and shows as "(sudo)").
+#
+# ps cannot see "reading a password", so this matches the shape a prompting sudo
+# has on both BSD and procps ps, and every part must hold:
+#   - in the Homebrew group, with sudo as its program name;
+#   - sleeping (S, or BSD's I once asleep for 20 seconds) in the foreground
+#     group (+) of the same terminal as the group leader;
+#   - no live child. sudo forks its command only after authenticating, so a
+#     sudo with a child is running the command, not asking for a password.
+# Zero or several matches return 1, and the caller keeps the generic
+# diagnostic: a guess that names the wrong cause is worse than no guess.
+gw_brew_waiting_sudo() {
+  local pgid="$1"
+  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 1
+  LC_ALL=C awk -v pgid="$pgid" '
+    # Homebrew always ends sudo options with "--", and ps has already lost the
+    # quoting, so anything without that separator is named only when the word
+    # after sudo is plainly not an option. Homebrew may route through env(1)
+    # with NAME=value words first; those are skipped to reach the real program.
+    function sudo_command(args,   count, word, first, i, command) {
+      count = split(args, word, /[ \t]+/)
+      first = 0
+      for (i = 2; i <= count; i++) if (word[i] == "--") { first = i + 1; break }
+      if (!first && count >= 2 && word[2] !~ /^-/) first = 2
+      if (!first) return ""
+      if (first <= count && word[first] ~ /(^|\/)env$/) {
+        first++
+        while (first <= count && word[first] ~ /^[A-Za-z_][A-Za-z0-9_]*=/) first++
+      }
+      if (first > count) return ""
+      command = word[first]
+      sub(/.*\//, "", command)
+      for (i = first + 1; i <= count; i++) command = command " " word[i]
+      # Process arguments are untrusted text headed for a terminal.
+      gsub(/[^ -~]/, "?", command)
+      if (length(command) > 60) command = substr(command, 1, 57) "..."
+      return command
+    }
+    NF >= 6 {
+      args = $0
+      sub(/^[ \t]*[^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+/, "", args)
+      if ($4 !~ /^Z/) has_child[$2] = 1
+      if ($1 == pgid) leader_tty = $5
+      if ($3 != pgid) next
+      name = args
+      sub(/[ \t].*/, "", name)
+      sub(/.*\//, "", name)
+      if (name != "sudo" && name != "(sudo)") next
+      candidates++
+      pid[candidates] = $1
+      state[candidates] = $4
+      tty[candidates] = $5
+      argv[candidates] = args
+    }
+    END {
+      found = 0
+      for (i = 1; i <= candidates; i++) {
+        if (state[i] !~ /^[SI]/ || index(state[i], "+") == 0) continue
+        if (tty[i] == "" || tty[i] ~ /^(\?+|-)$/ || tty[i] != leader_tty) continue
+        if (has_child[pid[i]]) continue
+        found++
+        pick = i
+      }
+      if (found != 1) exit 1
+      printf "%s\t%s\n", pid[pick], sudo_command(argv[pick])
+    }'
+}
+
+# The quiet check. A sudo at its prompt gets one plain line and then its prompt
+# back, so "Password:" stays the last thing on screen; later checks print
+# nothing while that same sudo still waits, because a repeat would only push the
+# prompt away again. Any other silence keeps the generic diagnostic. Writes to
+# stdout; the watchdog points it at the terminal. GW_BREW_ANNOUNCED_SUDO carries
+# the announced pid between checks.
+gw_brew_quiet_notice() {
+  local label="$1" quiet="$2" pgid="$3" listing="$4" waiting="" sudo_pid sudo_command
+  if [[ -n "$pgid" ]] \
+    && waiting="$(printf '%s\n' "$listing" | gw_brew_waiting_sudo "$pgid")"; then
+    sudo_pid="${waiting%%$'\t'*}"
+    sudo_command="${waiting#*$'\t'}"
+    [[ "$sudo_pid" != "${GW_BREW_ANNOUNCED_SUDO:-}" ]] || return 0
+    GW_BREW_ANNOUNCED_SUDO="$sudo_pid"
+    printf '\r\nGroundwork: sudo is waiting for your password%s. Type it and press Enter; nothing echoes.\r\nPassword:' \
+      "${sudo_command:+ (for: $sudo_command)}"
+    return 0
+  fi
+  GW_BREW_ANNOUNCED_SUDO=""
+  printf '\r\nGroundwork: %s is still running; no output for %ss. Password input remains attached here.\r\n' \
+    "$label" "$quiet"
+  printf 'Groundwork: press Ctrl-C here to cancel it.\r\n'
+  # Name the nested group because it is the work the operator needs to stop
+  # and this recovery remains usable even if the supervisor is wedged. A
+  # direct supervisor signal is also supported by the interruptible wait.
+  if [[ -n "$pgid" ]]; then
+    printf 'Groundwork: if Ctrl-C does not take, from another terminal run: kill -TERM -- -%s\r\n' \
+      "$pgid"
+  fi
+  printf 'Groundwork: inspect with: ps -axo pid,ppid,pgid,%%cpu,etime,state,command | rg '\''brew|sudo|installer|hdiutil|docker'\''\r\n'
+}
+
 # The watchdog is the part that gets backgrounded, because it is the part that
 # may safely ignore SIGINT. It observes progress, prints the stall diagnostic,
 # and enforces the hard deadline against the nested process group. It records
@@ -873,7 +976,8 @@ gw_brew_watchdog() {
   local grace="$6" poll="$7" marker="$8" outer_pgid="$9"
   local identity="${10}" tty_device="${11}"
   local started now last_progress next_stall size previous_size=0
-  local script_pid="" pty_pgid=""
+  local script_pid="" pty_pgid="" listing=""
+  GW_BREW_ANNOUNCED_SUDO=""
   # Outlive the terminal. If the supervisor is killed outright it is the session
   # leader, so its death hangs up this pseudo-terminal and SIGHUP would take the
   # watchdog with it -- exactly when it is the only thing left that can close
@@ -931,17 +1035,11 @@ gw_brew_watchdog() {
       last_progress="$now"
       next_stall=$((now + stall))
     elif [[ "$now" -ge "$next_stall" ]]; then
-      printf '\r\nGroundwork: %s is still running; no output for %ss. Password input remains attached here.\r\n' \
-        "$label" "$((now - last_progress))" >/dev/tty
-      printf 'Groundwork: press Ctrl-C here to cancel it.\r\n' >/dev/tty
-      # Name the nested group because it is the work the operator needs to stop
-      # and this recovery remains usable even if the supervisor is wedged. A
-      # direct supervisor signal is also supported by the interruptible wait.
-      if [[ -n "$pty_pgid" ]]; then
-        printf 'Groundwork: if Ctrl-C does not take, from another terminal run: kill -TERM -- -%s\r\n' \
-          "$pty_pgid" >/dev/tty
-      fi
-      printf 'Groundwork: inspect with: ps -axo pid,ppid,pgid,%%cpu,etime,state,command | rg '\''brew|sudo|installer|hdiutil|docker'\''\r\n' >/dev/tty || true
+      listing=""
+      [[ -z "$pty_pgid" ]] \
+        || listing="$(ps -axo pid=,ppid=,pgid=,stat=,tty=,args= 2>/dev/null)" || listing=""
+      gw_brew_quiet_notice "$label" "$((now - last_progress))" "$pty_pgid" "$listing" \
+        >/dev/tty || true
       next_stall=$((now + stall))
     fi
     if [[ "$now" -ge $((started + deadline)) ]]; then
