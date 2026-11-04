@@ -1848,6 +1848,57 @@ SH
   test ! -e "$brew_output_fixture/invalid-bound-receipt" \
     || fail "an invalid Homebrew deadline mutated the receipt"
 
+  # The quiet check reads a process listing, so a fake one is the whole input.
+  # BSD ps marks a sleeper idle (I) after 20 seconds, as the prompting sudo is.
+  sudo_waiting_listing='  700   690   700 Ss+  ttys009 /bin/bash -c workload
+  701   700   700 S+   ttys009 /opt/homebrew/opt/ruby/bin/ruby brew.rb upgrade --cask discord
+  702   701   700 Is+  ttys009 /usr/bin/sudo -E LC_ALL=C -- /bin/launchctl print gui/501/com.discord.discord.ShipIt
+  650   640   650 Ss+  ttys003 -zsh'
+  # A sudo that already authenticated has a child: it is running the command,
+  # so a quiet installer underneath it is a real silence, not a password wait.
+  plain_silence_listing='  700   690   700 Ss+  ttys009 /bin/bash -c workload
+  701   700   700 S+   ttys009 /opt/homebrew/opt/ruby/bin/ruby brew.rb upgrade --cask docker-desktop
+  702   701   700 Is+  ttys009 /usr/bin/sudo -E -- /usr/sbin/installer -pkg Docker.pkg -target /
+  703   702   700 S+   ttys009 /usr/sbin/installer -pkg Docker.pkg -target /'
+  # shellcheck disable=SC2034 # Read by the sourced library's quiet check.
+  GW_BREW_ANNOUNCED_SUDO=""
+  gw_brew_quiet_notice "Homebrew cask fixture" 180 700 "$sudo_waiting_listing" \
+    >"$brew_output_fixture/sudo-notice-first"
+  printf '\r\nGroundwork: sudo is waiting for you to authenticate (Touch ID or password) (for: launchctl print gui/501/com.discord.discord.ShipIt).\r\n' \
+    | cmp -s - "$brew_output_fixture/sudo-notice-first" \
+    || fail "a waiting sudo did not get exactly one neutral authentication line"
+  gw_brew_quiet_notice "Homebrew cask fixture" 360 700 "$sudo_waiting_listing" \
+    >"$brew_output_fixture/sudo-notice-repeat"
+  test ! -s "$brew_output_fixture/sudo-notice-repeat" \
+    || fail "the quiet check repeated itself under a sudo that was still waiting"
+  for quiet_seconds in 180 360; do
+    gw_brew_quiet_notice "Homebrew cask fixture" "$quiet_seconds" 700 "$plain_silence_listing" \
+      >"$brew_output_fixture/plain-silence-$quiet_seconds"
+    grep -qF "Groundwork: Homebrew cask fixture is still running; no output for ${quiet_seconds}s." \
+      "$brew_output_fixture/plain-silence-$quiet_seconds" \
+      || fail "a real silence lost the generic quiet diagnostic at ${quiet_seconds}s"
+    grep -qF 'kill -TERM -- -700' "$brew_output_fixture/plain-silence-$quiet_seconds" \
+      || fail "a real silence lost the process-group kill hint"
+    assert_not_contains 'waiting for you to authenticate' \
+      "$brew_output_fixture/plain-silence-$quiet_seconds" \
+      "a sudo already running its command was reported as waiting to authenticate"
+  done
+  # macOS ps hides a setuid sudo's arguments from its user and shows "(sudo)".
+  gw_brew_quiet_notice "Homebrew cask fixture" 180 700 '  700   690   700 Ss+  ttys009 /bin/bash -c workload
+  702   700   700 Is+  ttys009 (sudo)' >"$brew_output_fixture/hidden-sudo-notice"
+  printf '\r\nGroundwork: sudo is waiting for you to authenticate (Touch ID or password).\r\n' \
+    | cmp -s - "$brew_output_fixture/hidden-sudo-notice" \
+    || fail "a sudo whose arguments ps hid was not reported as waiting, without a command"
+  # Outside the terminal's foreground group, or on another terminal, a sleeping
+  # sudo cannot be reading this terminal, so it stays a generic silence.
+  for not_waiting in 'Is   ttys009' 'Is+  ttys004'; do
+    gw_brew_quiet_notice "Homebrew cask fixture" 180 700 "  700   690   700 Ss+  ttys009 /bin/bash -c workload
+  702   700   700 $not_waiting /usr/bin/sudo -E -- /bin/launchctl print x" \
+      >"$brew_output_fixture/not-waiting-notice"
+    grep -qF 'no output for 180s.' "$brew_output_fixture/not-waiting-notice" \
+      || fail "a sudo with state and terminal '$not_waiting' was treated as waiting"
+  done
+
   cat >"$brew_output_fixture/formula-expected" <<'EOF'
 git
 homebrew/core/ripgrep
