@@ -300,7 +300,7 @@ gw_t3_claude_subagent_caps_report() {
   # of set, missing, different or secret.
   # shellcheck disable=SC2016 # $caps and $env are jq syntax, not shell expansions.
   if ! rows="$("$jq_bin" -r \
-      --argjson caps "[[\"${names[0]}\",\"${values[0]}\"],[\"${names[1]}\",\"${values[1]}\"]]" '
+    --argjson caps "[[\"${names[0]}\",\"${values[0]}\"],[\"${names[1]}\",\"${values[1]}\"]]" '
       if type == "object" and ((.providerInstances // {}) | type) == "object" then
         (.providerInstances // {}) | to_entries[]
         | select((.value | type) == "object" and .value.driver == "claudeAgent")
