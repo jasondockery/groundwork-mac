@@ -347,6 +347,48 @@ class StayAwakeTests(unittest.TestCase):
         self.assertIn('could not be read', err)
         self.assertNotIn('applies only on a desktop Mac', err)
 
+    def test_undecodable_config_and_records_are_unreadable_not_a_crash(self):
+        config = self.home / 'config' / 'chezmoi' / 'chezmoi.toml'
+        config.parent.mkdir(parents=True)
+        config.write_bytes(b'[data]\nheadless = false\n\xff\xfe\n')
+        self.assertIsNone(sa.load_settings())
+        self.record().parent.mkdir(parents=True)
+        self.record().write_bytes(b'\xff\xfe\n')
+        self.assertEqual(sa.read_recorded(self.record()), 'unreadable')
+        pmset = FakePmset(ac=0)
+        code, _out, err = self.invoke(OFF, pmset)
+        self.assertEqual(code, 1)
+        self.assertEqual(pmset.commands(), [])
+        self.assertEqual(self.record().read_bytes(), b'\xff\xfe\n')
+        self.assertIn('Check the value, then remove the file or replace it with one integer.', err)
+        on = FakePmset(ac=10)
+        code, _out, err = self.invoke(ON, on)
+        self.assertEqual(code, 1)
+        self.assertNotIn(SUDO, on.commands())
+        self.assertIn('Check the value', err)
+
+    def test_status_with_an_unreadable_config_says_unknown(self):
+        self.write_record('10\n')
+        pmset = FakePmset(ac=0)
+        code, out, err = self.invoke(None, pmset, 'status')
+        self.assertEqual(code, 0)
+        self.assertEqual(pmset.commands(), [sa.PMSET_READ])
+        self.assertIn('Wanted here: unknown (config unreadable)', out)
+        self.assertNotIn('Wanted here: no', out)
+        self.assertNotIn('next apply restores', out)
+        self.assertIn('could not be read', err)
+
+    def test_an_unreadable_shared_record_keeps_the_gateway_record(self):
+        self.write_record('nope\n')
+        self.write_record('3\n', self.legacy())
+        pmset = FakePmset(ac=0)
+        code, _out, err = self.invoke(OFF, pmset)
+        self.assertEqual(code, 1)
+        self.assertEqual(pmset.commands(), [])
+        self.assertEqual(self.legacy().read_text(encoding='utf-8'), '3\n')
+        self.assertEqual(list(self.legacy().parent.glob('.*.aside.*')), [])
+        self.assertIn('Check the value', err)
+
     def test_unknown_ac_sleep_changes_nothing(self):
         def unreadable(command, **_kwargs):
             if command == sa.PMSET_READ:

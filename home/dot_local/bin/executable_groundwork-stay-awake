@@ -109,7 +109,7 @@ def load_settings():
     # None means the config could not be read, which is not the same as off.
     try:
         text = config_path().read_text(encoding='utf-8')
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     return parse_settings(text)
 
@@ -228,7 +228,10 @@ def read_recorded(path):
         return None
     if path.is_symlink() or not path.is_file():
         return 'unreadable'
-    text = path.read_text(encoding='utf-8').strip()
+    try:
+        text = path.read_text(encoding='utf-8').strip()
+    except UnicodeDecodeError:
+        return 'unreadable'
     if not RECORDED_VALUE.match(text):
         return 'unreadable'
     return text
@@ -243,6 +246,9 @@ def adopt_legacy_record():
     if not (legacy.exists() or legacy.is_symlink()):
         return
     if destination.exists() or destination.is_symlink():
+        if read_recorded(destination) == 'unreadable':
+            # Keep both files; the shared record's own check reports it.
+            return
         aside = move_record_aside(legacy)
         print(f'Set aside the earlier iMessage gateway sleep record at {aside}; {destination} is the record now.')
         return
@@ -283,6 +289,13 @@ def keep_awake(reasons):
         print(f'Stay awake: {error} Nothing was changed.', file=sys.stderr)
         return 1
     record_absent_before_prompt = not (destination.exists() or destination.is_symlink())
+    if not record_absent_before_prompt and read_recorded(destination) == 'unreadable':
+        print(
+            f'Stay awake: the recorded AC sleep value at {destination} cannot be restored. '
+            'Check the value, then remove the file or replace it with one integer. Nothing was changed.',
+            file=sys.stderr,
+        )
+        return 1
     status = sudo_prepare()
     if status != 0:
         return report_sudo_refusal(status, 'changing AC sleep')
@@ -302,7 +315,7 @@ def keep_awake(reasons):
         )
         return 1
     if not record_absent_before_prompt and read_recorded(destination) in (None, 'unreadable'):
-        print(f'Stay awake: the recorded AC sleep value at {destination} cannot be restored. {unchanged}', file=sys.stderr)
+        print(f'Stay awake: the recorded AC sleep value at {destination} cannot be restored. Check the value, then remove the file or replace it with one integer. {unchanged}', file=sys.stderr)
         return 1
     wrote = record_previous(destination, ac_sleep)
     if record_absent_before_prompt and not wrote:
@@ -327,7 +340,7 @@ def restore():
         print('Stay awake on power is off, and no earlier AC sleep value is recorded. Nothing was changed.')
         return 0
     if recorded == 'unreadable':
-        print(f'Stay awake: the recorded AC sleep value at {destination} cannot be restored. Nothing was changed.', file=sys.stderr)
+        print(f'Stay awake: the recorded AC sleep value at {destination} cannot be restored. Check the value, then remove the file or replace it with one integer. Nothing was changed.', file=sys.stderr)
         return 1
     ac_sleep, _battery = read_sleep()
     if ac_sleep is None:
@@ -390,13 +403,16 @@ def status():
         print(block[1], file=sys.stderr)
         return block[0]
     settings = load_settings()
-    if settings is None:
+    known = settings is not None
+    if not known:
         print(f'Stay awake: the chezmoi config at {config_path()} could not be read; the stored reasons are unknown.', file=sys.stderr)
         settings = {}
     for key, label in REASONS:
         print(f'{label}: {stored(settings.get(key))} ({key})')
     reasons = wanted_reasons(settings)
-    if settings.get('headless') is not False:
+    if not known:
+        print('Wanted here: unknown (config unreadable)')
+    elif settings.get('headless') is not False:
         print('Wanted here: no (not a desktop Mac)')
     elif reasons:
         print('Wanted here: yes (' + ', '.join(reasons) + ')')
@@ -406,7 +422,7 @@ def status():
         recorded = read_recorded(path)
         if recorded is not None:
             print(f'Recorded previous AC sleep: {recorded} ({path})')
-            if not reasons and recorded != 'unreadable':
+            if known and not reasons and recorded != 'unreadable':
                 print(f'The next apply restores AC sleep to {recorded} unless it was changed by hand.')
             break
     else:
