@@ -915,7 +915,7 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         path = self.root / "gitconfig"
         path.write_text(rendered.stdout)
-        got = subprocess.run(["git", "config", "-f", str(path), "--get", "grep.threads"],
+        got = subprocess.run(["git", "config", "-f", str(path), "--get-all", "grep.threads"],
                              text=True, capture_output=True, timeout=5)
         self.assertEqual(got.stdout, "4\n", got.stderr)
 
