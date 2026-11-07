@@ -182,6 +182,7 @@
       <div class="callout note">
         <span class="label">What Groundwork safely sets</span>
         <p>This repo applies safe developer conveniences: file extensions and hidden files visible, Finder path/status bars, <code>~/Library</code> visible, key repeat at the speed you chose during setup (<a href="keyboard.html#key-repeat">how fast should key repeat be?</a>), press-and-hold disabled for Vim, Safari's Develop menu enabled, screenshots saved to <code>~/Pictures/Screenshots</code>, and the terminal/editor/toolchain setup. Brave policies are a configuration profile you approve, rendered from groundwork-core, not a <code>defaults write</code>. The app-specific boundary is summarized above and explained on <a href="apps.html#configuration-boundary">Apps &amp; browsers</a>.</p>
+        <p>Spotlight: your code directory and <code>~/Library/pnpm</code> are added to Search Privacy, where macOS indexes them by default, so agent churn does not keep Spotlight reindexing. <code>/Applications</code> stays indexed. See <a href="setup.html#spotlight">Spotlight skips your code</a> for how to check and undo it.</p>
       </div>
       <div class="callout note">
         <span class="label">Screenshots go to <code>~/Pictures/Screenshots</code></span>
