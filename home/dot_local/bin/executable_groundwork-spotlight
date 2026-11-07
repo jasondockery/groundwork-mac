@@ -1,0 +1,632 @@
+#!/usr/bin/env python3
+"""Keep developer churn directories out of Spotlight on a Mac.
+
+Requires Python 3.9 or newer (the stock /usr/bin/python3 on macOS).
+
+Groundwork adds the code directory and the pnpm store to the same list that
+System Settings -> Spotlight -> Search Privacy edits. It adds only a folder
+that exists and is missing from that list, and it never touches /Applications
+or any entry it did not add. Hidden folders such as ~/.t3 and ~/.cache are
+not listed: macOS normally skips folders whose names start with a dot.
+"""
+import argparse
+import os
+from pathlib import Path
+import platform
+import plistlib
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+
+VOLUME_CONFIGURATION = Path('/System/Volumes/Data/.Spotlight-V100/VolumeConfiguration.plist')
+DATA_PREFIX = '/System/Volumes/Data'
+SEARCH_PRIVACY = 'System Settings > Spotlight > Search Privacy'
+RECORD_FILENAME = 'spotlight-exclusions.tsv'
+OPT_OUT_FILENAME = 'spotlight-exclusions-off'
+UNREADABLE_FILENAME = 'spotlight-exclusions-unreadable'
+BACKUP_DIRNAME = 'spotlight-backups'
+ORIGINS = ('groundwork', 'existing')
+CODE_DIR = re.compile(r'^code_dir\s*=\s*"([^"\\]*)"\s*(?:#.*)?$')
+
+SUDO_PREPARE_SCRIPT = r'''
+lib="${HOME}/.local/share/groundwork/lib/sudo-preflight.sh"
+if [[ ! -r "$lib" ]]; then
+  printf 'Groundwork: administrator-permission helper is missing: %s\n' "$lib" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$lib"
+groundwork_sudo_prepare
+exit $?
+'''
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f'{self.prog}: error: {message}', file=sys.stderr)
+        self.exit(64)
+
+
+class ConfigurationError(RuntimeError):
+    pass
+
+
+class WriteError(RuntimeError):
+    """The live file may have changed; the message names the backup."""
+
+
+def run(command, *, timeout=15, capture=True, text=True):
+    kwargs = {'text': text, 'env': dict(os.environ, LC_ALL='C')}
+    if timeout is not None:
+        kwargs['timeout'] = timeout
+    if capture:
+        kwargs['capture_output'] = True
+    return subprocess.run(command, **kwargs)
+
+
+# --- the exclusion list itself (pure, so tests never need a Mac) ---
+
+def normalize(path):
+    text = str(path)
+    if text.rstrip('/') == DATA_PREFIX:
+        return '/'
+    if text.startswith(DATA_PREFIX + '/'):
+        text = text[len(DATA_PREFIX):]
+    return text.rstrip('/') or '/'
+
+
+def same_path_key(path):
+    # APFS volumes are case-insensitive by default, so /Users/a/Code and
+    # /Users/a/code are one folder and must not become two entries.
+    return normalize(path).casefold()
+
+
+def load_configuration(data):
+    try:
+        parsed = plistlib.loads(data)
+    except Exception as error:  # plistlib raises several unrelated types
+        raise ConfigurationError(f'the Spotlight volume configuration is not a readable plist ({error}).')
+    if not isinstance(parsed, dict):
+        raise ConfigurationError('the Spotlight volume configuration is not a dictionary.')
+    exclusions = parsed.get('Exclusions', [])
+    if not isinstance(exclusions, list) or not all(isinstance(item, str) for item in exclusions):
+        raise ConfigurationError('the Spotlight Exclusions entry is not a list of paths.')
+    return parsed
+
+
+def exclusions(configuration):
+    return list(configuration.get('Exclusions', []))
+
+
+def is_excluded(configuration, root):
+    wanted = same_path_key(root)
+    return any(same_path_key(item) == wanted for item in exclusions(configuration))
+
+
+def dump_configuration(configuration, original):
+    fmt = plistlib.FMT_BINARY if original.startswith(b'bplist') else plistlib.FMT_XML
+    return plistlib.dumps(configuration, fmt=fmt, sort_keys=False)
+
+
+def with_exclusions(configuration, roots):
+    """Return a copy with each missing root appended, and the roots added."""
+    updated = dict(configuration)
+    current = exclusions(configuration)
+    added = []
+    for root in roots:
+        if not is_excluded({'Exclusions': current}, root):
+            current.append(str(root))
+            added.append(str(root))
+    updated['Exclusions'] = current
+    return updated, added
+
+
+def without_exclusions(configuration, roots):
+    """Return a copy without the given roots, and the entries removed."""
+    wanted = {same_path_key(root) for root in roots}
+    updated = dict(configuration)
+    kept, removed = [], []
+    for item in exclusions(configuration):
+        (removed if same_path_key(item) in wanted else kept).append(item)
+    if 'Exclusions' in configuration or kept:
+        updated['Exclusions'] = kept
+    return updated, removed
+
+
+# --- where things live ---
+
+def state_dir():
+    root = Path(os.environ['XDG_STATE_HOME']) if os.environ.get('XDG_STATE_HOME') else Path.home() / '.local' / 'state'
+    return root / 'groundwork'
+
+
+def record_path():
+    return state_dir() / RECORD_FILENAME
+
+
+def opt_out_path():
+    return state_dir() / OPT_OUT_FILENAME
+
+
+def unreadable_path():
+    return state_dir() / UNREADABLE_FILENAME
+
+
+def config_path():
+    root = Path(os.environ['XDG_CONFIG_HOME']) if os.environ.get('XDG_CONFIG_HOME') else Path.home() / '.config'
+    return root / 'chezmoi' / 'chezmoi.toml'
+
+
+def parse_code_dir(text):
+    section = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith('[') and line.endswith(']') and '#' not in line:
+            section = line[1:-1].strip()
+            continue
+        if section == 'data':
+            match = CODE_DIR.match(line)
+            if match and match.group(1):
+                return match.group(1)
+    return None
+
+
+def code_dir():
+    try:
+        stored = parse_code_dir(config_path().read_text(encoding='utf-8'))
+    except OSError:
+        stored = None
+    return Path(os.path.expanduser(stored or '~/code'))
+
+
+def too_broad(real):
+    """True for a folder whose exclusion would hide home or /Applications."""
+    key = same_path_key(real)
+    for protected in (os.path.realpath(Path.home()), '/Applications'):
+        guarded = same_path_key(protected)
+        if key == guarded or key == '/' or guarded.startswith(key + '/'):
+            return True
+    return False
+
+
+def wanted_roots(*, warn=True):
+    """Existing folders Groundwork keeps out of Spotlight, by real path."""
+    roots = []
+    for candidate in (code_dir(), Path.home() / 'Library' / 'pnpm'):
+        if not candidate.is_dir():
+            continue
+        real = os.path.realpath(candidate)
+        if too_broad(real):
+            if warn:
+                print(f'Groundwork: not excluding {real} from Spotlight: it is your home folder, '
+                      '/Applications, or a folder that contains one of them.', file=sys.stderr)
+            continue
+        if not any(same_path_key(real) == same_path_key(root) for root in roots):
+            roots.append(real)
+    return roots
+
+
+def read_record():
+    path = record_path()
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise RuntimeError(f'the Spotlight record is not a regular file: {path}.')
+    if not path.exists():
+        return {}
+    entries = {}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if not line:
+            continue
+        origin, sep, root = line.partition('\t')
+        if not sep or origin not in ORIGINS or not root.startswith('/'):
+            raise RuntimeError(f'the Spotlight record has an unreadable line: {path}.')
+        entries[root] = origin
+    return entries
+
+
+def write_private(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise RuntimeError(f'refusing to replace a non-regular file: {path}.')
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.')
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, data)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+
+
+def write_record(entries):
+    if not entries:
+        try:
+            record_path().unlink()
+        except FileNotFoundError:
+            pass
+        return
+    body = ''.join(f'{origin}\t{root}\n' for root, origin in sorted(entries.items()))
+    write_private(record_path(), body.encode())
+
+
+# --- privileged boundary ---
+
+def platform_block():
+    if shutil.which('omarchy'):
+        return 'Use groundwork-omarchy-mac-arm64; never apply this engine on Omarchy. Nothing was changed.'
+    if platform.system() != 'Darwin':
+        return 'Spotlight exclusions apply only on a Mac. Nothing was changed.'
+    return None
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def sudo_cached():
+    if is_root():
+        return True
+    try:
+        return run(['sudo', '-n', 'true']).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def sudo_prepare():
+    # No capture and no short timeout: the password prompt uses the terminal,
+    # and sudo's own cancel (130) or "no terminal" (10) is the bound.
+    return run(['bash', '-c', SUDO_PREPARE_SCRIPT], timeout=None, capture=False).returncode
+
+
+def privileged(command):
+    return command if is_root() else ['sudo', '-n', *command]
+
+
+def read_live():
+    """Return (raw bytes, parsed configuration); raise ConfigurationError when unreadable.
+
+    Only root can see inside .Spotlight-V100, so this never stats that folder
+    as the user; every look at it goes through the privileged cat.
+    """
+    try:
+        result = run(privileged(['/bin/cat', str(VOLUME_CONFIGURATION)]), text=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ConfigurationError(f'could not read {VOLUME_CONFIGURATION} ({error}).')
+    if result.returncode != 0:
+        detail = (result.stderr or b'').decode(errors='replace').strip()
+        hint = ''
+        if 'not permitted' in detail.lower():
+            hint = ' Give this terminal Full Disk Access in System Settings > Privacy & Security, or edit the list in ' + SEARCH_PRIVACY + '.'
+        elif 'no such file' in detail.lower():
+            hint = ' Spotlight may be off for this volume.'
+        raise ConfigurationError(f'could not read {VOLUME_CONFIGURATION} ({detail or "exit " + str(result.returncode)}).{hint}')
+    return result.stdout, load_configuration(result.stdout)
+
+
+class StepTimeout(ConfigurationError):
+    """A privileged step did not finish; its effect is unknown."""
+
+
+def root_step(command):
+    try:
+        result = run(privileged(command))
+    except subprocess.TimeoutExpired as error:
+        raise StepTimeout(f'{command[0]} did not finish ({error})')
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ConfigurationError(f'{command[0]} could not run ({error})')
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or '').strip()
+        raise ConfigurationError(f'{" ".join(command[:1])} failed ({detail or "exit " + str(result.returncode)})')
+    return (result.stdout or '').strip()
+
+
+def write_live(original, updated):
+    """Back up the file, replace it atomically as root, and verify it.
+
+    The new list is staged in a root-owned temporary file next to the original,
+    given the original's owner and mode, then renamed over it, so a failure
+    before the rename leaves the original untouched.
+    """
+    stamp = time.strftime('%Y%m%dT%H%M%S')
+    backup = state_dir() / BACKUP_DIRNAME / f'VolumeConfiguration.{stamp}.{os.getpid()}.plist'
+    write_private(backup, original)
+    staged = state_dir() / BACKUP_DIRNAME / f'.staged.{os.getpid()}.plist'
+    write_private(staged, dump_configuration(updated, original))
+    target = str(VOLUME_CONFIGURATION)
+    temporary = None
+
+    def remove_temporary():
+        # Only a path that passed the prefix check below is ever removed as root.
+        if temporary:
+            try:
+                run(privileged(['/bin/rm', '-f', temporary]))
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+    try:
+        owner_mode = root_step(['/usr/bin/stat', '-f', '%u:%g %Lp', target]).split()
+        if len(owner_mode) != 2 or not re.fullmatch(r'\d+:\d+', owner_mode[0]) or not re.fullmatch(r'[0-7]{3,4}', owner_mode[1]):
+            raise ConfigurationError(f'could not read the owner and mode of {target}')
+        candidate = root_step(['/usr/bin/mktemp', str(VOLUME_CONFIGURATION.parent / '.groundwork.XXXXXX')])
+        prefix = str(VOLUME_CONFIGURATION.parent) + '/.groundwork.'
+        name = candidate[len(prefix):]
+        if not candidate.startswith(prefix) or not re.fullmatch(r'[A-Za-z0-9]+', name):
+            raise ConfigurationError(f'mktemp returned an unexpected path: {candidate}')
+        temporary = candidate
+        root_step(['/bin/cp', str(staged), temporary])
+        root_step(['/usr/sbin/chown', owner_mode[0], temporary])
+        root_step(['/bin/chmod', owner_mode[1], temporary])
+    except ConfigurationError as error:
+        remove_temporary()
+        raise ConfigurationError(f'could not stage the new Spotlight list: {error}. {target} was not changed.')
+    finally:
+        staged.unlink(missing_ok=True)
+    restore = restore_command(backup)
+    try:
+        root_step(['/bin/mv', '-f', temporary, target])
+    except StepTimeout as error:
+        remove_temporary()
+        raise WriteError(f'replacing {target} did not finish: {error}. The previous copy is {backup}; restore it with: {restore}')
+    except ConfigurationError as error:
+        # mv -f within one folder is a rename: a failed rename leaves the original.
+        remove_temporary()
+        raise ConfigurationError(f'replacing {target} failed: {error}. {target} was not changed; the previous copy is also at {backup}.')
+    try:
+        _, verified = read_live()
+    except ConfigurationError as error:
+        raise WriteError(f'{target} could not be read back ({error}). The previous copy is {backup}; restore it with: {restore}')
+    if exclusions(verified) != exclusions(updated):
+        raise WriteError(f'{target} did not read back as written. The previous copy is {backup}; restore it with: {restore}')
+    return backup
+
+
+def restore_command(backup):
+    return f'sudo /bin/cp {shlex.quote(str(backup))} {shlex.quote(str(VOLUME_CONFIGURATION))}'
+
+
+def read_unreadable():
+    path = unreadable_path()
+    if path.is_symlink() or not path.is_file():
+        return None
+    text = path.read_text(encoding='utf-8', errors='replace').strip()
+    return text or 'reason not recorded'
+
+
+def record_unreadable(reason):
+    write_private(unreadable_path(), (reason.replace('\n', ' ') + '\n').encode())
+
+
+def clear_unreadable():
+    path = unreadable_path()
+    if path.is_file() or path.is_symlink():
+        path.unlink()
+
+
+def ask_permission(action):
+    status = sudo_prepare()
+    if status == 10:
+        print(f'Groundwork: {action} needs an administrator password.')
+        print('Nothing was changed. From a terminal on this machine, run chezmoi apply and enter your password when asked.')
+        return 0, False
+    if status == 130:
+        print('Groundwork: the password prompt was cancelled. Nothing was changed.', file=sys.stderr)
+        return 130, False
+    if status != 0:
+        print(f'Groundwork: administrator permission was not granted (exit {status}). Nothing was changed.', file=sys.stderr)
+        return status, False
+    return 0, True
+
+
+# --- actions ---
+
+def status():
+    block = platform_block()
+    if block:
+        print(block, file=sys.stderr)
+        return 1
+    if opt_out_path().exists() or opt_out_path().is_symlink():
+        print('Groundwork Spotlight exclusions: off by choice; groundwork-spotlight enable turns it back on.')
+        return 0
+    record = read_record()
+    roots = wanted_roots()
+    print('Groundwork Spotlight exclusions: on')
+    print('Folders Groundwork keeps out of Spotlight: ' + (', '.join(roots) if roots else 'none exist on this Mac'))
+    print('Hidden folders such as ~/.t3 and ~/.cache are not listed: macOS normally skips dot folders. /Applications stays indexed.')
+    unreadable = read_unreadable()
+    if unreadable:
+        print(f'Last apply could not read or update the Spotlight list ({unreadable}).')
+        print(f'  unreadable  apply will not ask for a password again until it can read it; add the folders in {SEARCH_PRIVACY}, or grant Full Disk Access and run sudo -v before chezmoi apply.')
+    if not sudo_cached():
+        print('Live exclusion list: not read; it needs administrator permission. Run sudo -v, then this command again.')
+        for root, origin in sorted(record.items()):
+            print(f'  recorded  {root} ({"added by Groundwork" if origin == "groundwork" else "already excluded"})')
+        return 0
+    try:
+        _, configuration = read_live()
+    except ConfigurationError as error:
+        print(f'Live exclusion list: {error}')
+        return 1
+    print(f'Live exclusion list ({SEARCH_PRIVACY}):')
+    listed = exclusions(configuration)
+    origins = {same_path_key(root): origin for root, origin in record.items()}
+    for item in listed:
+        origin = origins.get(same_path_key(item))
+        label = ' (added by Groundwork)' if origin == 'groundwork' else ''
+        print(f'  excluded  {item}{label}')
+    if not listed:
+        print('  (empty)')
+    for root in roots:
+        if not is_excluded(configuration, root):
+            print(f'  missing   {root}')
+    return 0
+
+
+def prepare():
+    block = platform_block()
+    if block:
+        print(block, file=sys.stderr)
+        return 1
+    if opt_out_path().exists() or opt_out_path().is_symlink():
+        print(f'Spotlight exclusions are off ({opt_out_path()}). Nothing was changed.')
+        return 0
+    roots = wanted_roots()
+    if not roots:
+        return 0
+    record = read_record()
+    cached = sudo_cached()
+    if all(root in record for root in roots) and not cached:
+        # Already applied; reading the live list would cost a password prompt.
+        return 0
+    if not cached and read_unreadable():
+        # The last attempt could not read the file even as root (for example,
+        # no Full Disk Access). Asking again on every apply would not help.
+        print(f'Groundwork: Spotlight exclusions are waiting: the list could not be read or updated last time ({unreadable_path()}). '
+              f'Add the folders in {SEARCH_PRIVACY}, or run sudo -v before chezmoi apply to retry.')
+        return 0
+    if not cached:
+        code, granted = ask_permission('adding Spotlight exclusions')
+        if not granted:
+            return code
+    try:
+        original, configuration = read_live()
+    except ConfigurationError as error:
+        # Leave the rest of the apply running; doctor keeps reporting this.
+        record_unreadable(str(error))
+        print(f'Groundwork: Spotlight exclusions were not checked: {error}', file=sys.stderr)
+        print(f'Nothing was changed. You can add the folders in {SEARCH_PRIVACY} instead.', file=sys.stderr)
+        return 0
+    clear_unreadable()
+    updated, added = with_exclusions(configuration, roots)
+    for root in roots:
+        record.setdefault(root, 'groundwork' if root in added else 'existing')
+    if added:
+        try:
+            backup = write_live(original, updated)
+        except (ConfigurationError, WriteError) as error:
+            # A failed write must not stop the rest of chezmoi apply.
+            # Remember it, so the next apply does not ask for a password to fail again.
+            record_unreadable(f'update failed: {error}')
+            print(f'Groundwork: Spotlight exclusions were not added: {error}', file=sys.stderr)
+            print(f'You can add the folders in {SEARCH_PRIVACY} instead.', file=sys.stderr)
+            return 0
+        write_record(record)
+        print('Groundwork: excluded from Spotlight: ' + ', '.join(added) + '.')
+        print(f'Previous list saved at {backup}. The change takes effect after the next restart.')
+        print('Undo: groundwork-spotlight undo --yes')
+    else:
+        write_record(record)
+    return 0
+
+
+def undo(confirmed):
+    block = platform_block()
+    if block:
+        print(block, file=sys.stderr)
+        return 1
+    record = read_record()
+    ours = sorted(root for root, origin in record.items() if origin == 'groundwork')
+    if not confirmed:
+        print('Preview: groundwork-spotlight undo would')
+        for root in ours:
+            print(f'  remove  {root} from {SEARCH_PRIVACY}')
+        if not ours:
+            print('  remove  nothing (Groundwork has not added an exclusion here)')
+        print(f'  record  {opt_out_path()} so chezmoi apply stops adding exclusions')
+        print('Entries you added yourself stay. Run it again with --yes to do this.')
+        return 0
+    # Record the opt-out first, so a failure below cannot be undone by the next apply.
+    write_private(opt_out_path(), b'Spotlight exclusions turned off by groundwork-spotlight undo.\n')
+    print(f'Recorded {opt_out_path()}; chezmoi apply no longer adds Spotlight exclusions.')
+    if not ours:
+        write_record({})
+        print('Groundwork had not added an exclusion here, so the Spotlight list was not changed.')
+        return 0
+    if not sudo_cached():
+        code, granted = ask_permission('removing Spotlight exclusions')
+        if not granted:
+            if code == 0:
+                print('Run groundwork-spotlight undo --yes from a terminal to finish.')
+            return code if code else 1
+    original, configuration = read_live()
+    updated, removed = without_exclusions(configuration, ours)
+    if removed:
+        backup = write_live(original, updated)
+        print('Groundwork: Spotlight indexes these again: ' + ', '.join(removed) + '.')
+        print(f'Previous list saved at {backup}. The change takes effect after the next restart.')
+    else:
+        print('Groundwork\'s exclusions were already gone from the Spotlight list.')
+    write_record({})
+    print('Turn exclusions back on: groundwork-spotlight enable')
+    return 0
+
+
+def enable():
+    block = platform_block()
+    if block:
+        print(block, file=sys.stderr)
+        return 1
+    path = opt_out_path()
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        print(f'Removed {path}; chezmoi apply adds Spotlight exclusions again.')
+    elif path.exists():
+        raise RuntimeError(f'the opt-out path is not a regular file: {path}.')
+    return prepare()
+
+
+def build_parser():
+    parser = Parser(
+        prog='groundwork-spotlight',
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Actions:
+  status         Print the folders Groundwork excludes and the live Search
+                 Privacy list. Reads the list only when administrator
+                 permission is already cached. Changes nothing.
+                 Removing a Groundwork folder by hand in Search Privacy does
+                 not stick: the next apply adds it back. Use undo --yes.
+  prepare        Add any missing exclusion. chezmoi apply runs this. It asks
+                 for a password only when an exclusion is missing.
+  undo [--yes]   Preview, or with --yes remove only the entries Groundwork
+                 added and stop chezmoi apply from adding them again.
+  enable         Clear the undo opt-out and add the exclusions again.
+
+The list is the one System Settings > Spotlight > Search Privacy shows.
+Changes take effect after the next restart.
+'''.strip(),
+    )
+    parser.add_argument('action', nargs='?', default='status', choices=('status', 'prepare', 'undo', 'enable'))
+    parser.add_argument('--yes', action='store_true', help='confirm undo')
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        code = exc.code
+        return 0 if code is None else int(code)
+    if args.yes and args.action != 'undo':
+        print('groundwork-spotlight: --yes applies only to undo.', file=sys.stderr)
+        return 64
+    try:
+        if args.action == 'prepare':
+            return prepare()
+        if args.action == 'undo':
+            return undo(args.yes)
+        if args.action == 'enable':
+            return enable()
+        return status()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print('groundwork-spotlight: ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
