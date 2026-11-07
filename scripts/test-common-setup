@@ -910,6 +910,15 @@ output.write_text('#!/bin/sh\ncp "$FIXTURE_T3" "$HOME/.local/bin/t3"\nchmod +x "
         signed = self.text("home/dot_gitconfig.tmpl", password_manager="1password", signingkey="ssh-ed25519 AAAA")
         self.assertIn("    email = ci@example.com\n    signingkey = ssh-ed25519 AAAA\n\n[init]", signed)
 
+    def test_gitconfig_caps_grep_threads(self):
+        rendered = self.render("home/dot_gitconfig.tmpl")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        path = self.root / "gitconfig"
+        path.write_text(rendered.stdout)
+        got = subprocess.run(["git", "config", "-f", str(path), "--get", "grep.threads"],
+                             text=True, capture_output=True, timeout=5)
+        self.assertEqual(got.stdout, "4\n", got.stderr)
+
     def test_remote_desktop_hook_excludes_headless_and_wsl(self):
         for system, headless, kernel, invokes in [
             ('darwin', False, '', True), ('darwin', True, '', False),
