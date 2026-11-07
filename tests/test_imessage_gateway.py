@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""The iMessage gateway role is off until asked, and then touches only Remote Login and AC sleep."""
+"""The iMessage gateway role is off until asked, and then touches only Remote Login; groundwork-stay-awake owns its AC sleep."""
 from importlib.machinery import SourceFileLoader
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
-import stat
 import subprocess
 import tempfile
 import unittest
@@ -24,22 +23,6 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 gw = importlib.util.module_from_spec(spec)
 loader.exec_module(gw)
 
-AC_SLEEP_10 = """\
-* AC Power:
- Sleep On Power Button 1
- disablesleep         1
- displaysleep         10
- sleep                10
-Battery Power:
- disablesleep         0
- sleep                5
-"""
-AC_SLEEP_0 = """\
-AC Power:
- sleep                0
-Battery Power:
- sleep                5
-"""
 BANNED = (
     'authorized_keys',
     'TCC.db',
@@ -85,9 +68,6 @@ class GatewayTests(unittest.TestCase):
             patch.object(gw.sys, 'stderr', io.StringIO()),
         )
 
-    def state_file(self):
-        return self.home / 'state' / 'groundwork' / gw.STATE_FILENAME
-
     def assert_narrow(self, run):
         for call in run.call_args_list:
             command = call.args[0]
@@ -95,16 +75,11 @@ class GatewayTests(unittest.TestCase):
             blob = ' '.join(command)
             for banned in BANNED:
                 self.assertNotIn(banned, blob, command)
-            if 'pmset' in command:
-                expected = gw.PMSET_WRITE if command[0] == 'sudo' else gw.PMSET_READ
-                self.assertEqual(command, expected)
+            self.assertNotIn('pmset', command)
             self.assertNotIn('-a', command)
             self.assertNotIn('-b', command)
 
     def test_parsers_ignore_decoys_and_non_bools(self):
-        self.assertEqual(gw.parse_pmset(AC_SLEEP_10), (10, 5))
-        self.assertEqual(gw.parse_pmset('sleep 10\nSleep On Power Button 1\n'), (None, None))
-        self.assertEqual(gw.parse_pmset(AC_SLEEP_0), (0, 5))
         text = """\
 imessage_gateway = true
 [other]
@@ -123,8 +98,6 @@ imessage_gateway = "yes"
         )
 
     def test_constants_are_the_narrow_contract(self):
-        self.assertEqual(gw.PMSET_READ, ['pmset', '-g', 'custom'])
-        self.assertEqual(gw.PMSET_WRITE, ['sudo', 'pmset', '-c', 'sleep', '0'])
         self.assertEqual(gw.SYSTEMSETUP, ['sudo', '/usr/sbin/systemsetup', '-setremotelogin', 'on'])
         self.assertEqual(gw.SSH_SERVICE, ['launchctl', 'print', 'system/com.openssh.sshd'])
         self.assertEqual(gw.TAILSCALE_PROCESS, ['pgrep', '-x', 'Tailscale'])
@@ -134,7 +107,7 @@ imessage_gateway = "yes"
         self.assertNotIn('idleTime', text)
         self.assertNotRegex(text, r'\bdefaults write\b')
         self.assertNotRegex(text, r"\['defaults'")
-        self.assertNotRegex(text, r"\['sudo', 'pmset', '-[ab]'")
+        self.assertNotRegex(text, r"\['sudo', 'pmset'")
 
     def test_role_off_prepare_changes_nothing(self):
         for settings in ({'headless': False, 'imessage_gateway': False}, {'headless': False}):
@@ -144,7 +117,6 @@ imessage_gateway = "yes"
                         self.assertEqual(gw.main(['prepare']), 0)
                 run.assert_not_called()
                 self.assertIn('Nothing was changed.', stdout.getvalue())
-                self.assertFalse(self.state_file().exists())
 
     def test_headless_prepare_changes_nothing(self):
         with self.desktop({'headless': True, 'imessage_gateway': True}) as (_stdout, stderr):
@@ -153,13 +125,11 @@ imessage_gateway = "yes"
         run.assert_not_called()
         self.assertIn('Nothing was changed.', stderr.getvalue())
 
-    def test_prepare_records_previous_ac_sleep_and_writes_only_power(self):
+    def test_prepare_enables_remote_login_and_leaves_sleep_to_stay_awake(self):
         effects = [
             self.completed(1),
-            self.completed(0, AC_SLEEP_10),
             self.completed(0),
             self.completed(1, stderr='Operation not permitted'),
-            self.completed(0),
             self.completed(0),
         ]
         with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, _stderr):
@@ -168,226 +138,52 @@ imessage_gateway = "yes"
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(commands, [
             gw.SSH_SERVICE,
-            gw.PMSET_READ,
             ['bash', '-c', gw.SUDO_PREPARE_SCRIPT],
             gw.SYSTEMSETUP,
             ['open', gw.SHARING_URL],
-            gw.PMSET_WRITE,
         ])
         self.assertNotIn(gw.PRIVACY_URL, str(commands))
-        sudo = run.call_args_list[2]
+        sudo = run.call_args_list[1]
         self.assertIsNone(sudo.kwargs['timeout'])
         self.assertIs(sudo.kwargs['capture'], False)
-        recorded = self.state_file()
-        self.assertEqual(recorded.read_text(encoding='utf-8'), '10\n')
-        self.assertEqual(stat.S_IMODE(recorded.stat().st_mode), 0o600)
         self.assert_narrow(run)
-        self.assertIn('Recorded the previous AC sleep value 10', stdout.getvalue())
-        self.assertNotIn('Remote Login is on.', stdout.getvalue())
+        self.assertIn('Sharing settings is open.', stdout.getvalue())
+        self.assertFalse((self.home / 'state').exists())
 
-    def test_prepare_is_idle_when_remote_login_and_ac_sleep_are_already_set(self):
-        effects = [self.completed(0), self.completed(0, AC_SLEEP_0)]
-        with self.desktop({'headless': False, 'imessage_gateway': True}):
-            with patch.object(gw, 'run', side_effect=effects) as run:
+    def test_prepare_is_idle_when_remote_login_is_on(self):
+        with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, _stderr):
+            with patch.object(gw, 'run', side_effect=[self.completed(0)]) as run:
                 self.assertEqual(gw.main(['prepare']), 0)
-        self.assertEqual([call.args[0] for call in run.call_args_list], [gw.SSH_SERVICE, gw.PMSET_READ])
-        self.assertFalse(self.state_file().exists())
-
-    def test_unknown_ac_sleep_changes_nothing(self):
-        effects = [self.completed(0), self.completed(0, 'AC Power:\n displaysleep 10\n')]
-        with self.desktop({'headless': False, 'imessage_gateway': True}):
-            with patch.object(gw, 'run', side_effect=effects) as run:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertEqual(len(run.call_args_list), 2)
-        self.assert_narrow(run)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [gw.SSH_SERVICE])
+        self.assertIn('Remote Login is on.', stdout.getvalue())
 
     def test_sudo_defer_and_cancel_do_not_write(self):
         for status in (10, 130, 2):
             with self.subTest(status=status):
-                effects = [self.completed(1), self.completed(0, AC_SLEEP_10), self.completed(status)]
+                effects = [self.completed(1), self.completed(status)]
                 with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, stderr):
                     with patch.object(gw, 'run', side_effect=effects) as run:
                         self.assertEqual(gw.main(['prepare']), 0 if status == 10 else status)
-                self.assertEqual(len(run.call_args_list), 3)
-                self.assertFalse(self.state_file().exists())
+                self.assertEqual(len(run.call_args_list), 2)
                 self.assert_narrow(run)
                 if status == 10:
                     self.assertIn('Nothing was changed.', stdout.getvalue())
                 if status == 130:
                     self.assertIn('cancelled', stderr.getvalue())
 
-    def test_existing_record_is_not_overwritten(self):
-        recorded = self.state_file()
-        recorded.parent.mkdir(parents=True)
-        recorded.write_text('3\n', encoding='utf-8')
-        os.chmod(recorded, 0o600)
-        effects = [
-            self.completed(1),
-            self.completed(0, AC_SLEEP_10),
-            self.completed(0),
-            self.completed(0),
-            self.completed(0),
-        ]
-        with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, _stderr):
-            with patch.object(gw, 'run', side_effect=effects) as run:
-                self.assertEqual(gw.main(['prepare']), 0)
-        self.assertEqual(recorded.read_text(encoding='utf-8'), '3\n')
-        self.assertEqual(run.call_args_list[-1].args[0], gw.PMSET_WRITE)
-        self.assertNotIn(['open', gw.SHARING_URL], [call.args[0] for call in run.call_args_list])
-        self.assertIn('Remote Login is on.', stdout.getvalue())
-        self.assert_narrow(run)
-
-    def test_symlink_record_blocks_sudo_and_leaves_the_target(self):
-        target = self.home / 'keep'
-        target.write_text('keep\n', encoding='utf-8')
-        recorded = self.state_file()
-        recorded.parent.mkdir(parents=True)
-        recorded.symlink_to(target)
-        effects = [self.completed(1), self.completed(0, AC_SLEEP_10)]
-        with self.desktop({'headless': False, 'imessage_gateway': True}):
-            with patch.object(gw, 'run', side_effect=effects) as run:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertEqual(target.read_text(encoding='utf-8'), 'keep\n')
-        self.assertTrue(recorded.is_symlink())
-        self.assertEqual([call.args[0] for call in run.call_args_list], [gw.SSH_SERVICE, gw.PMSET_READ])
-
-    def test_symlink_created_during_password_prompt_skips_pmset(self):
-        target = self.home / 'secret-sleep'
-        target.write_text('keep\n', encoding='utf-8')
-        recorded = self.state_file()
-
-        def invoke(command, **_kwargs):
-            if command == ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]:
-                recorded.parent.mkdir(parents=True, exist_ok=True)
-                recorded.symlink_to(target)
-                return self.completed(0)
-            if command == gw.SSH_SERVICE:
-                return self.completed(0)
-            if command == gw.PMSET_READ:
-                return self.completed(0, AC_SLEEP_10)
-            self.fail(f'unexpected command {command}')
-
-        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
-            with patch.object(gw, 'run', side_effect=invoke) as run:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertEqual(
-            [call.args[0] for call in run.call_args_list],
-            [gw.SSH_SERVICE, gw.PMSET_READ, ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]],
-        )
-        self.assertEqual(target.read_text(encoding='utf-8'), 'keep\n')
-        self.assertTrue(recorded.is_symlink())
-        self.assertIn('symlink', stderr.getvalue())
-        self.assertIn('AC sleep was not changed', stderr.getvalue())
-        self.assert_narrow(run)
-
-    def test_regular_file_planted_during_password_prompt_skips_pmset(self):
-        recorded = self.state_file()
-        planted = b'planted-sentinel\n'
-
-        def invoke(command, **_kwargs):
-            if command == ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]:
-                recorded.parent.mkdir(parents=True, exist_ok=True)
-                recorded.write_bytes(planted)
-                return self.completed(0)
-            if command == gw.SSH_SERVICE:
-                return self.completed(0)
-            if command == gw.PMSET_READ:
-                return self.completed(0, AC_SLEEP_10)
-            self.fail(f'unexpected command {command}')
-
-        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
-            with patch.object(gw, 'run', side_effect=invoke) as run:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertNotIn(gw.PMSET_WRITE, [call.args[0] for call in run.call_args_list])
-        self.assertFalse(recorded.exists() or recorded.is_symlink())
-        asides = list(recorded.parent.glob(f'.{recorded.name}.aside.*'))
-        self.assertEqual([item.read_bytes() for item in asides], [planted])
-        self.assertIn(str(asides[0]), stderr.getvalue())
-        self.assertIn('AC sleep was not changed', stderr.getvalue())
-        self.assert_narrow(run)
-
-    def test_planted_zero_is_set_aside_so_the_next_prepare_records_real_sleep(self):
-        recorded = self.state_file()
-        sudo_calls = {'count': 0}
-
-        def invoke(command, **_kwargs):
-            if command == ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]:
-                sudo_calls['count'] += 1
-                if sudo_calls['count'] == 1:
-                    recorded.parent.mkdir(parents=True, exist_ok=True)
-                    recorded.write_bytes(b'0\n')
-                return self.completed(0)
-            if command == gw.SSH_SERVICE:
-                return self.completed(0)
-            if command == gw.PMSET_READ:
-                return self.completed(0, AC_SLEEP_10)
-            if command == gw.PMSET_WRITE:
-                self.assertEqual(recorded.read_text(encoding='utf-8'), '10\n')
-                return self.completed(0)
-            self.fail(f'unexpected command {command}')
-
-        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
-            with patch.object(gw, 'run', side_effect=invoke) as first:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertNotIn(gw.PMSET_WRITE, [call.args[0] for call in first.call_args_list])
-        self.assertFalse(recorded.exists() or recorded.is_symlink())
-        self.assertIn('AC sleep was not changed', stderr.getvalue())
-        asides = list(recorded.parent.glob(f'.{recorded.name}.aside.*'))
-        self.assertEqual([item.read_bytes() for item in asides], [b'0\n'])
-
-        with self.desktop({'headless': False, 'imessage_gateway': True}):
-            with patch.object(gw, 'run', side_effect=invoke) as second:
-                self.assertEqual(gw.main(['prepare']), 0)
-        self.assertEqual(recorded.read_text(encoding='utf-8'), '10\n')
-        self.assertEqual(
-            [call.args[0] for call in second.call_args_list],
-            [gw.SSH_SERVICE, gw.PMSET_READ, ['bash', '-c', gw.SUDO_PREPARE_SCRIPT], gw.PMSET_WRITE],
-        )
-        self.assert_narrow(second)
-
-    def test_existing_invalid_record_blocks_pmset(self):
-        recorded = self.state_file()
-        recorded.parent.mkdir(parents=True)
-        recorded.write_text('nope\n', encoding='utf-8')
-        effects = [
-            self.completed(0),
-            self.completed(0, AC_SLEEP_10),
-            self.completed(0),
-        ]
-        with self.desktop({'headless': False, 'imessage_gateway': True}) as (_stdout, stderr):
-            with patch.object(gw, 'run', side_effect=effects) as run:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertEqual(
-            [call.args[0] for call in run.call_args_list],
-            [gw.SSH_SERVICE, gw.PMSET_READ, ['bash', '-c', gw.SUDO_PREPARE_SCRIPT]],
-        )
-        self.assertEqual(recorded.read_text(encoding='utf-8'), 'nope\n')
-        self.assertIn('cannot be restored', stderr.getvalue())
-        self.assert_narrow(run)
-
-    def test_directory_record_blocks_sudo(self):
-        recorded = self.state_file()
-        recorded.mkdir(parents=True)
-        effects = [self.completed(1), self.completed(0, AC_SLEEP_10)]
-        with self.desktop({'headless': False, 'imessage_gateway': True}):
-            with patch.object(gw, 'run', side_effect=effects) as run:
-                self.assertEqual(gw.main(['prepare']), 1)
-        self.assertEqual(len(run.call_args_list), 2)
-        self.assertTrue(recorded.is_dir())
-
     def test_status_is_read_only(self):
         effects = [
             self.completed(0),
-            self.completed(0, AC_SLEEP_0),
             self.completed(1, stderr='eDSRecordNotFound'),
             self.completed(0),
+            self.completed(0, 'Wanted here: no\npmset -g custom:\n  AC Power:\n'),
         ]
         with self.desktop({'headless': False, 'imessage_gateway': False}) as (stdout, _stderr):
             with patch.object(gw, 'run', side_effect=effects) as run:
                 self.assertEqual(gw.main(['status']), 0)
         self.assertEqual(
             [call.args[0] for call in run.call_args_list],
-            [gw.SSH_SERVICE, gw.PMSET_READ, gw.ACCESS_GROUP, gw.TAILSCALE_PROCESS],
+            [gw.SSH_SERVICE, gw.ACCESS_GROUP, gw.TAILSCALE_PROCESS, [gw.stay_awake_command(), 'status']],
         )
         text = stdout.getvalue()
         self.assertIn('Role stored: off', text)
@@ -395,14 +191,12 @@ imessage_gateway = "yes"
         self.assertIn('Remote Login: on', text)
         self.assertIn('not limited to a selected list', text)
         self.assertIn('gateway account alone', text)
-        self.assertIn('AC sleep minutes: 0', text)
-        self.assertIn('Battery sleep minutes: 5', text)
         self.assertIn('Tailscale: running', text)
-        self.assertIn('not recorded', text)
+        self.assertIn('Power (groundwork-stay-awake status):\n  Wanted here: no\n  pmset -g custom:\n', text)
         self.assertIn('Blip check: not installed', text)
         self.assertNotIn('python3', text)
         self.assert_narrow(run)
-        self.assertFalse(self.state_file().exists())
+        self.assertFalse((self.home / 'state').exists())
 
     def test_status_reports_installed_blip_check_without_running_it(self):
         blip = self.home / '.blip' / 'bin' / 'blip-check'
@@ -410,9 +204,9 @@ imessage_gateway = "yes"
         blip.write_text('print("ok")\n', encoding='utf-8')
         effects = [
             self.completed(0),
-            self.completed(0, AC_SLEEP_0),
             self.completed(0, 'GroupMembership: gateway\n'),
             self.completed(1),
+            self.completed(0, 'Wanted here: no\npmset -g custom:\n  AC Power:\n'),
         ]
         with self.desktop({'headless': False, 'imessage_gateway': True}) as (stdout, _stderr):
             with patch.object(gw, 'run', side_effect=effects) as run:
@@ -420,7 +214,7 @@ imessage_gateway = "yes"
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(
             commands,
-            [gw.SSH_SERVICE, gw.PMSET_READ, gw.ACCESS_GROUP, gw.TAILSCALE_PROCESS],
+            [gw.SSH_SERVICE, gw.ACCESS_GROUP, gw.TAILSCALE_PROCESS, [gw.stay_awake_command(), 'status']],
         )
         for command in commands:
             blob = ' '.join(command)
@@ -435,26 +229,6 @@ imessage_gateway = "yes"
         self.assertIn('Tailscale: not running', text)
         self.assertEqual(blip.read_text(encoding='utf-8'), 'print("ok")\n')
         self.assert_narrow(run)
-
-    def test_status_does_not_follow_a_symlink_record(self):
-        target = self.home / 'secret'
-        target.write_text('99\n', encoding='utf-8')
-        recorded = self.state_file()
-        recorded.parent.mkdir(parents=True)
-        recorded.symlink_to(target)
-        effects = [
-            self.completed(0),
-            self.completed(0, AC_SLEEP_0),
-            self.completed(1, stderr='No such key'),
-            self.completed(1),
-        ]
-        with self.desktop({'headless': False}) as (stdout, _stderr):
-            with patch.object(gw, 'run', side_effect=effects):
-                self.assertEqual(gw.main(['status']), 0)
-        text = stdout.getvalue()
-        self.assertIn('Recorded previous AC sleep: unreadable', text)
-        self.assertNotIn('Recorded previous AC sleep: 99', text)
-        self.assertEqual(target.read_text(encoding='utf-8'), '99\n')
 
     def test_setup_opens_both_panes_without_pmset(self):
         with self.desktop({'headless': False, 'imessage_gateway': False}) as (stdout, _stderr):
@@ -525,16 +299,16 @@ imessage_gateway = "yes"
         self.assertEqual(len(keys), len(kinds))
         self.assertEqual(len(keys), len(clears))
         self.assertEqual(len(keys), len(labels))
-        self.assertEqual(keys[-1], 'imessage_gateway')
-        self.assertEqual(kinds[-1], 'bool')
-        self.assertEqual(clears[-1], 'no')
-        self.assertEqual(labels[-1], 'iMessage gateway')
+        index = keys.index('imessage_gateway')
+        self.assertEqual(kinds[index], 'bool')
+        self.assertEqual(clears[index], 'no')
+        self.assertEqual(labels[index], 'iMessage gateway')
         self.assertIn(
             'This applies only on a desktop Mac. Linux, WSL, a headless Mac, and Omarchy keep the saved answer and do not change Remote Login or sleep.',
             text,
         )
         self.assertIn(
-            'if k in ("personal_apps", "work_extensions", "imessage_gateway") or isinstance(data.get(k), bool):',
+            'if k in ("personal_apps", "work_extensions", "imessage_gateway", "stay_awake_on_power") or isinstance(data.get(k), bool):',
             text,
         )
         template = TEMPLATE.read_text(encoding='utf-8')
