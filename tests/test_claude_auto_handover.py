@@ -844,6 +844,51 @@ class T3ResolutionTests(Sandbox):
         output = self.report(extra={"LOGIN_SHELL_FAIL": "1"})
         self.assertIn("login-shell PATH T3 Code reads could not be observed", output)
 
+    def caps_report(self):
+        command = ["/bin/bash", "-c", 'set -euo pipefail; . "$1"; gw_t3_claude_subagent_caps_report',
+                   "test", str(LIB)]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_subagent_caps_set_missing_and_different(self):
+        def env(**values):
+            return [{"name": name, "value": value, "sensitive": False} for name, value in values.items()]
+        mtime, text = self.write_settings({"providerInstances": {
+            "capped": self.claude_instance(environment=[
+                {"name": "ANTHROPIC_API_KEY", "value": "sk-never-print-this", "sensitive": True},
+                *env(CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="20", CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH="1"),
+                *env(CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="4")]),  # the last entry wins, as in T3
+            "uncapped": self.claude_instance(),
+            "loose": self.claude_instance(environment=env(
+                CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS="4", CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH="31337")),
+            "grok": {"driver": "grok"},
+        }})
+        output = self.caps_report()
+        self.assertIn("Claude instance capped sets CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=4.\n"
+                      "T3 Code: Claude instance capped sets CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1.\n", output)
+        self.assertNotIn("Providers → capped", output)
+        self.assertIn("Claude instance uncapped does not set CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS "
+                      "(Groundwork value: 4)", output)
+        self.assertIn("Claude instance uncapped does not set CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH", output)
+        self.assertIn("Claude instance loose sets CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH to a value other than 1", output)
+        for instance in ("uncapped", "loose"):
+            self.assertIn(f"Fix it in T3 Code → Settings → Providers → {instance} → Environment variables: "
+                          "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=4 and CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1.",
+                          output)
+        self.assertNotIn("grok", output)
+        for value in ("sk-never-print-this", "31337", "20"):
+            self.assertNotIn(value, output)
+        # Report only: T3's settings are never written.
+        self.assertEqual((self.settings.stat().st_mtime_ns, self.settings.read_text()), (mtime, text))
+
+    def test_subagent_caps_without_settings_or_claude_instance_do_not_apply(self):
+        self.assertIn("no settings file at", self.caps_report())
+        self.write_settings({"providerInstances": {"grok": {"driver": "grok"}}})
+        output = self.caps_report()
+        self.assertIn("no Claude provider instance in", output)
+        self.assertNotIn("warning", output)
+
     def test_doctor_ai_tools_includes_the_t3_check(self):
         managed = self.install("2.4.2")
         self.t3.mkdir()
@@ -854,6 +899,7 @@ class T3ResolutionTests(Sandbox):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"T3 Code: Claude instance claudeAgent would run {managed}", result.stdout)
+        self.assertIn("subagent caps not applicable", result.stdout)
         self.assertRegex(DOCTOR.read_text(), re.compile(r"T3 Code's settings are read, never changed"))
 
 
