@@ -227,6 +227,20 @@
       <h2><span class="hash" aria-hidden="true">#</span>Customize without forking</h2>
       <p>Groundwork is a shared base with a personal layer. For normal personal preferences, use the local override files that Groundwork intentionally loads last: <code>~/.zshrc.local</code>, <code>~/.gitconfig.local</code>, and <code>~/.config/tmux/tmux.local.conf</code>. For setup choices (release posture, password manager, and so on), run <code>groundwork-configure</code> — it shows your current answers, changes only what you pick, previews the diff, and applies after you confirm. (Plain <code>chezmoi init</code> only <em>regenerates</em> from your existing answers; it never asks what to change.) See <a href="customizing.html">Customizing</a> for the full tiered model.</p>
 
+      <h2 id="stay-awake-on-power"><span class="hash" aria-hidden="true">#</span>Stay awake on power</h2>
+      <p>A Mac that runs long unattended agent work, such as overnight lanes or verification runs, should not stop because it idled to sleep. Running <code>caffeinate</code> from a shell is fragile: it stops when that shell, the terminal, or the login session ends, and nothing records that it was meant to be on. Groundwork has a per-machine setting instead. It is off by default. Turn it on only on the Mac that needs it: run <code>groundwork-configure</code> and set <strong>Stay awake on power</strong> to yes. The answer is saved in that machine&apos;s chezmoi config, so every other Mac keeps the macOS sleep setting.</p>
+      <table class="keytable">
+        <tr><td><strong>What changes</strong></td><td>System sleep on power only: <code>pmset -c sleep 0</code>. The first time it changes the value, Groundwork records the earlier number in <code>~/.local/state/groundwork/stay-awake-ac-sleep</code>, and later applies keep that first number. The <a href="macos.html#macos-overrides">macOS overrides list</a> has this row too.</td></tr>
+        <tr><td><strong>What stays</strong></td><td>Display sleep, battery sleep, and <code>disablesleep</code> stay as macOS has them. On battery the Mac still sleeps, so a laptop in a bag does not drain flat.</td></tr>
+        <tr><td><strong>Turning it off</strong></td><td>Set it back to no in <code>groundwork-configure</code>. The apply restores the recorded value and removes the record. The <a href="https://github.com/jasondockery/groundwork-mac/blob/main/docs/imessage-gateway.md">iMessage gateway</a> role uses the same setting, so while that role is still on, sleep stays at 0 until both are off. If you changed on-power sleep yourself since then, your value is kept.</td></tr>
+        <tr><td><strong>Check it</strong></td><td><code>groundwork-stay-awake status</code> or <code>groundwork-doctor</code> prints why it is on, the recorded value, and <code>pmset -g custom</code>. Neither changes anything.</td></tr>
+        <tr><td><strong>Password</strong></td><td>Changing sleep needs an administrator password. When the apply has no terminal that can ask, nothing changes and the next apply from a terminal tries again.</td></tr>
+      </table>
+      <div class="callout warn">
+        <span class="label">A closed lid still sleeps</span>
+        <p>Keep the lid open, or attach an external display, power, and a keyboard or mouse. With the lid closed and no external display, a MacBook sleeps even with sleep set to 0. Groundwork does not set <code>disablesleep</code>, because a laptop that cannot sleep stays awake in a bag.</p>
+      </div>
+
 
 <div class="callout note">
   <span class="label">Linux / WSL2 / containers</span>

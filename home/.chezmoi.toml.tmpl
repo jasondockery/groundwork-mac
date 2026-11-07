@@ -176,6 +176,17 @@ honor it only on a graphical Mac. */ -}}
 {{- $imessageGateway = .imessage_gateway -}}
 {{- end -}}
 {{- end -}}
+{{- /* Stay awake on power is a mutable desktop-Mac choice for a Mac that runs
+long unattended work. groundwork-configure owns the change, so bootstrap never
+asks. Default false, which is also what an existing machine gets before the
+key exists. A stored bool is copied through on every platform; the apply hook
+honors it only on a graphical Mac. */ -}}
+{{- $stayAwakeOnPower := false -}}
+{{- if hasKey . "stay_awake_on_power" -}}
+{{- if kindIs "bool" .stay_awake_on_power -}}
+{{- $stayAwakeOnPower = .stay_awake_on_power -}}
+{{- end -}}
+{{- end -}}
 {{- /* Local inference is a mutable Apple Silicon choice. groundwork-configure
 owns the change, so bootstrap never asks, including on Intel Macs, Linux, and
 WSL. Default false, which is also what an existing machine gets before the key
@@ -239,6 +250,7 @@ sourceDir = {{ .chezmoi.workingTree | quote }}
     xcode = {{ $xcode }}
     beta = {{ $beta }}
     imessage_gateway = {{ $imessageGateway }}
+    stay_awake_on_power = {{ $stayAwakeOnPower }}
     local_inference = {{ $localInference }}
     git_filter_repo = {{ $gitFilterRepo }}
     claude_code_owner = {{ $claudeCodeOwner | quote }}

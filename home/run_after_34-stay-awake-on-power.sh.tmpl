@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+{{ if and (eq .chezmoi.os "darwin") (not .headless) -}}
+{{- /* Run while a reason wants no idle sleep on power, or while a recorded
+earlier value still needs restoring. Otherwise this Mac does no power work. */ -}}
+{{- $run := false -}}
+{{- range $key := list "stay_awake_on_power" "imessage_gateway" -}}
+{{- if hasKey $ $key -}}
+{{- $value := index $ $key -}}
+{{- if and (kindIs "bool" $value) $value -}}
+{{- $run = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $stateHome := env "XDG_STATE_HOME" -}}
+{{- if not $stateHome -}}
+{{- $stateHome = joinPath .chezmoi.homeDir ".local" "state" -}}
+{{- end -}}
+{{- range $name := list "stay-awake-ac-sleep" "imessage-gateway-ac-sleep" -}}
+{{- if lstat (joinPath $stateHome "groundwork" $name) -}}
+{{- $run = true -}}
+{{- end -}}
+{{- end -}}
+{{- if $run }}
+# Sets AC sleep to 0 while a reason is on and restores the recorded value when
+# none is. Display sleep, battery sleep, and disablesleep stay untouched.
+"$HOME/.local/bin/groundwork-stay-awake" apply
+{{ end -}}
+{{ end -}}

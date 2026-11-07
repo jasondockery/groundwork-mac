@@ -14,7 +14,7 @@ The preference is `imessage_gateway` in the chezmoi config. It defaults to false
 
 Linux, WSL, a headless Mac, and Omarchy do not apply the role. Omarchy must not run this engine; its client setup lives in the Omarchy repository.
 
-With the role off, an apply does not call the helper. With it on, a desktop apply runs `groundwork-imessage-gateway prepare`.
+With the role off, an apply does not call the helper. With it on, a desktop apply runs `groundwork-imessage-gateway prepare` for Remote Login, then `groundwork-stay-awake apply` for sleep.
 
 ## What changes
 
@@ -23,7 +23,7 @@ With the role off, an apply does not call the helper. With it on, a desktop appl
 | Remote Login (OpenSSH) | off | on | Blip's only transport. The Tailscale app cannot serve Tailscale SSH. |
 | `pmset -c sleep` (on power) | the system sleeps after idle | `0` | A sleeping gateway takes Blip offline. `-c` leaves battery sleep unchanged, so a laptop off the charger does not drain flat. |
 
-`prepare` reads the current on-power sleep value and, the first time it changes it, writes that integer to `~/.local/state/groundwork/imessage-gateway-ac-sleep` (or `$XDG_STATE_HOME/groundwork/` when that variable is set). A later run keeps the original number. `status` prints it.
+Sleep is owned by `groundwork-stay-awake`, the same command behind the per-machine [Stay awake on power](setup.html#stay-awake-on-power) setting. It reads the current on-power sleep value and, the first time it changes it, writes that integer to `~/.local/state/groundwork/stay-awake-ac-sleep` (or `$XDG_STATE_HOME/groundwork/` when that variable is set). A later run keeps the original number. A record from an earlier release at `imessage-gateway-ac-sleep` in the same folder is moved to the new name on the next apply. `groundwork-stay-awake status` prints the record and `pmset -g custom`, and the gateway's `status` includes that report.
 
 These stay manual. Groundwork does not set them:
 
@@ -40,7 +40,7 @@ Privileged steps use Groundwork's administrator-password helper. If the apply ha
 groundwork-imessage-gateway status
 ```
 
-`status` reports Remote Login (`launchctl print system/com.openssh.sshd`), whether SSH is limited to selected users, on-power and battery sleep (`pmset -g custom`), whether the Tailscale app is running, and the recorded previous sleep value. If `~/.blip/bin/blip-check` exists, status says it is installed and prints the command Blip wants from the client: `ssh <host> 'python3 "$HOME/.blip/bin/blip-check"'`. `<host>` is this Mac's SSH name. That Messages probe can raise the one-time Allow prompt, so status does not run it.
+`status` reports Remote Login (`launchctl print system/com.openssh.sshd`), whether SSH is limited to selected users, whether the Tailscale app is running, and the `groundwork-stay-awake status` power report: why sleep is held at 0, the recorded previous sleep value, and `pmset -g custom`. If `~/.blip/bin/blip-check` exists, status says it is installed and prints the command Blip wants from the client: `ssh <host> 'python3 "$HOME/.blip/bin/blip-check"'`. `<host>` is this Mac's SSH name. That Messages probe can raise the one-time Allow prompt, so status does not run it.
 
 ```bash
 groundwork-imessage-gateway
@@ -83,35 +83,9 @@ Full Disk Access is per `sshd-keygen-wrapper`, not per key. After you grant it, 
 
 ## Undo
 
-Turn the role off and apply before restoring sleep. An apply with the role still on sets on-power sleep back to 0.
-
 1. In `groundwork-configure`, turn the iMessage gateway role off.
-2. Run `chezmoi apply`.
-3. Restore the recorded on-power sleep value with the checks below.
-4. Turn Remote Login off in System Settings → General → Sharing if you no longer want it.
-
-The record must be a regular file and not a symlink. Do not use `cat`; it follows symlinks. Read the file only after that check. Its text, without the recorder's single trailing newline, must match `^(0|[1-9][0-9]{0,5})$`. Pass only that integer to `sudo pmset -c sleep`.
-
-```bash
-record="${XDG_STATE_HOME:-$HOME/.local/state}/groundwork/imessage-gateway-ac-sleep"
-if [[ -L "$record" || ! -f "$record" ]]; then
-  printf 'Refusing to restore sleep: %s must be a regular file and not a symlink.\n' "$record" >&2
-else
-  value=""
-  extra_present=0
-  {
-    IFS= read -r value || true
-    if IFS= read -r _; then
-      extra_present=1
-    fi
-  } < "$record"
-  if [[ "$extra_present" -ne 0 || ! "$value" =~ ^(0|[1-9][0-9]{0,5})$ ]]; then
-    printf 'Refusing to restore sleep: %s must contain one integer matching ^(0|[1-9][0-9]{0,5})$.\n' "$record" >&2
-  else
-    sudo pmset -c sleep "$value"
-  fi
-fi
-```
+2. Run `chezmoi apply` from a terminal. When Stay awake on power is also off, the apply restores the recorded on-power sleep value and removes the record. When it is still on, sleep stays at 0 for that setting. Check with `groundwork-stay-awake status`.
+3. Turn Remote Login off in System Settings → General → Sharing if you no longer want it.
 
 To revoke the privacy grants, open Privacy & Security and remove the `sshd-keygen-wrapper` entries under Full Disk Access and Automation. Also remove Accessibility and Contacts entries if you added them. Groundwork does not edit the privacy database. `tccutil reset AppleEvents` is the broad Automation reset above; it is not limited to this role.
 

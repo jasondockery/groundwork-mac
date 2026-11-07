@@ -67,6 +67,8 @@ Sections (all run by default):
                 are running. update-all reports the same finding but never
                 relaunches them itself; this is where you'd notice it between
                 runs and where the actual relaunch command is named.
+  Power         (macOS) whether stay awake on power is wanted here and why,
+                the recorded earlier on-power sleep value, and pmset -g custom.
   Docker        daemon reachability, engine hygiene (log rotation, image
                 store), disk usage, and leftovers: containers, dangling
                 images, volumes, and the labeled-ephemeral scratch images —
@@ -255,6 +257,23 @@ always_on_apps_section() {
   else
     ok "Every installed always-on app (Karabiner-Elements, Raycast, BetterDisplay, Anybox) is running"
   fi
+}
+
+power_section() {
+  heading "Power"
+
+  if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" ]]; then
+    note "Stay awake on power is macOS-only; no power state is claimed here."
+    return 0
+  fi
+  local helper="$HOME/.local/bin/groundwork-stay-awake"
+  if [[ ! -x "$helper" ]]; then
+    warn "groundwork-stay-awake is missing: $helper"
+    note "Restore it (this runs no install hooks): chezmoi apply --exclude=scripts ~/.local/bin/groundwork-stay-awake"
+    return 0
+  fi
+  # status reads pmset -g custom and the recorded sleep value; it changes nothing.
+  "$helper" status 2>&1 | sed 's/^/  /' || true
 }
 
 browser_section() {
@@ -1496,6 +1515,7 @@ case "$section" in
     browser_section
     karabiner_section
     always_on_apps_section
+    power_section
     docker_section
     printf '\nRun groundwork-doctor --storage for the (slower) curated disk-usage report.\n'
     ;;
