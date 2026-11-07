@@ -106,10 +106,11 @@ def parse_settings(text):
 
 
 def load_settings():
+    # None means the config could not be read, which is not the same as off.
     try:
         text = config_path().read_text(encoding='utf-8')
     except OSError:
-        return {}
+        return None
     return parse_settings(text)
 
 
@@ -235,15 +236,21 @@ def read_recorded(path):
 
 def adopt_legacy_record():
     # Move the gateway's old record to the shared name so there is one record.
-    # When the shared record already exists it wins and the old file stays.
+    # When the shared record already exists it wins, and the old file is set
+    # aside so a later apply can never restore its obsolete value.
     legacy = legacy_state_path()
     destination = state_path()
     if not (legacy.exists() or legacy.is_symlink()):
         return
     if destination.exists() or destination.is_symlink():
+        aside = move_record_aside(legacy)
+        print(f'Set aside the earlier iMessage gateway sleep record at {aside}; {destination} is the record now.')
         return
     if read_recorded(legacy) == 'unreadable':
-        raise RuntimeError(f'the earlier iMessage gateway sleep record at {legacy} cannot be restored.')
+        raise RuntimeError(
+            f'the earlier iMessage gateway sleep record at {legacy} cannot be restored. '
+            'Check the value, then remove the file or replace it with one integer.'
+        )
     os.replace(legacy, destination)
     print(f'Moved the earlier iMessage gateway sleep record to {destination}.')
 
@@ -357,14 +364,16 @@ def apply():
         print(block[1], file=sys.stderr)
         return block[0]
     settings = load_settings()
-    if settings.get('headless') is not False:
-        print('Stay awake on power applies only on a desktop Mac. Nothing was changed.', file=sys.stderr)
+    if settings is None:
+        print(f'Stay awake: the chezmoi config at {config_path()} could not be read. Nothing was changed.', file=sys.stderr)
         return 1
     try:
         adopt_legacy_record()
     except RuntimeError as error:
         print(f'Stay awake: {error} Nothing was changed.', file=sys.stderr)
         return 1
+    # A Mac that is not a desktop never wants sleep held at 0, but it still
+    # restores a value recorded while it was one.
     reasons = wanted_reasons(settings)
     if reasons:
         return keep_awake(reasons)
@@ -381,6 +390,9 @@ def status():
         print(block[1], file=sys.stderr)
         return block[0]
     settings = load_settings()
+    if settings is None:
+        print(f'Stay awake: the chezmoi config at {config_path()} could not be read; the stored reasons are unknown.', file=sys.stderr)
+        settings = {}
     for key, label in REASONS:
         print(f'{label}: {stored(settings.get(key))} ({key})')
     reasons = wanted_reasons(settings)
@@ -395,7 +407,7 @@ def status():
         if recorded is not None:
             print(f'Recorded previous AC sleep: {recorded} ({path})')
             if not reasons and recorded != 'unreadable':
-                print(f'The next desktop apply restores AC sleep to {recorded} unless it was changed by hand.')
+                print(f'The next apply restores AC sleep to {recorded} unless it was changed by hand.')
             break
     else:
         print(f'Recorded previous AC sleep: not recorded ({state_path()})')
@@ -420,7 +432,7 @@ Actions:
   status   Report the stored reasons, the recorded earlier AC sleep value, and `pmset -g custom`. Changes nothing. This is the default.
   apply    Run by a desktop apply. While a reason is on, set AC sleep to 0 and record the earlier value once. When none is on, restore that value. A non-interactive apply defers the administrator prompt instead of aborting.
 
-Turn stay_awake_on_power on or off with groundwork-configure. Linux, WSL, a headless Mac, and Omarchy do not apply it.
+Turn stay_awake_on_power on or off with groundwork-configure. Linux, WSL, and Omarchy do not apply it. A headless Mac never holds sleep at 0, but it still restores a value recorded while it was a desktop.
 '''.strip(),
     )
     parser.add_argument('action', nargs='?', default='status', choices=('status', 'apply'))

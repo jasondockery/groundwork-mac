@@ -38,7 +38,7 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "ff06a6dd3e915bb49cea1b06dc79264c006c092bf51b2ca0a0bb548f0fb530cf",
+      "sha256": "a3fb97b494c9f2be53e19cb4bad498090eefa4d5c24026fe95fadd1b00197d05",
       "lastmod": "2026-11-07"
     },
     "customizing.html": {
@@ -130,7 +130,7 @@
       "lastmod": "2026-10-18"
     },
     "macos.html": {
-      "sha256": "ce5727698da68a64385d1929aec7cbcb072e90e8eb3f71899271e6f3da448f66",
+      "sha256": "f2c8db34d3109853ede19bb0d243d630f7024a48e73f5acb2feeddbf91ceb9ac",
       "lastmod": "2026-11-07"
     },
     "neovim.html": {
@@ -162,7 +162,7 @@
       "lastmod": "2026-10-30"
     },
     "setup.html": {
-      "sha256": "e3e00a0c9bcd00f3c2c5f09ee7e95e3804713ab7b262f77d01e1af8a1390feca",
+      "sha256": "3c43eb5cb53a22027613be1b8b8847eb8372e10c82d9f4e54883594db33f880b",
       "lastmod": "2026-11-07"
     },
     "shell.html": {

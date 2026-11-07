@@ -37,8 +37,9 @@ GATEWAY_ONLY = {'headless': False, 'stay_awake_on_power': False, 'imessage_gatew
 class FakePmset:
     """A Mac's power settings as pmset reports and changes them."""
 
-    def __init__(self, ac=10, battery=5, display=10, sudo_status=0, on_sudo=None):
+    def __init__(self, ac=10, battery=5, display=10, sudo_status=0, on_sudo=None, pmset_status=0):
         self.ac = ac
+        self.pmset_status = pmset_status
         self.battery = battery
         self.display = display
         self.sudo_status = sudo_status
@@ -65,8 +66,9 @@ class FakePmset:
                 self.on_sudo()
             return subprocess.CompletedProcess(command, self.sudo_status, stdout='', stderr='')
         if command[:4] == ['sudo', 'pmset', '-c', 'sleep'] and len(command) == 5 and command[4].isdigit():
-            self.ac = int(command[4])
-            return subprocess.CompletedProcess(command, 0, stdout='', stderr='')
+            if self.pmset_status == 0:
+                self.ac = int(command[4])
+            return subprocess.CompletedProcess(command, self.pmset_status, stdout='', stderr='')
         raise AssertionError(f'unexpected command {command}')
 
     def commands(self):
@@ -99,7 +101,7 @@ class StayAwakeTests(unittest.TestCase):
         with patch.object(sa.platform, 'system', return_value=system), \
                 patch.object(sa, 'is_wsl', return_value=wsl), \
                 patch.object(sa.shutil, 'which', return_value='/usr/bin/omarchy' if omarchy else None), \
-                patch.object(sa, 'load_settings', return_value=dict(settings)), \
+                patch.object(sa, 'load_settings', return_value=None if settings is None else dict(settings)), \
                 patch.object(sa, 'run', side_effect=pmset), \
                 patch.object(sa.sys, 'stdout', stdout), \
                 patch.object(sa.sys, 'stderr', stderr):
@@ -219,6 +221,7 @@ class StayAwakeTests(unittest.TestCase):
         self.assertEqual(pmset.commands(), [])
         self.assertEqual(self.legacy().read_text(encoding='utf-8'), 'nope\n')
         self.assertIn('cannot be restored', err)
+        self.assertIn('Check the value, then remove the file or replace it with one integer.', err)
 
     def test_sudo_defer_and_cancel_change_nothing(self):
         for settings, record in ((ON, None), (OFF, '10\n')):
@@ -287,6 +290,63 @@ class StayAwakeTests(unittest.TestCase):
         self.assertEqual(pmset.commands(), [])
         self.assertIn('cannot be restored', err)
 
+    def test_a_failed_sleep_write_keeps_the_new_record(self):
+        pmset = FakePmset(ac=10, pmset_status=1)
+        code, _out, err = self.invoke(ON, pmset)
+        self.assertEqual(code, 1)
+        self.assertEqual(pmset.commands(), [sa.PMSET_READ, SUDO, sa.PMSET_SLEEP_ZERO])
+        self.assertEqual(pmset.ac, 10)
+        self.assertEqual(self.record().read_text(encoding='utf-8'), '10\n')
+        self.assertIn('AC sleep was not changed', err)
+        self.assertIn('value 10 is recorded', err)
+
+    def test_a_failed_restore_keeps_the_record(self):
+        self.write_record('10\n')
+        pmset = FakePmset(ac=0, pmset_status=1)
+        code, _out, err = self.invoke(OFF, pmset)
+        self.assertEqual(code, 1)
+        self.assertEqual(pmset.commands(), [sa.PMSET_READ, SUDO, ['sudo', 'pmset', '-c', 'sleep', '10']])
+        self.assertEqual(pmset.ac, 0)
+        self.assertEqual(self.record().read_text(encoding='utf-8'), '10\n')
+        self.assertIn('still recorded', err)
+
+    def test_a_stale_gateway_record_is_set_aside_when_the_shared_record_exists(self):
+        self.write_record('10\n')
+        self.write_record('3\n', self.legacy())
+        pmset = FakePmset(ac=0)
+        code, out, _err = self.invoke(ON, pmset)
+        self.assertEqual(code, 0)
+        self.assertFalse(self.legacy().exists() or self.legacy().is_symlink())
+        asides = list(self.legacy().parent.glob(f'.{self.legacy().name}.aside.*'))
+        self.assertEqual([item.read_text(encoding='utf-8') for item in asides], ['3\n'])
+        self.assertIn('Set aside the earlier iMessage gateway sleep record', out)
+        restored = FakePmset(ac=0)
+        self.assertEqual(self.invoke(OFF, restored)[0], 0)
+        self.assertEqual(restored.ac, 10)
+        self.assertFalse(self.record().exists())
+        idle = FakePmset(ac=10)
+        self.assertEqual(self.invoke(OFF, idle)[0], 0)
+        self.assertEqual(idle.commands(), [])
+
+    def test_a_mac_switched_to_headless_restores_the_record(self):
+        self.write_record('10\n')
+        pmset = FakePmset(ac=0)
+        code, out, _err = self.invoke({'headless': True, 'stay_awake_on_power': True}, pmset)
+        self.assertEqual(code, 0)
+        self.assertEqual(pmset.ac, 10)
+        self.assertFalse(self.record().exists())
+        self.assertIn('Restored AC sleep to 10', out)
+
+    def test_an_unreadable_config_changes_nothing(self):
+        self.write_record('10\n')
+        pmset = FakePmset(ac=0)
+        code, _out, err = self.invoke(None, pmset)
+        self.assertEqual(code, 1)
+        self.assertEqual(pmset.commands(), [])
+        self.assertEqual(self.record().read_text(encoding='utf-8'), '10\n')
+        self.assertIn('could not be read', err)
+        self.assertNotIn('applies only on a desktop Mac', err)
+
     def test_unknown_ac_sleep_changes_nothing(self):
         def unreadable(command, **_kwargs):
             if command == sa.PMSET_READ:
@@ -298,7 +358,9 @@ class StayAwakeTests(unittest.TestCase):
 
     def test_headless_and_other_platforms_change_nothing(self):
         pmset = FakePmset()
-        self.assertEqual(self.invoke({'headless': True, 'stay_awake_on_power': True}, pmset)[0], 1)
+        code, out, _err = self.invoke({'headless': True, 'stay_awake_on_power': True}, pmset)
+        self.assertEqual(code, 0)
+        self.assertIn('Nothing was changed.', out)
         cases = (
             (dict(system='Linux', wsl=True), 'WSL has no Mac power settings'),
             (dict(system='Linux', omarchy=True), 'groundwork-omarchy-mac-arm64'),
@@ -326,11 +388,11 @@ class StayAwakeTests(unittest.TestCase):
         self.assertIn('   sleep                0\n', out)
         self.assertIn('closed lid still sleeps', out)
         self.assertEqual(self.record().read_text(encoding='utf-8'), '10\n')
-        self.assertNotIn('next desktop apply restores', out)
+        self.assertNotIn('next apply restores', out)
         pending = FakePmset(ac=0)
         code, out, _err = self.invoke(OFF, pending, 'status')
         self.assertEqual(code, 0)
-        self.assertIn('The next desktop apply restores AC sleep to 10', out)
+        self.assertIn('The next apply restores AC sleep to 10', out)
         self.record().unlink()
         default = FakePmset(ac=10)
         code, out, _err = self.invoke({'headless': False}, default, None)
@@ -405,7 +467,8 @@ class RenderTests(unittest.TestCase):
             ({'headless': False, 'chezmoi': darwin}, None, False),
             ({'headless': False, 'chezmoi': darwin}, 'stay-awake-ac-sleep', True),
             ({'headless': False, 'chezmoi': darwin}, 'imessage-gateway-ac-sleep', True),
-            ({'headless': True, 'stay_awake_on_power': True, 'chezmoi': darwin}, 'stay-awake-ac-sleep', False),
+            ({'headless': True, 'stay_awake_on_power': True, 'chezmoi': darwin}, None, False),
+            ({'headless': True, 'stay_awake_on_power': True, 'chezmoi': darwin}, 'stay-awake-ac-sleep', True),
             ({'headless': False, 'stay_awake_on_power': True, 'chezmoi': linux}, 'stay-awake-ac-sleep', False),
         )
         with tempfile.TemporaryDirectory() as name:
