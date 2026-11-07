@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import random
 import shutil
+import string
 import subprocess
 import tempfile
 import unittest
@@ -32,6 +34,9 @@ class PureListTests(unittest.TestCase):
         self.assertEqual(gs.normalize('/System/Volumes/Data/Users/a/code/'), '/Users/a/code')
         self.assertEqual(gs.normalize('/Users/a/code'), '/Users/a/code')
         self.assertEqual(gs.normalize('/'), '/')
+        self.assertEqual(gs.normalize('/System/Volumes/Data'), '/')
+        self.assertEqual(gs.normalize('/System/Volumes/Data/'), '/')
+        self.assertTrue(gs.too_broad('/System/Volumes/Data'))
 
     def test_adding_is_idempotent_and_keeps_other_entries(self):
         config = {'Exclusions': ['/Volumes/Backup', '/System/Volumes/Data/Users/a/code/'], 'Other': 1}
@@ -86,6 +91,7 @@ class Machine:
         self.cached = cached
         self.prepare_status = prepare_status
         self.fail = fail or set()
+        self.timeouts = set()
         self.after_mv = after_mv
         self.calls = []
         self.prepares = 0
@@ -101,6 +107,19 @@ class Machine:
             if not self.cached:
                 return self.done(command, 1, text=text)
             command = command[2:]
+            if command[0] in self.timeouts:
+                raise subprocess.TimeoutExpired(command, timeout)
+            # As root, a root-only Spotlight folder is readable.
+            locked = getattr(self.test, 'locked', None)
+            if locked is not None:
+                locked.chmod(0o700)
+                try:
+                    return self.emulate(command, text)
+                finally:
+                    locked.chmod(0o000)
+        return self.emulate(command, text)
+
+    def emulate(self, command, text):
         self.test.assertIn(command[0], ALLOWED, command)
         for part in command[1:]:
             if part.startswith('/'):
@@ -121,8 +140,10 @@ class Machine:
             return self.done(command, 0, f'{info.st_uid}:{info.st_gid} {oct(info.st_mode & 0o7777)[2:]}\n')
         if tool == '/usr/bin/mktemp':
             self.test.assertTrue(args[0].endswith('.XXXXXX'))
-            handle, path = tempfile.mkstemp(dir=Path(args[0]).parent, prefix='.groundwork.')
-            os.close(handle)
+            # BSD mktemp fills XXXXXX with letters and digits only.
+            letters = string.ascii_letters + string.digits
+            path = args[0][:-6] + ''.join(random.choice(letters) for _ in range(6))
+            Path(path).touch(exist_ok=False)
             self.temporary = path
             return self.done(command, 0, path + '\n')
         if tool == '/bin/cp':
@@ -354,6 +375,77 @@ class FlowTests(unittest.TestCase):
                 self.assertEqual(machine.calls, [])
         self.assertEqual(self.listed(), ['/Volumes/Backup'])
 
+    def lock_spotlight_dir(self):
+        # Like .Spotlight-V100: owned by root, mode 700, so the user cannot even stat inside it.
+        self.locked = self.plist.parent
+        self.locked.chmod(0o000)
+        self.addCleanup(self.locked.chmod, 0o700)
+        with self.assertRaises(PermissionError):
+            self.plist.stat()
+
+    def test_root_only_spotlight_dir_works_through_sudo(self):
+        self.lock_spotlight_dir()
+        code, out, err = self.invoke(Machine(self), 'prepare')
+        self.assertEqual(code, 0, err)
+        self.assertIn('excluded from Spotlight', out)
+        code, out, err = self.invoke(Machine(self), 'status')
+        self.assertEqual(code, 0, err)
+        self.assertIn(f'  excluded  {self.code} (added by Groundwork)', out)
+        code, out, err = self.invoke(Machine(self), 'undo', '--yes')
+        self.assertEqual(code, 0, err)
+        self.locked.chmod(0o700)
+        self.assertEqual(self.listed(), ['/Volumes/Backup'])
+
+    def test_root_only_spotlight_dir_without_sudo_never_raises(self):
+        self.lock_spotlight_dir()
+        for action in ('prepare', 'status'):
+            with self.subTest(action=action):
+                machine = Machine(self, cached=False, prepare_status=10)
+                code, _, err = self.invoke(machine, action)
+                self.assertEqual(code, 0, err)
+                self.assertNotIn('Permission', err)
+
+    def test_timeouts_warn_clean_up_and_let_apply_continue(self):
+        for tool in ('/bin/cat', '/usr/bin/stat', '/bin/cp', '/bin/mv'):
+            with self.subTest(tool=tool):
+                self.write_plist({'Exclusions': ['/Volumes/Backup']})
+                (self.state() / gs.UNREADABLE_FILENAME).unlink(missing_ok=True)
+                machine = Machine(self)
+                machine.timeouts = {tool}
+                code, _, err = self.invoke(machine, 'prepare')
+                self.assertEqual(code, 0, err)
+                self.assertIn('Groundwork: Spotlight exclusions were not', err)
+                self.assertEqual(list(self.plist.parent.glob('.groundwork.*')), [])
+                if tool == '/bin/mv':
+                    self.assertIn('restore it with:', err)
+                self.assertTrue((self.state() / gs.UNREADABLE_FILENAME).is_file())
+
+    def test_failed_rename_says_not_changed(self):
+        before = self.plist.read_bytes()
+        code, _, err = self.invoke(Machine(self, fail={'/bin/mv'}), 'prepare')
+        self.assertEqual(code, 0)
+        self.assertIn('was not changed', err)
+        self.assertEqual(self.plist.read_bytes(), before)
+        self.assertEqual(list(self.plist.parent.glob('.groundwork.*')), [])
+
+    def test_unvalidated_mktemp_path_is_never_removed(self):
+        machine = Machine(self)
+        original = machine.emulate
+
+        def odd_mktemp(command, text):
+            if command[0] == '/usr/bin/mktemp':
+                return machine.done(command, 0, str(self.root / 'elsewhere') + '\n')
+            return original(command, text)
+        machine.emulate = odd_mktemp
+        code, _, err = self.invoke(machine, 'prepare')
+        self.assertEqual(code, 0)
+        self.assertIn('unexpected path', err)
+        self.assertFalse(any('/bin/rm' in call for call in machine.calls))
+
+    def test_restore_command_quotes_paths(self):
+        message = gs.restore_command(Path('/tmp/a b/backup.plist'))
+        self.assertIn("'/tmp/a b/backup.plist'", message)
+
     def test_replacement_is_atomic_and_keeps_owner_and_mode(self):
         self.plist.chmod(0o640)
         machine = Machine(self)
@@ -397,7 +489,7 @@ class FlowTests(unittest.TestCase):
         locked = Machine(self, cached=False)
         code, out, _ = self.invoke(locked, 'prepare')
         self.assertEqual((code, locked.prepares), (0, 0))
-        self.assertIn('unreadable last time', out)
+        self.assertIn('could not be read or updated last time', out)
         code, out, _ = self.invoke(Machine(self, cached=False), 'status')
         self.assertIn('  unreadable  ', out)
         cached = Machine(self)

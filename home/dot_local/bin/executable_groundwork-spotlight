@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Keep developer churn directories out of Spotlight on a Mac.
 
+Requires Python 3.9 or newer (the stock /usr/bin/python3 on macOS).
+
 Groundwork adds the code directory and the pnpm store to the same list that
 System Settings -> Spotlight -> Search Privacy edits. It adds only a folder
 that exists and is missing from that list, and it never touches /Applications
@@ -13,6 +15,7 @@ from pathlib import Path
 import platform
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -71,6 +74,8 @@ def run(command, *, timeout=15, capture=True, text=True):
 
 def normalize(path):
     text = str(path)
+    if text.rstrip('/') == DATA_PREFIX:
+        return '/'
     if text.startswith(DATA_PREFIX + '/'):
         text = text[len(DATA_PREFIX):]
     return text.rstrip('/') or '/'
@@ -265,7 +270,10 @@ def is_root():
 def sudo_cached():
     if is_root():
         return True
-    return run(['sudo', '-n', 'true']).returncode == 0
+    try:
+        return run(['sudo', '-n', 'true']).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def sudo_prepare():
@@ -279,21 +287,37 @@ def privileged(command):
 
 
 def read_live():
-    """Return (raw bytes, parsed configuration); raise when unreadable."""
-    if not VOLUME_CONFIGURATION.exists() and is_root():
-        raise ConfigurationError(f'{VOLUME_CONFIGURATION} does not exist; Spotlight may be off for this volume.')
-    result = run(privileged(['/bin/cat', str(VOLUME_CONFIGURATION)]), text=False)
+    """Return (raw bytes, parsed configuration); raise ConfigurationError when unreadable.
+
+    Only root can see inside .Spotlight-V100, so this never stats that folder
+    as the user; every look at it goes through the privileged cat.
+    """
+    try:
+        result = run(privileged(['/bin/cat', str(VOLUME_CONFIGURATION)]), text=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ConfigurationError(f'could not read {VOLUME_CONFIGURATION} ({error}).')
     if result.returncode != 0:
         detail = (result.stderr or b'').decode(errors='replace').strip()
         hint = ''
         if 'not permitted' in detail.lower():
             hint = ' Give this terminal Full Disk Access in System Settings > Privacy & Security, or edit the list in ' + SEARCH_PRIVACY + '.'
+        elif 'no such file' in detail.lower():
+            hint = ' Spotlight may be off for this volume.'
         raise ConfigurationError(f'could not read {VOLUME_CONFIGURATION} ({detail or "exit " + str(result.returncode)}).{hint}')
     return result.stdout, load_configuration(result.stdout)
 
 
+class StepTimeout(ConfigurationError):
+    """A privileged step did not finish; its effect is unknown."""
+
+
 def root_step(command):
-    result = run(privileged(command))
+    try:
+        result = run(privileged(command))
+    except subprocess.TimeoutExpired as error:
+        raise StepTimeout(f'{command[0]} did not finish ({error})')
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ConfigurationError(f'{command[0]} could not run ({error})')
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or '').strip()
         raise ConfigurationError(f'{" ".join(command[:1])} failed ({detail or "exit " + str(result.returncode)})')
@@ -314,28 +338,43 @@ def write_live(original, updated):
     write_private(staged, dump_configuration(updated, original))
     target = str(VOLUME_CONFIGURATION)
     temporary = None
+
+    def remove_temporary():
+        # Only a path that passed the prefix check below is ever removed as root.
+        if temporary:
+            try:
+                run(privileged(['/bin/rm', '-f', temporary]))
+            except (OSError, subprocess.SubprocessError):
+                pass
+
     try:
         owner_mode = root_step(['/usr/bin/stat', '-f', '%u:%g %Lp', target]).split()
         if len(owner_mode) != 2 or not re.fullmatch(r'\d+:\d+', owner_mode[0]) or not re.fullmatch(r'[0-7]{3,4}', owner_mode[1]):
             raise ConfigurationError(f'could not read the owner and mode of {target}')
-        temporary = root_step(['/usr/bin/mktemp', str(VOLUME_CONFIGURATION.parent / '.groundwork.XXXXXX')])
-        if not temporary.startswith(str(VOLUME_CONFIGURATION.parent) + '/.groundwork.'):
-            raise ConfigurationError(f'mktemp returned an unexpected path: {temporary}')
+        candidate = root_step(['/usr/bin/mktemp', str(VOLUME_CONFIGURATION.parent / '.groundwork.XXXXXX')])
+        prefix = str(VOLUME_CONFIGURATION.parent) + '/.groundwork.'
+        name = candidate[len(prefix):]
+        if not candidate.startswith(prefix) or not re.fullmatch(r'[A-Za-z0-9]+', name):
+            raise ConfigurationError(f'mktemp returned an unexpected path: {candidate}')
+        temporary = candidate
         root_step(['/bin/cp', str(staged), temporary])
         root_step(['/usr/sbin/chown', owner_mode[0], temporary])
         root_step(['/bin/chmod', owner_mode[1], temporary])
     except ConfigurationError as error:
-        if temporary:
-            run(privileged(['/bin/rm', '-f', temporary]))
+        remove_temporary()
         raise ConfigurationError(f'could not stage the new Spotlight list: {error}. {target} was not changed.')
     finally:
         staged.unlink(missing_ok=True)
-    restore = f'sudo /bin/cp {backup} {target}'
+    restore = restore_command(backup)
     try:
         root_step(['/bin/mv', '-f', temporary, target])
+    except StepTimeout as error:
+        remove_temporary()
+        raise WriteError(f'replacing {target} did not finish: {error}. The previous copy is {backup}; restore it with: {restore}')
     except ConfigurationError as error:
-        run(privileged(['/bin/rm', '-f', temporary]))
-        raise WriteError(f'replacing {target} failed: {error}. The previous copy is {backup}; restore it with: {restore}')
+        # mv -f within one folder is a rename: a failed rename leaves the original.
+        remove_temporary()
+        raise ConfigurationError(f'replacing {target} failed: {error}. {target} was not changed; the previous copy is also at {backup}.')
     try:
         _, verified = read_live()
     except ConfigurationError as error:
@@ -343,6 +382,10 @@ def write_live(original, updated):
     if exclusions(verified) != exclusions(updated):
         raise WriteError(f'{target} did not read back as written. The previous copy is {backup}; restore it with: {restore}')
     return backup
+
+
+def restore_command(backup):
+    return f'sudo /bin/cp {shlex.quote(str(backup))} {shlex.quote(str(VOLUME_CONFIGURATION))}'
 
 
 def read_unreadable():
@@ -395,7 +438,7 @@ def status():
     print('Hidden folders such as ~/.t3 and ~/.cache are not listed: macOS normally skips dot folders. /Applications stays indexed.')
     unreadable = read_unreadable()
     if unreadable:
-        print(f'Last apply could not read the Spotlight list ({unreadable}).')
+        print(f'Last apply could not read or update the Spotlight list ({unreadable}).')
         print(f'  unreadable  apply will not ask for a password again until it can read it; add the folders in {SEARCH_PRIVACY}, or grant Full Disk Access and run sudo -v before chezmoi apply.')
     if not sudo_cached():
         print('Live exclusion list: not read; it needs administrator permission. Run sudo -v, then this command again.')
@@ -441,7 +484,7 @@ def prepare():
     if not cached and read_unreadable():
         # The last attempt could not read the file even as root (for example,
         # no Full Disk Access). Asking again on every apply would not help.
-        print(f'Groundwork: Spotlight exclusions are waiting: the list was unreadable last time ({unreadable_path()}). '
+        print(f'Groundwork: Spotlight exclusions are waiting: the list could not be read or updated last time ({unreadable_path()}). '
               f'Add the folders in {SEARCH_PRIVACY}, or run sudo -v before chezmoi apply to retry.')
         return 0
     if not cached:
@@ -465,6 +508,8 @@ def prepare():
             backup = write_live(original, updated)
         except (ConfigurationError, WriteError) as error:
             # A failed write must not stop the rest of chezmoi apply.
+            # Remember it, so the next apply does not ask for a password to fail again.
+            record_unreadable(f'update failed: {error}')
             print(f'Groundwork: Spotlight exclusions were not added: {error}', file=sys.stderr)
             print(f'You can add the folders in {SEARCH_PRIVACY} instead.', file=sys.stderr)
             return 0
