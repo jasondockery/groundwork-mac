@@ -899,6 +899,22 @@ class T3ResolutionTests(Sandbox):
         self.assertIn("Claude instance claudeAgent does not set CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", output)
         self.assertIn("Providers → claudeAgent → Environment variables", output)
 
+    def test_subagent_caps_follow_how_t3_enables_an_instance(self):
+        self.write_settings({
+            "providerInstances": {
+                "claudeAgent": {"driver": "claudeAgent", "config": {"enabled": False}},
+                "project_only": self.claude_instance(enabled=False),
+            },
+            # Disabled globally but enabled for one project: it still runs there.
+            "projectSettingsOverrides": {"p1": {"providerInstances": {"project_only": {"enabled": True}}},
+                                         "p2": None},
+        })
+        output = self.caps_report()
+        self.assertIn("Claude instance claudeAgent is disabled; subagent caps not checked.", output)
+        self.assertNotIn("Providers → claudeAgent", output)
+        self.assertIn("Claude instance project_only does not set CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", output)
+        self.assertIn("Fix it in T3 Code → Settings → Providers → project_only → Environment variables", output)
+
     def test_subagent_caps_unrecognized_settings_are_reported(self):
         mtime, text = self.write_settings({"providerInstances": {
             "c": self.claude_instance(environment={"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4"})}})

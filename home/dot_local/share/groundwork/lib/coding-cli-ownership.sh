@@ -281,8 +281,10 @@ gw_t3_claude_report() {
 # - A sensitive value is not in the file: it is stored as an empty value with
 #   valueRedacted, or as a secret reference. It is reported as unconfirmable.
 # - claudeAgent is a built-in instance, enabled by default, that runs even when
-#   providerInstances has no entry for it; an instance with enabled false
-#   does not run.
+#   providerInstances has no entry for it. An instance is disabled when its
+#   enabled or its config.enabled is false, unless a project override,
+#   projectSettingsOverrides.<project>.providerInstances.<id>.enabled, is
+#   true: it then still runs in that project, so it is checked as enabled.
 # jq reads only the two names below and compares their values in place; no
 # environment value is printed.
 gw_t3_claude_subagent_caps_report() {
@@ -312,6 +314,9 @@ gw_t3_claude_subagent_caps_report() {
       --argjson caps "[[\"${names[0]}\",\"${values[0]}\"],[\"${names[1]}\",\"${values[1]}\"]]" '
         if type == "object" and ((.providerInstances // {}) | type) == "object" then
           (.providerInstances // {}) as $instances
+          | ([(.projectSettingsOverrides // {}) | objects | .[]
+              | objects | (.providerInstances // {}) | objects | to_entries[]
+              | select((.value | type) == "object" and .value.enabled == true) | .key]) as $project_enabled
           | (if $instances | has("claudeAgent") then empty
              else ["claudeAgent", "enabled", "missing", "missing"] end),
             ($instances | to_entries[]
@@ -319,7 +324,9 @@ gw_t3_claude_subagent_caps_report() {
             | (.value.environment // []) as $env
             | if ($env | type) == "array" then . else error("unrecognized") end
             | [(if .key | test("^[A-Za-z0-9_.-]+$") then .key else "" end),
-               (if .value.enabled == false then "disabled" else "enabled" end)]
+               (if (.value.enabled == false or (.value.config | objects | .enabled) == false)
+                  and (.key as $id | $project_enabled | index([$id]) | not)
+                then "disabled" else "enabled" end)]
               + [$caps[] as [$name, $want]
                 | ([$env[] | select(type == "object" and .name == $name)] | last) as $entry
                 | if $entry == null then "missing"
