@@ -346,5 +346,33 @@ class RenderTests(unittest.TestCase):
                     self.assertEqual('"$HOME/.local/bin/groundwork-spotlight" prepare' in result.stdout, enabled)
 
 
+class DoctorTests(unittest.TestCase):
+    def test_doctor_section_reports_status_and_flags_missing_roots(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            fake_bin = root / 'bin'
+            local_bin = root / 'home' / '.local' / 'bin'
+            fake_bin.mkdir()
+            local_bin.mkdir(parents=True)
+            (fake_bin / 'uname').write_text("#!/bin/sh\nprintf 'Darwin\\n'\n", encoding='utf-8')
+            (local_bin / 'groundwork-spotlight').write_text(
+                '#!/bin/sh\n[ "$1" = status ] || exit 9\n'
+                'echo "Live exclusion list:"\n'
+                'echo "  excluded  /Users/a/code (added by Groundwork)"\n'
+                'echo "  missing   /Users/a/Library/pnpm"\n', encoding='utf-8')
+            for path in (fake_bin / 'uname', local_bin / 'groundwork-spotlight'):
+                path.chmod(0o755)
+            env = dict(os.environ, HOME=str(root / 'home'), PATH=f'{fake_bin}:{os.environ["PATH"]}')
+            doctor = REPO / 'home/dot_local/bin/executable_groundwork-doctor'
+            result = subprocess.run(['/bin/bash', str(doctor), '--spotlight'], env=env,
+                                    capture_output=True, text=True, timeout=30, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('note    excluded  /Users/a/code (added by Groundwork)', result.stdout)
+            self.assertIn('warn  missing   /Users/a/Library/pnpm', result.stdout)
+            self.assertIn('groundwork-spotlight prepare', result.stdout)
+            helptext = subprocess.run(['/bin/bash', str(doctor), '--help'], capture_output=True, text=True, check=False)
+            self.assertIn('--spotlight', helptext.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()
