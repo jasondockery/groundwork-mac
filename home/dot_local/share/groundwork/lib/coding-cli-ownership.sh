@@ -269,72 +269,92 @@ gw_t3_claude_report() {
 
 # Report only: whether each T3 Code Claude instance caps Claude Code's
 # subagents with Groundwork's values. The values and their reasons live in
-# docs/claude.html#subagent-caps. T3's settings are
-# never written, and nothing is added to a login shell, so a claude started
-# from a terminal keeps the upstream defaults.
+# docs/claude.html#subagent-caps. T3's settings are never written, and
+# nothing is added to a login shell, so a claude started from a terminal
+# keeps the upstream defaults.
 #
-# An instance's Environment variables are providerInstances.<id>.environment,
-# a list of {name, value, sensitive, secret?}. T3 Code applies the list in
-# order when it launches that instance, so the last entry for a name wins.
-# That shape comes from T3 Code's settings schema in its source, not from a
-# documented format. A value kept as a T3 secret is not in the file and is
-# reported as unreadable. jq reads only the two names below, compares their
-# values in place, and returns a state; no environment value is printed.
+# What this relies on, from T3 Code's settings schema in its source (2026-11),
+# not a documented format:
+# - An instance's Environment variables are providerInstances.<id>.environment,
+#   a list of {name, value, sensitive, valueRedacted?, secret?}. T3 Code
+#   applies the list in order, so the last entry for a name wins.
+# - A sensitive value is not in the file: it is stored as an empty value with
+#   valueRedacted, or as a secret reference. It is reported as unconfirmable.
+# - claudeAgent is a built-in instance, enabled by default, that runs even when
+#   providerInstances has no entry for it; an instance with enabled false
+#   does not run.
+# jq reads only the two names below and compares their values in place; no
+# environment value is printed.
 gw_t3_claude_subagent_caps_report() {
-  local t3_home settings jq_bin rows id first second state name want index fix
+  local t3_home settings jq_bin rows id run first second state name want index fix
   local names=(CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH)
-  local values=(4 1) states=()
+  local values=(4 1) states=() separator=$'\x1f'
   t3_home="${T3CODE_HOME:-}"
   [[ "$t3_home" == /* ]] || t3_home="$HOME/.t3"
+  if [[ ! -d "$t3_home" ]]; then
+    echo "T3 Code: $t3_home not found; subagent caps not applicable."
+    return 0
+  fi
   settings="$t3_home/userdata/settings.json"
-  if [[ ! -e "$settings" ]]; then
-    echo "T3 Code: no settings file at $settings; subagent caps not applicable."
-    return 0
-  fi
-  jq_bin="$(command -v jq || true)"
-  if [[ -z "$jq_bin" ]]; then
-    echo "T3 Code warning: jq is unavailable, so the Claude subagent caps in $settings were not read."
-    return 0
-  fi
-  # One TSV row per Claude instance: its id, then for each cap in order one
-  # of set, missing, different or secret.
-  # shellcheck disable=SC2016 # $caps and $env are jq syntax, not shell expansions.
-  if ! rows="$("$jq_bin" -r \
-    --argjson caps "[[\"${names[0]}\",\"${values[0]}\"],[\"${names[1]}\",\"${values[1]}\"]]" '
-      if type == "object" and ((.providerInstances // {}) | type) == "object" then
-        (.providerInstances // {}) | to_entries[]
-        | select((.value | type) == "object" and .value.driver == "claudeAgent")
-        | (.value.environment // []) as $env
-        | if ($env | type) == "array" then . else error("unrecognized") end
-        | [.key] + [$caps[] as [$name, $want]
-            | ([$env[] | select(type == "object" and .name == $name)] | last) as $entry
-            | if $entry == null then "missing"
-              elif $entry.secret != null then "secret"
-              elif $entry.value == $want then "set"
-              else "different" end]
-        | @tsv
-      else error("unrecognized") end' "$settings" 2>/dev/null)"; then
-    echo "T3 Code warning: $settings is not in a format Groundwork recognizes, so the Claude subagent caps were not checked."
-    echo "Check them in T3 Code → Settings → Providers → the Claude instance → Environment variables."
-    return 0
+  # With no settings file, only the built-in instance runs, with no variables.
+  rows="claudeAgent${separator}enabled${separator}missing${separator}missing"
+  if [[ -e "$settings" ]]; then
+    jq_bin="$(command -v jq || true)"
+    if [[ -z "$jq_bin" ]]; then
+      echo "T3 Code warning: jq is unavailable, so the Claude subagent caps in $settings were not read."
+      return 0
+    fi
+    # One row per Claude instance, fields joined by the unit separator: its id
+    # ("" when it is not safe to print), enabled or disabled, then for each
+    # cap in order one of set, missing, different or sensitive.
+    # shellcheck disable=SC2016 # $caps and $env are jq syntax, not shell expansions.
+    if ! rows="$("$jq_bin" -r --arg sep "$separator" \
+      --argjson caps "[[\"${names[0]}\",\"${values[0]}\"],[\"${names[1]}\",\"${values[1]}\"]]" '
+        if type == "object" and ((.providerInstances // {}) | type) == "object" then
+          (.providerInstances // {}) as $instances
+          | (if $instances | has("claudeAgent") then empty
+             else ["claudeAgent", "enabled", "missing", "missing"] end),
+            ($instances | to_entries[]
+            | select((.value | type) == "object" and .value.driver == "claudeAgent")
+            | (.value.environment // []) as $env
+            | if ($env | type) == "array" then . else error("unrecognized") end
+            | [(if .key | test("^[A-Za-z0-9_.-]+$") then .key else "" end),
+               (if .value.enabled == false then "disabled" else "enabled" end)]
+              + [$caps[] as [$name, $want]
+                | ([$env[] | select(type == "object" and .name == $name)] | last) as $entry
+                | if $entry == null then "missing"
+                  elif $entry.secret != null or $entry.valueRedacted == true
+                    or ($entry.sensitive == true and ($entry.value // "") == "") then "sensitive"
+                  elif $entry.value == $want then "set"
+                  else "different" end])
+          | join($sep)
+        else error("unrecognized") end' "$settings" 2>/dev/null)"; then
+      echo "T3 Code warning: $settings is not in a format Groundwork recognizes, so the Claude subagent caps were not checked."
+      echo "Check them in T3 Code → Settings → Providers → the Claude instance → Environment variables."
+      return 0
+    fi
   fi
   if [[ -z "$rows" ]]; then
     echo "T3 Code: no Claude provider instance in $settings; subagent caps not applicable."
     return 0
   fi
-  while IFS=$'\t' read -r id first second; do
-    states=("$first" "$second")
+  while IFS="$separator" read -r id run first second; do
     if [[ ! "$id" =~ ^[A-Za-z0-9_.-]+$ ]]; then
       echo "T3 Code warning: a Claude instance in $settings has an id Groundwork cannot print safely; check its Environment variables in Settings → Providers."
       continue
     fi
+    if [[ "$run" == disabled ]]; then
+      printf 'T3 Code: Claude instance %s is disabled; subagent caps not checked.\n' "$id"
+      continue
+    fi
+    states=("$first" "$second")
     fix=0
     for index in 0 1; do
       name="${names[index]}" want="${values[index]}" state="${states[index]}"
       case "$state" in
         set) printf 'T3 Code: Claude instance %s sets %s=%s.\n' "$id" "$name" "$want" ;;
         missing) printf 'T3 Code warning: Claude instance %s does not set %s (Groundwork value: %s).\n' "$id" "$name" "$want" ;;
-        secret) printf 'T3 Code warning: Claude instance %s keeps %s as a secret, so Groundwork cannot confirm it is %s.\n' "$id" "$name" "$want" ;;
+        sensitive) printf 'T3 Code warning: Claude instance %s has %s stored as a sensitive value or secret, so Groundwork cannot confirm it is %s.\n' "$id" "$name" "$want" ;;
         *) printf 'T3 Code warning: Claude instance %s sets %s to a value other than %s.\n' "$id" "$name" "$want" ;;
       esac
       [[ "$state" == set ]] || fix=1
