@@ -278,6 +278,7 @@ spotlight_section() {
     [[ -n "$line" ]] || continue
     case "$line" in
       "  missing "*) warn "${line#  }" ;;
+      "  unreadable "*) warn "${line#  }" ;;
       *) note "$line" ;;
     esac
   done <<<"$output"

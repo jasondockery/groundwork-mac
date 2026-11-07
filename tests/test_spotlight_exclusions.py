@@ -22,8 +22,9 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 gs = importlib.util.module_from_spec(spec)
 loader.exec_module(gs)
 
-# Commands the fake privileged boundary may run. Anything else fails the test.
-ALLOWED = ({'/bin/cat'}, {'/bin/cp'}, {'true'})
+# Commands the fake privileged boundary understands. Anything else fails the test.
+ALLOWED = {'/bin/cat', '/bin/cp', '/bin/mv', '/bin/rm', '/bin/chmod', '/usr/sbin/chown',
+           '/usr/bin/stat', '/usr/bin/mktemp', 'true'}
 
 
 class PureListTests(unittest.TestCase):
@@ -78,29 +79,71 @@ class PureListTests(unittest.TestCase):
 
 
 class Machine:
-    """A fake Mac: a temporary volume configuration and a logging sudo."""
+    """A fake Mac: a temporary volume configuration and a logging, emulated sudo."""
 
-    def __init__(self, test, *, cached=True, prepare_status=0):
+    def __init__(self, test, *, cached=True, prepare_status=0, fail=None, after_mv=None):
         self.test = test
         self.cached = cached
         self.prepare_status = prepare_status
+        self.fail = fail or set()
+        self.after_mv = after_mv
         self.calls = []
         self.prepares = 0
+
+    def done(self, command, code=0, out='', err='', text=True):
+        if not text:
+            out, err = out.encode() if isinstance(out, str) else out, err.encode()
+        return subprocess.CompletedProcess(command, code, stdout=out, stderr=err)
 
     def run(self, command, *, timeout=15, capture=True, text=True):
         self.calls.append(list(command))
         if command[:2] == ['sudo', '-n']:
             if not self.cached:
-                return subprocess.CompletedProcess(command, 1, stdout=b'' if not text else '', stderr=b'' if not text else '')
+                return self.done(command, 1, text=text)
             command = command[2:]
-        self.test.assertIn({command[0]}, ALLOWED, command)
+        self.test.assertIn(command[0], ALLOWED, command)
         for part in command[1:]:
             if part.startswith('/'):
                 self.test.assertTrue(part.startswith(str(self.test.root)), f'escaped the fake root: {command}')
-        if command[0] == 'true':
-            return subprocess.CompletedProcess(command, 0, stdout='', stderr='')
-        result = subprocess.run(command, capture_output=True, text=text, check=False)
-        return result
+        if command[0] in self.fail:
+            return self.done(command, 1, err=f'{command[0]}: injected failure', text=text)
+        tool, args = command[0], command[1:]
+        if tool == 'true':
+            return self.done(command)
+        if tool == '/bin/cat':
+            try:
+                return self.done(command, 0, Path(args[0]).read_bytes(), text=False)
+            except OSError as error:
+                return self.done(command, 1, err=str(error), text=False)
+        if tool == '/usr/bin/stat':
+            self.test.assertEqual(args[:2], ['-f', '%u:%g %Lp'])
+            info = Path(args[2]).stat()
+            return self.done(command, 0, f'{info.st_uid}:{info.st_gid} {oct(info.st_mode & 0o7777)[2:]}\n')
+        if tool == '/usr/bin/mktemp':
+            self.test.assertTrue(args[0].endswith('.XXXXXX'))
+            handle, path = tempfile.mkstemp(dir=Path(args[0]).parent, prefix='.groundwork.')
+            os.close(handle)
+            self.temporary = path
+            return self.done(command, 0, path + '\n')
+        if tool == '/bin/cp':
+            shutil.copyfile(args[0], args[1])
+            return self.done(command)
+        if tool == '/usr/sbin/chown':
+            self.chown = args[0]
+            return self.done(command)
+        if tool == '/bin/chmod':
+            os.chmod(args[1], int(args[0], 8))
+            return self.done(command)
+        if tool == '/bin/mv':
+            self.test.assertEqual(args[0], '-f')
+            os.replace(args[1], args[2])
+            if self.after_mv:
+                self.after_mv()
+            return self.done(command)
+        if tool == '/bin/rm':
+            Path(args[-1]).unlink(missing_ok=True)
+            return self.done(command)
+        raise AssertionError(command)
 
     def sudo_prepare(self):
         self.prepares += 1
@@ -109,7 +152,7 @@ class Machine:
         return self.prepare_status
 
     def writes(self):
-        return [call for call in self.calls if '/bin/cp' in call]
+        return [call for call in self.calls if '/bin/mv' in call]
 
 
 class FlowTests(unittest.TestCase):
@@ -311,6 +354,88 @@ class FlowTests(unittest.TestCase):
                 self.assertEqual(machine.calls, [])
         self.assertEqual(self.listed(), ['/Volumes/Backup'])
 
+    def test_replacement_is_atomic_and_keeps_owner_and_mode(self):
+        self.plist.chmod(0o640)
+        machine = Machine(self)
+        self.invoke(machine, 'prepare')
+        info = self.plist.stat()
+        self.assertEqual(oct(info.st_mode & 0o777), '0o640')
+        self.assertEqual(machine.chown, f'{info.st_uid}:{info.st_gid}')
+        self.assertEqual(list(self.plist.parent.glob('.groundwork.*')), [])
+        order = [call[2] if call[:2] == ['sudo', '-n'] else call[0] for call in machine.calls]
+        self.assertLess(order.index('/usr/sbin/chown'), order.index('/bin/mv'))
+        self.assertLess(order.index('/bin/chmod'), order.index('/bin/mv'))
+
+    def test_failed_copy_warns_keeps_the_original_and_lets_apply_continue(self):
+        before = self.plist.read_bytes()
+        machine = Machine(self, fail={'/bin/cp'})
+        code, _, err = self.invoke(machine, 'prepare')
+        self.assertEqual(code, 0)
+        self.assertIn('were not added', err)
+        self.assertIn('was not changed', err)
+        self.assertEqual(self.plist.read_bytes(), before)
+        self.assertEqual(machine.writes(), [])
+        self.assertEqual(list(self.plist.parent.glob('.groundwork.*')), [])
+        self.assertFalse((self.state() / gs.RECORD_FILENAME).exists())
+
+    def test_read_back_mismatch_warns_with_the_restore_command(self):
+        machine = Machine(self, after_mv=lambda: self.write_plist({'Exclusions': ['/elsewhere']}))
+        code, _, err = self.invoke(machine, 'prepare')
+        self.assertEqual(code, 0)
+        self.assertIn('did not read back as written', err)
+        self.assertIn('restore it with: sudo /bin/cp', err)
+        self.assertNotIn('was not changed', err)
+        self.assertFalse((self.state() / gs.RECORD_FILENAME).exists())
+
+    def test_unreadable_list_is_remembered_so_apply_stops_prompting(self):
+        machine = Machine(self, cached=False, fail={'/bin/cat'})
+        code, _, err = self.invoke(machine, 'prepare')
+        self.assertEqual((code, machine.prepares), (0, 1))
+        self.assertIn('were not checked', err)
+        marker = self.state() / gs.UNREADABLE_FILENAME
+        self.assertTrue(marker.is_file())
+        locked = Machine(self, cached=False)
+        code, out, _ = self.invoke(locked, 'prepare')
+        self.assertEqual((code, locked.prepares), (0, 0))
+        self.assertIn('unreadable last time', out)
+        code, out, _ = self.invoke(Machine(self, cached=False), 'status')
+        self.assertIn('  unreadable  ', out)
+        cached = Machine(self)
+        self.assertEqual(self.invoke(cached, 'prepare')[0], 0)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.listed(), ['/Volumes/Backup', self.code, self.pnpm])
+
+    def test_status_after_undo_is_one_note(self):
+        self.invoke(Machine(self), 'prepare')
+        self.invoke(Machine(self), 'undo', '--yes')
+        machine = Machine(self)
+        code, out, _ = self.invoke(machine, 'status')
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), 'Groundwork Spotlight exclusions: off by choice; groundwork-spotlight enable turns it back on.')
+        self.assertEqual(machine.calls, [])
+
+    def test_code_dir_that_would_hide_home_or_applications_is_refused(self):
+        config = self.root / 'config' / 'chezmoi'
+        config.mkdir(parents=True)
+        for value in ('~', '/', str(self.home.parent)):
+            with self.subTest(code_dir=value):
+                (config / 'chezmoi.toml').write_text(f'[data]\n    code_dir = "{value}"\n', encoding='utf-8')
+                _, _, err = self.invoke(Machine(self), 'prepare')
+                self.assertIn('not excluding', err)
+                self.assertEqual(self.listed()[:1], ['/Volumes/Backup'])
+                self.assertNotIn(os.path.realpath(os.path.expanduser(value) if value == '~' else value), self.listed())
+        self.assertTrue(gs.too_broad('/Applications'))
+        self.assertTrue(gs.too_broad('/APPLICATIONS'))
+        self.assertTrue(gs.too_broad('/'))
+        self.assertFalse(gs.too_broad('/Applications/Tool'))
+
+    def test_case_differences_do_not_add_a_duplicate(self):
+        self.write_plist({'Exclusions': [self.code.upper(), self.pnpm]})
+        machine = Machine(self)
+        self.invoke(machine, 'prepare')
+        self.assertEqual(machine.writes(), [])
+        self.assertEqual(self.listed(), [self.code.upper(), self.pnpm])
+
 
 class RenderTests(unittest.TestCase):
     def test_hook_runs_prepare_only_on_macos(self):
@@ -370,6 +495,19 @@ class DoctorTests(unittest.TestCase):
             self.assertIn('note    excluded  /Users/a/code (added by Groundwork)', result.stdout)
             self.assertIn('warn  missing   /Users/a/Library/pnpm', result.stdout)
             self.assertIn('groundwork-spotlight prepare', result.stdout)
+            (local_bin / 'groundwork-spotlight').write_text(
+                '#!/bin/sh\necho "Groundwork Spotlight exclusions: off by choice; groundwork-spotlight enable turns it back on."\n',
+                encoding='utf-8')
+            off = subprocess.run(['/bin/bash', str(doctor), '--spotlight'], env=env,
+                                 capture_output=True, text=True, timeout=30, check=False)
+            self.assertIn('note  Groundwork Spotlight exclusions: off by choice', off.stdout)
+            self.assertNotIn('warn', off.stdout)
+            self.assertNotIn('prepare', off.stdout)
+            (local_bin / 'groundwork-spotlight').write_text(
+                '#!/bin/sh\necho "  unreadable  apply will not ask again"\n', encoding='utf-8')
+            blocked = subprocess.run(['/bin/bash', str(doctor), '--spotlight'], env=env,
+                                     capture_output=True, text=True, timeout=30, check=False)
+            self.assertIn('warn  unreadable  apply will not ask again', blocked.stdout)
             helptext = subprocess.run(['/bin/bash', str(doctor), '--help'], capture_output=True, text=True, check=False)
             self.assertIn('--spotlight', helptext.stdout)
 
