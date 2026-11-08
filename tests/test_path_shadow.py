@@ -17,6 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 HELPER = REPO / "home/dot_local/bin/executable_groundwork-path-shadow"
 DOCTOR = REPO / "home/dot_local/bin/executable_groundwork-doctor"
+LAUNCHER = REPO / "home/dot_local/bin/executable_update-all"
 RUNNER = REPO / "home/dot_local/bin/executable_groundwork-update-run.tmpl"
 LIB = REPO / "home/dot_local/share/groundwork/lib/coding-cli-ownership.sh"
 LOCK = REPO / "home/dot_local/lib/groundwork/update-lock.sh"
@@ -279,13 +280,44 @@ class PathShadowTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("--path-shadow", help_result.stdout)
 
+    def test_launcher_saves_the_caller_path_before_prepending(self):
+        head = LAUNCHER.read_text(encoding="utf-8").split("usage()", 1)[0]
+        probe = self.root / "launcher-head.sh"
+        probe.write_text(
+            head + "printf '%s\\n' \"$GROUNDWORK_PATH_SHADOW_PATH\"\nprintf '%s\\n' \"$PATH\"\n",
+            encoding="utf-8",
+        )
+        caller = f"{self.root / 'early' / 'bin'}:/usr/bin:/bin"
+        env = self.env.copy()
+        env.pop("GROUNDWORK_PATH_SHADOW_PATH", None)
+        env["PATH"] = caller
+        result = subprocess.run(
+            ["bash", str(probe)], env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved, live = result.stdout.splitlines()
+        self.assertEqual(saved, caller)
+        self.assertTrue(live.startswith(f"{self.home / '.local' / 'bin'}:"), live)
+        self.assertLess(live.index("/opt/homebrew/bin"), live.index(str(self.root / "early" / "bin")))
+
     def test_rendered_runner_puts_the_shadow_in_the_final_summary(self):
         text = RUNNER.read_text(encoding="utf-8")
         self.assertGreaterEqual(
             text.count('"$HOME/.local/bin/groundwork-path-shadow" --summary'), 2)
-        self._version(self.grok_real / "grok", "1.0.62")
-        (self.local_bin / "grok").symlink_to(self.grok_real / "grok")
+        early = self.root / "early" / "bin"
+        early.mkdir(parents=True)
+        self._version(early / "grok", "1.0.62")
         self._version(self.brew / "grok", "1.0.77")
+        shims = self.home / ".local/share/mise/shims"
+        shims.mkdir(parents=True)
+        mise_real = self.root / "mise-real"
+        self._version(mise_real, "mise")
+        self._version(self.mise_bin / "node", "25.1.0")
+        (shims / "node").symlink_to(mise_real)
+        false_node = self.root / "false-usr-local" / "bin"
+        false_node.mkdir(parents=True)
+        self._version(false_node / "node", "18.0.0")
+        user_path = f"{early}:{shims}:{self.mise_cmd}:{self.tools}:/usr/bin:/bin"
         chezmoi = shutil.which("chezmoi")
         self.assertIsNotNone(chezmoi)
         destination = self.root / "dest"
@@ -316,7 +348,10 @@ class PathShadowTests(unittest.TestCase):
             if "checkout-core.sh" in line:
                 lines.append(":")
             elif line.startswith("export PATH=") and "homebrew" in line:
-                lines.append('export PATH="$HOME/.local/bin:$GROUNDWORK_TEST_PATH"')
+                lines.append(
+                    'export PATH="$HOME/.local/bin:$GROUNDWORK_MANAGED_BIN:'
+                    '$GROUNDWORK_FALSE_NODE_BIN:$GROUNDWORK_TEST_PATH"'
+                )
             else:
                 lines.append(line)
         script = self.root / "runner"
@@ -347,9 +382,12 @@ class PathShadowTests(unittest.TestCase):
         shutil.copy(LOCK, lib / "update-lock.sh")
         shutil.copy(MAINTENANCE, self.home / ".local/share/groundwork/lib/maintenance-runner.sh")
         env = self.env.copy()
+        env.pop("GROUNDWORK_PATH_SHADOW_PATH", None)
         env.update({
-            "PATH": f"{self.local_bin}:{self.tools}:/usr/bin:/bin",
+            "PATH": user_path,
             "GROUNDWORK_TEST_PATH": f"{self.tools}:/usr/bin:/bin",
+            "GROUNDWORK_MANAGED_BIN": str(self.brew),
+            "GROUNDWORK_FALSE_NODE_BIN": str(false_node),
             "CHEZMOI_SOURCE": str(repo),
             "GIT_CONFIG_COUNT": "1",
             "GIT_CONFIG_KEY_0": "safe.directory",
@@ -364,10 +402,25 @@ class PathShadowTests(unittest.TestCase):
         summary = result.stdout.index("PATH shadows")
         finished = result.stdout.index("\nResult\n")
         self.assertLess(summary, finished)
+        self.assertIn("grok is shadowed", result.stdout)
         self.assertIn("1.0.62", result.stdout)
         self.assertIn("1.0.77", result.stdout)
+        self.assertNotIn("node is shadowed", result.stdout)
+        self.assertNotIn("18.0.0", result.stdout)
         self.assertIn("did not remove", result.stdout)
-        self.assertTrue((self.local_bin / "grok").is_symlink())
+        self.assertTrue((early / "grok").is_file())
+        # The launcher already saved the caller PATH. The runner must not
+        # replace it with the prepended PATH it received.
+        inherited = env.copy()
+        inherited["PATH"] = f"{false_node}:{self.brew}:{self.tools}:/usr/bin:/bin"
+        inherited["GROUNDWORK_PATH_SHADOW_PATH"] = user_path
+        inherited_result = subprocess.run(
+            ["bash", str(script), "--skip-maintenance"],
+            env=inherited, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(inherited_result.returncode, 0, inherited_result.stdout + inherited_result.stderr)
+        self.assertIn("grok is shadowed", inherited_result.stdout)
+        self.assertNotIn("node is shadowed", inherited_result.stdout)
 
 
 if __name__ == "__main__":

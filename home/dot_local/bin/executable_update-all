@@ -6,6 +6,11 @@ set -euo pipefail
 # this same invocation to the freshly applied runner. Update stages live in
 # groundwork-update-run so a fix delivered by the sync governs the rest of the
 # run; keep substantive logic out of this file.
+# The shadow report must see the caller's PATH. This prepend is only for the
+# update's own tools, and it would hide a copy that was ahead of Homebrew.
+if [[ -z "${GROUNDWORK_PATH_SHADOW_PATH+x}" ]]; then
+  export GROUNDWORK_PATH_SHADOW_PATH="$PATH"
+fi
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 usage() {
