@@ -77,13 +77,6 @@ if [[ "$config_only" -eq 1 && ( "$skip_maintenance" -eq 1 || "$allow_app_quit" -
   exit 64
 fi
 
-print_apply_source_summary() {
-  local helper="$HOME/.local/bin/groundwork-apply-source-warning"
-  if [[ -x "$helper" ]]; then
-    "$helper" --summary || true
-  fi
-}
-
 # Preserve only an invocation that began with real interactive stdin and
 # stderr. Earlier bounded updater stages may temporarily detach fd 0; keeping
 # these exact descriptors lets later authorization and consent stay attached
@@ -536,7 +529,9 @@ if [[ "$config_only" -eq 1 ]]; then
 {{ end }}
   echo "Groundwork configuration applied using saved settings."
   echo "Routine upgrades and maintenance were not requested. Run update-all for those."
-  print_apply_source_summary
+  if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
+    "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+  fi
   exit 0
 fi
 
@@ -2686,7 +2681,9 @@ if [[ "$update_status" -ne 0 || "$maintenance_status" -ne 0 || "$docker_maintena
   final_status="$update_status"
   [[ "$final_status" -ne 0 ]] || final_status="$maintenance_status"
   [[ "$final_status" -ne 0 ]] || final_status="$docker_maintenance_status"
-  print_apply_source_summary
+  if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
+    "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+  fi
   cat >&2 <<'EOF'
 
 Groundwork update incomplete
@@ -2898,7 +2895,9 @@ fi
 if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) -gt 0 ]]; then
   result_suffix="$result_suffix · $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) WARNING(S)"
 fi
-print_apply_source_summary
+if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
+  "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+fi
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."
 if [[ "$brew_lane_status" != "skipped" ]]; then

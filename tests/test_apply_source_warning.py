@@ -294,7 +294,8 @@ class Fixture(unittest.TestCase):
 
     def test_rendered_runner_puts_the_warning_in_its_final_summary(self):
         text = RUNNER.read_text(encoding="utf-8")
-        self.assertGreaterEqual(text.count("print_apply_source_summary"), 4)
+        self.assertGreaterEqual(
+            text.count('"$HOME/.local/bin/groundwork-apply-source-warning" --summary'), 3)
         chezmoi = shutil.which("chezmoi")
         self.assertIsNotNone(chezmoi)
         repo = self._repo(branch="fix/spotlight-fixture-firmlink", days_old=12, extra_on_origin=3)
