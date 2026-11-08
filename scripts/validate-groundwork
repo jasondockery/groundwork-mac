@@ -12331,6 +12331,12 @@ SH
   mkdir -p "$pf_root/notgit"
   pf_run 1 "$pf_root/notgit"
 
+  check "update-all apply-source warning"
+  python3 -B tests/test_apply_source_warning.py
+
+  check "update-all PATH shadow report"
+  python3 -B tests/test_path_shadow.py
+
 }
 
 validate_platform_terminal() {
@@ -19452,8 +19458,11 @@ SH
   browser_doctor_apps="$browser_doctor/Applications"
   mkdir -p "$browser_doctor_apps"
   run_browser_doctor() {
+    # A host defaultbrowser would answer this fixture. Point at a path that is
+    # not installed so the report stays the sealed "not installed" case.
     env PATH="$browser_doctor/bin:$PATH" DOCTOR_BROWSER_DATA="$1" INSTALLED_CASKS="$2" \
       GROUNDWORK_APPLICATIONS_DIR="${3:-$browser_doctor_apps}" \
+      GROUNDWORK_BRAVE_DEFAULTBROWSER="$browser_doctor/bin/defaultbrowser-absent" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --browser
   }
   browser_doctor_out="$(run_browser_doctor \

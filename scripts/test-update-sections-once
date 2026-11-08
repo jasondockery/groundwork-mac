@@ -53,6 +53,13 @@ class UpdateSectionsOnceTests(unittest.TestCase):
             shutil.copy(HOME_SOURCE / 'dot_local/share/groundwork/lib' / library, share)
         shutil.copy(HOME_SOURCE / 'dot_local/bin/executable_update-all', self.bin / 'update-all')
         (self.bin / 'update-all').chmod(0o755)
+        # Same Homebrew-prefix seal as the runner below. The launcher exports
+        # that PATH before exec, so an unsealed launcher still exposes host brew.
+        launcher = (self.bin / 'update-all').read_text(encoding='utf-8')
+        sealed_launcher = launcher.replace(':/opt/homebrew/bin:/usr/local/bin:', ':', 1)
+        self.assertNotEqual(launcher, sealed_launcher, 'update-all no longer has a Homebrew PATH prefix to seal')
+        (self.bin / 'update-all').write_text(sealed_launcher, encoding='utf-8')
+        (self.bin / 'update-all').chmod(0o755)
         # Nothing in the tools hook may reach the network or the real home.
         (self.home / '.config/nvim').mkdir(parents=True)
         (self.home / '.config/nvim/init.lua').write_text('')
@@ -61,6 +68,14 @@ class UpdateSectionsOnceTests(unittest.TestCase):
         hooks.mkdir()
         self.rendered_runner = self.root / 'groundwork-update-run'
         self.render(RUNNER, self.rendered_runner)
+        # The runner puts Homebrew's prefixes ahead of the fixture PATH. On a
+        # machine that has brew, that would read the host and then refuse to
+        # continue because this fixture has no classifier. Drop the prefixes
+        # so the section count stays on the stubs.
+        rendered = self.rendered_runner.read_text(encoding='utf-8')
+        sealed = rendered.replace(':/opt/homebrew/bin:/usr/local/bin:', ':', 1)
+        self.assertNotEqual(rendered, sealed, 'the runner no longer has a Homebrew PATH prefix to seal')
+        self.rendered_runner.write_text(sealed, encoding='utf-8')
         self.render(TOOLS_HOOK, hooks / '20-tools.sh')
         shutil.copy(OWNERSHIP_HOOK, hooks / '22-cli-ownership.sh')
         for hook in hooks.iterdir():

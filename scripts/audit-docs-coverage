@@ -74,11 +74,13 @@ RETIRED_EXECUTABLES = {
     "groundwork-profile",
 }
 INTERNAL_EXECUTABLES = {
+    "groundwork-apply-source-warning",
     "groundwork-apps-start",
     "groundwork-brew-refetch",
     "groundwork-brew-repair",
     "groundwork-brew-update",
     "groundwork-karabiner-postflight",
+    "groundwork-path-shadow",
     "groundwork-source-preflight",
     "groundwork-update-run",
     "tmux-copy-cwd",
