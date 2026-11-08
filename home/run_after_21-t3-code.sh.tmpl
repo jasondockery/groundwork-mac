@@ -36,7 +36,8 @@ fi
 installer="$(mktemp)"
 releases="$(mktemp)"
 release_headers="$(mktemp)"
-trap 'rm -f "$installer" "$releases" "$release_headers"' EXIT
+t3_staging=""
+trap 'rm -f "$installer" "$releases" "$release_headers"; if [[ -n "${t3_staging}" ]]; then rm -rf -- "$t3_staging"; fi' EXIT
 # The official installer finds Nightly through the GitHub REST API without a
 # token, so shared runners and busy networks hit the 60-request hourly limit.
 # Resolve the release here, authenticated when GH_TOKEN or GITHUB_TOKEN is set,
@@ -91,12 +92,163 @@ for page in 1 2 3 4 5 6 7 8 9 10; do
   [[ -z "$t3_release" ]] || break
   grep -q '"tag_name"' "$releases" || break
 done
-unset github_token token_source
 [[ -n "$t3_release" ]] || { echo "No T3 Code Nightly release was found on GitHub." >&2; exit 1; }
-curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
-  -fsSL https://t3.codes/install.sh -o "$installer"
+
+# github.com/releases/download returned HTTP 504 to the official installer
+# (docker-build on 2026-11-08) while api.github.com still served that Nightly.
+# After one official failure, install the same version from the asset API.
+# The layout matches the official installer: version directory, .install-complete,
+# the t3 symlink, and runtime/launchers.
+download_github_asset() {
+  local url="$1"
+  local output="$2"
+  local max_time="$3"
+  local authorization=""
+  [[ -z "$github_token" ]] || authorization="header = \"Authorization: Bearer $github_token\""
+  printf '%s\n' "$authorization" | curl --config - --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --connect-timeout 10 --max-time "$max_time" -fL -sS \
+    -H "Accept: application/octet-stream" \
+    -o "$output" \
+    "$url"
+}
+fetch_tag_release() {
+  local authorization=""
+  [[ -z "$github_token" ]] || authorization="header = \"Authorization: Bearer $github_token\""
+  printf '%s\n' "$authorization" | curl --config - --proto '=https' --tlsv1.2 \
+    --connect-timeout 10 --max-time 30 -sS \
+    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    -D "$release_headers" -o "$releases" -w '%{http_code}' \
+    "https://api.github.com/repos/pingdotgg/t3code/releases/tags/v${t3_release}" || {
+    local curl_status=$?
+    printf 'Could not reach the GitHub API to read the T3 Code Nightly release (curl exit %s).\n' "$curl_status" >&2
+    return "$curl_status"
+  }
+}
+t3_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum < "$1" | awk '{ print $1; exit }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 < "$1" | awk '{ print $1; exit }'
+  else
+    echo "sha256sum or shasum is required to verify T3 Code." >&2
+    return 1
+  fi
+}
+github_asset_url() {
+  local name="$1"
+  local asset_url=""
+  asset_url="$(jq -r --arg name "$name" '[.assets[] | select(.name == $name) | .url] | if length == 1 then .[0] else "" end' "$releases")" || {
+    echo "Could not read the T3 Code release from the GitHub API." >&2
+    return 1
+  }
+  [[ -n "$asset_url" && "$asset_url" != "null" ]] || {
+    printf 'T3 Code %s has no %s asset on the GitHub API.\n' "$t3_release" "$name" >&2
+    return 1
+  }
+  printf '%s\n' "$asset_url"
+}
+install_t3_from_api() {
+  local platform=""
+  local arch=""
+  local archive=""
+  local sums_url=""
+  local asset_url=""
+  local expected=""
+  local actual=""
+  local t3_home=""
+  local bin_dir=""
+  local versions_dir=""
+  local target_dir=""
+  local launcher=""
+  local launchers=""
+  local status=""
+  case "$(uname -s)" in
+    Darwin) platform=darwin ;;
+    Linux) platform=linux ;;
+    *)
+      printf 'T3 Code API install does not support %s.\n' "$(uname -s)" >&2
+      return 1
+      ;;
+  esac
+  case "$(uname -m)" in
+    arm64 | aarch64) arch=arm64 ;;
+    x86_64 | amd64) arch=x64 ;;
+    *)
+      printf 'T3 Code API install does not support %s.\n' "$(uname -m)" >&2
+      return 1
+      ;;
+  esac
+  command -v jq >/dev/null 2>&1 || {
+    echo "jq is required to install T3 Code from the GitHub API." >&2
+    return 1
+  }
+  archive="t3-${t3_release}-${platform}-${arch}.tar.gz"
+  t3_home="${T3CODE_HOME:-$HOME/.t3}"
+  bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+  versions_dir="${t3_home}/runtime/versions"
+  target_dir="${versions_dir}/${t3_release}"
+  if [[ ! -f "${target_dir}/.install-complete" || "$(cat "${target_dir}/.install-complete")" != "$t3_release" || ! -x "${target_dir}/t3" ]]; then
+    status="$(fetch_tag_release)"
+    if [[ "$status" == 401 && -n "$github_token" ]]; then
+      printf 'Warning: GitHub rejected the %s token (HTTP 401); retrying the T3 Code asset lookup without it.\n' "$token_source" >&2
+      github_token=""
+      status="$(fetch_tag_release)"
+    fi
+    [[ "$status" == 200 ]] || {
+      printf 'GitHub API returned HTTP %s while reading the T3 Code Nightly release.\n' "$status" >&2
+      return 1
+    }
+    sums_url="$(github_asset_url SHA256SUMS)"
+    asset_url="$(github_asset_url "$archive")"
+    mkdir -p "$versions_dir"
+    t3_staging="$(mktemp -d "${versions_dir}/.staging-XXXXXX")"
+    download_github_asset "$sums_url" "${t3_staging}/SHA256SUMS" 60 || {
+      echo "Could not download the T3 Code checksums from the GitHub API." >&2
+      return 1
+    }
+    download_github_asset "$asset_url" "${t3_staging}/${archive}" 180 || {
+      echo "Could not download the T3 Code archive from the GitHub API." >&2
+      return 1
+    }
+    expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1; found = 1; exit } END { if (!found) exit 1 }' "${t3_staging}/SHA256SUMS" || true)"
+    [[ -n "$expected" ]] || {
+      printf 'T3 Code %s checksums do not list %s.\n' "$t3_release" "$archive" >&2
+      return 1
+    }
+    actual="$(t3_sha256 "${t3_staging}/${archive}")"
+    [[ "$actual" == "$expected" ]] || {
+      printf 'checksum mismatch for %s\n' "$archive" >&2
+      return 1
+    }
+    tar -xzf "${t3_staging}/${archive}" -C "$t3_staging" --strip-components=1
+    rm -f -- "${t3_staging}/${archive}" "${t3_staging}/SHA256SUMS"
+    [[ -x "${t3_staging}/t3" ]] || { echo "The T3 Code archive has no t3 executable." >&2; return 1; }
+    "$deadline" --kill-after=5s 15 "${t3_staging}/t3" --version >/dev/null
+    printf '%s\n' "$t3_release" > "${t3_staging}/.install-complete"
+    rm -rf -- "$target_dir"
+    mv -- "$t3_staging" "$target_dir"
+    t3_staging=""
+  fi
+  mkdir -p "$bin_dir" "${t3_home}/runtime"
+  ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
+  launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
+  launchers="${t3_home}/runtime/launchers"
+  if [[ -f "$launchers" ]] && grep -qxF "$launcher" "$launchers"; then
+    :
+  else
+    printf '%s\n' "$launcher" >> "$launchers"
+  fi
+}
+
 echo "Installing T3 Code Nightly $t3_release (five-minute deadline; installer output follows)."
-env -u GH_TOKEN -u GITHUB_TOKEN T3CODE_VERSION="$t3_release" T3CODE_CHANNEL=nightly "$deadline" --kill-after=5s 300 sh "$installer"
+if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
+  -fsSL https://t3.codes/install.sh -o "$installer" \
+  || ! env -u GH_TOKEN -u GITHUB_TOKEN T3CODE_VERSION="$t3_release" T3CODE_CHANNEL=nightly \
+    "$deadline" --kill-after=5s 300 sh "$installer"; then
+  echo "t3.codes installer failed; installing T3 Code Nightly ${t3_release} from the GitHub API." >&2
+  install_t3_from_api
+fi
+unset github_token token_source
 [[ -x "$installed_t3" ]] || { echo "The official installer did not create $installed_t3." >&2; exit 1; }
 hash -r
 effective_t3="$(command -v t3 || true)"

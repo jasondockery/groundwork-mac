@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Exercise rendered install boundaries without changing host configuration."""
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -126,6 +128,152 @@ INSTALL''')
         result = self.run_script(self.render_t3("linux"))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.home / ".local/bin/t3").exists())
+
+    def stage_t3_api_fallback(self, bad_checksum=False):
+        self.t3_stubs()
+        jq = shutil.which("jq")
+        self.assertIsNotNone(jq, "jq is required to exercise the T3 API fallback")
+        self.env["PATH"] = f"{self.bin}:{Path(jq).parent}:{self.env['PATH']}"
+        version = "0.0.0-nightly.20261018.1"
+        archive_name = f"t3-{version}-linux-arm64.tar.gz"
+        payload = self.root / "payload"
+        payload.mkdir()
+        tool = payload / "t3"
+        tool.write_text('#!/bin/sh\necho "t3 0.0.0-nightly.20261018.1"\n')
+        tool.chmod(0o755)
+        tarball = self.root / "archive.tar.gz"
+        with tarfile.open(tarball, "w:gz") as archive:
+            archive.add(tool, arcname="pkg/t3")
+        digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        if bad_checksum:
+            digest = "0" * 64
+        sums = self.root / "SHA256SUMS"
+        sums.write_text(f"{digest}  {archive_name}\n")
+        tag = self.root / "tag.json"
+        tag.write_text(json.dumps({
+            "tag_name": f"v{version}",
+            "assets": [
+                {
+                    "name": archive_name,
+                    "url": "https://api.github.com/repos/pingdotgg/t3code/releases/assets/111",
+                },
+                {
+                    "name": "SHA256SUMS",
+                    "url": "https://api.github.com/repos/pingdotgg/t3code/releases/assets/222",
+                },
+            ],
+        }))
+        self.env.update(
+            FIXTURE_TARBALL=str(tarball),
+            FIXTURE_SUMS=str(sums),
+            FIXTURE_TAG=str(tag),
+            GH_TOKEN="fixture-token-123",
+        )
+        self.stub("curl", r'''
+printf '%s\n' "$*" >> "$FIXTURE_ROOT/curl-argv"
+if [[ " $* " == *" --config - "* ]]; then
+  config="$(cat)"
+  printf '%s\n' "$config" >> "$FIXTURE_ROOT/curl-config"
+fi
+url=""
+output=""
+headers=""
+args=("$@")
+i=0
+while [[ $i -lt ${#args[@]} ]]; do
+  case "${args[$i]}" in
+    -o|--output)
+      i=$((i + 1))
+      output="${args[$i]}"
+      ;;
+    -D)
+      i=$((i + 1))
+      headers="${args[$i]}"
+      ;;
+    --proto|--proto-redir|--connect-timeout|--max-time|-H|-w)
+      i=$((i + 1))
+      ;;
+    -*)
+      ;;
+    *)
+      url="${args[$i]}"
+      ;;
+  esac
+  i=$((i + 1))
+done
+case "$url" in
+  *'releases?per_page='*)
+    page="${url##*page=}"
+    printf 'HTTP/2 200\r\nx-ratelimit-remaining: 59\r\n\r\n' > "$headers"
+    printf '[\n  {\n    "tag_name": "v0.0.0-nightly.20261018.1",\n  }\n]\n' > "$output"
+    printf '200'
+    ;;
+  *'/releases/tags/'*)
+    printf 'HTTP/2 200\r\n\r\n' > "$headers"
+    cp "$FIXTURE_TAG" "$output"
+    printf '200'
+    ;;
+  *t3.codes/install.sh*)
+    cat > "$output" <<'INSTALL'
+#!/bin/sh
+if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+  echo "token leaked to official installer" >&2
+  exit 2
+fi
+echo "could not download the release checksums" >&2
+exit 1
+INSTALL
+    ;;
+  *'/assets/222'*)
+    cp "$FIXTURE_SUMS" "$output"
+    ;;
+  *'/assets/111'*)
+    cp "$FIXTURE_TARBALL" "$output"
+    ;;
+  *)
+    printf 'unexpected curl url: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac
+''')
+        return version
+
+    def test_official_installer_failure_installs_from_the_github_api(self):
+        version = self.stage_t3_api_fallback()
+        result = self.run_script(self.render_t3("linux"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("from the GitHub API", result.stderr)
+        self.assertNotIn("fixture-token-123", result.stdout + result.stderr)
+        argv = (self.root / "curl-argv").read_text()
+        self.assertIn("t3.codes/install.sh", argv)
+        self.assertIn("/releases/tags/v0.0.0-nightly.20261018.1", argv)
+        self.assertIn("/assets/222", argv)
+        self.assertIn("/assets/111", argv)
+        self.assertNotIn("fixture-token-123", argv)
+        self.assertIn(
+            'header = "Authorization: Bearer fixture-token-123"',
+            (self.root / "curl-config").read_text(),
+        )
+        installed = self.home / ".local/bin/t3"
+        self.assertTrue(installed.is_symlink(), result.stdout + result.stderr)
+        target = self.home / ".t3/runtime/versions" / version / "t3"
+        self.assertEqual(os.path.realpath(installed), str(target))
+        self.assertEqual((target.parent / ".install-complete").read_text().strip(), version)
+        version_out = subprocess.check_output([str(installed), "--version"], text=True, timeout=5)
+        self.assertIn("-nightly.", version_out)
+        launchers = (self.home / ".t3/runtime/launchers").read_text().splitlines()
+        self.assertIn(str(installed), launchers)
+        self.assertFalse(list((self.home / ".t3/runtime/versions").glob(".staging-*")))
+
+    def test_api_fallback_rejects_a_checksum_mismatch(self):
+        version = self.stage_t3_api_fallback(bad_checksum=True)
+        result = self.run_script(self.render_t3("linux"))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("checksum mismatch", result.stderr)
+        self.assertFalse((self.home / ".local/bin/t3").exists())
+        version_dir = self.home / ".t3/runtime/versions" / version
+        self.assertFalse((version_dir / ".install-complete").exists())
+        self.assertFalse(list((self.home / ".t3/runtime/versions").glob(".staging-*")))
 
     def test_t3_release_lookup_sends_token_only_through_stdin(self):
         for variable in ("GH_TOKEN", "GITHUB_TOKEN"):
