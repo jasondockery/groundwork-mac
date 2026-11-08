@@ -85,7 +85,7 @@ install_chezmoi_from_api() {
   chezmoi_curl_config="$(mktemp)"
   chmod 0600 "$chezmoi_curl_config"
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" > "$chezmoi_curl_config"
+    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" >"$chezmoi_curl_config"
   fi
   local accept_json=(-H "Accept: application/vnd.github+json")
   local accept_file=(-H "Accept: application/octet-stream")
