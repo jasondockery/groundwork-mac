@@ -34,12 +34,17 @@ set -euo pipefail
 out=""
 url=""
 args=("$@")
+printf '%s\n' "$*" >>"$CURL_ARGV"
 i=0
 while [[ $i -lt ${#args[@]} ]]; do
   case "${args[$i]}" in
     -o)
       i=$((i + 1))
       out="${args[$i]}"
+      ;;
+    --config)
+      i=$((i + 1))
+      cat "${args[$i]}" >>"$CURL_CONFIG_LOG"
       ;;
     -H)
       i=$((i + 1))
@@ -53,6 +58,10 @@ while [[ $i -lt ${#args[@]} ]]; do
   i=$((i + 1))
 done
 printf '%s\n' "$url" >>"$CURL_LOG"
+if [[ -n "${FIXTURE_CURL_FAIL:-}" && "$url" == *"$FIXTURE_CURL_FAIL"* ]]; then
+  echo "curl: (22) fixture failure" >&2
+  exit 22
+fi
 if [[ "$url" == *get.chezmoi.io* ]]; then
   cp "$FIXTURE_INSTALLER" "$out"
   exit 0
@@ -88,6 +97,10 @@ class CiInstallLinuxToolsTests(unittest.TestCase):
         self._write(self.fake / "curl", FAKE_CURL)
         self.curl_log = self.root / "curl.log"
         self.curl_log.write_text("")
+        self.curl_argv = self.root / "curl-argv.log"
+        self.curl_argv.write_text("")
+        self.curl_config = self.root / "curl-config.log"
+        self.curl_config.write_text("")
 
         payload = self.root / "payload"
         payload.mkdir()
@@ -130,6 +143,8 @@ class CiInstallLinuxToolsTests(unittest.TestCase):
                 "CI_INSTALL_BIN_DIR": str(self.bin),
                 "TMPDIR": str(self.root),
                 "CURL_LOG": str(self.curl_log),
+                "CURL_ARGV": str(self.curl_argv),
+                "CURL_CONFIG_LOG": str(self.curl_config),
                 "FIXTURE_INSTALLER": str(installer),
                 "FIXTURE_RELEASE": str(self.release),
                 "FIXTURE_SUMS": str(self.sums),
@@ -197,6 +212,51 @@ class CiInstallLinuxToolsTests(unittest.TestCase):
         self.assertIn("https://api.github.com/repos/twpayne/chezmoi/releases/latest", urls)
         self.assertTrue(any(url.endswith("/assets/111") for url in urls))
         self.assertTrue(any(url.endswith("/assets/222") for url in urls))
+
+    def _failing_installer(self):
+        installer = self.root / "installer-fail.sh"
+        self._write(installer, "#!/bin/sh\necho website-installer-failed >&2\nexit 22\n")
+        return installer
+
+    def test_failed_retry_does_not_log_the_github_token(self):
+        token = "fixture-secret-token"
+        env = self._env(self._failing_installer())
+        env["GITHUB_TOKEN"] = token
+        env["FIXTURE_CURL_FAIL"] = "/releases/latest"
+        env["CI_INSTALL_RETRY_DELAY_SECONDS"] = "0"
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("failed after 4 attempts", result.stderr)
+        self.assertNotIn(token, result.stdout)
+        self.assertNotIn(token, result.stderr)
+        self.assertNotIn("Authorization", result.stderr)
+        self.assertNotIn(token, self.curl_argv.read_text())
+        self.assertIn(f'header = "Authorization: Bearer {token}"', self.curl_config.read_text())
+        self.assertFalse((self.bin / "chezmoi").exists())
+
+    def test_bad_checksum_does_not_install(self):
+        self.sums.write_text("0000000000000000000000000000000000000000000000000000000000000000  chezmoi_9.9.9_linux_amd64.tar.gz\n")
+        result = self._run(self._failing_installer())
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("did NOT match", result.stderr)
+        self.assertIn("installing chezmoi from the GitHub API", result.stderr)
+        self.assertFalse((self.bin / "chezmoi").exists())
+
+    def test_checksum_file_that_omits_the_archive_does_not_install(self):
+        digest = hashlib.sha256(self.tarball.read_bytes()).hexdigest()
+        self.sums.write_text(f"{digest}  not-the-archive.tar.gz\n")
+        result = self._run(self._failing_installer())
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("installing chezmoi from the GitHub API", result.stderr)
+        self.assertNotIn("FAILED", result.stderr)
+        self.assertFalse((self.bin / "chezmoi").exists())
 
 
 if __name__ == "__main__":

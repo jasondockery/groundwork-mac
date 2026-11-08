@@ -34,9 +34,11 @@ set -euo pipefail
 # Usage: scripts/ci-install-linux-tools
 
 ATTEMPT_TIMEOUT_SECONDS="${CI_INSTALL_ATTEMPT_TIMEOUT_SECONDS:-60}"
+# Tests set this to 0. CI leaves it unset, so the first wait stays 5 seconds.
+RETRY_DELAY_SECONDS="${CI_INSTALL_RETRY_DELAY_SECONDS:-5}"
 
 retry() {
-  local attempt=1 max_attempts=4 delay=5 status=0
+  local attempt=1 max_attempts=4 delay="$RETRY_DELAY_SECONDS" status=0
   # --kill-after: SIGTERM alone depends on the child (sudo, in two of the
   # three calls below) actually forwarding it. sudo does by default, but nothing
   # here re-verifies that assumption at every future sudo version -- a
@@ -78,16 +80,19 @@ install_chezmoi_from_api() {
 
   chezmoi_release_json="$(mktemp)"
   chezmoi_tmp="$(mktemp -d)"
-  local curl_auth=()
+  # The token stays in this file, not in curl's arguments. retry() logs "$*"
+  # on a failed attempt, and a local run has no log mask.
+  chezmoi_curl_config="$(mktemp)"
+  chmod 0600 "$chezmoi_curl_config"
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" > "$chezmoi_curl_config"
+  fi
   local accept_json=(-H "Accept: application/vnd.github+json")
   local accept_file=(-H "Accept: application/octet-stream")
   local user_agent=(-H "User-Agent: groundwork-ci")
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    curl_auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-  fi
 
   local release_url="https://api.github.com/repos/twpayne/chezmoi/releases/latest"
-  retry curl -fsSL "${curl_auth[@]}" "${user_agent[@]}" "${accept_json[@]}" \
+  retry curl --config "$chezmoi_curl_config" -fsSL "${user_agent[@]}" "${accept_json[@]}" \
     -o "$chezmoi_release_json" "$release_url"
 
   local tag="" version="" asset_name="" sum_name="" asset_url="" sum_url=""
@@ -100,9 +105,9 @@ install_chezmoi_from_api() {
   sum_url="$(jq -er --arg name "$sum_name" \
     '.assets[] | select(.name == $name) | .url' "$chezmoi_release_json")"
 
-  retry curl -fL "${curl_auth[@]}" "${user_agent[@]}" "${accept_file[@]}" \
+  retry curl --config "$chezmoi_curl_config" -fL "${user_agent[@]}" "${accept_file[@]}" \
     -o "${chezmoi_tmp}/${asset_name}" "$asset_url"
-  retry curl -fL "${curl_auth[@]}" "${user_agent[@]}" "${accept_file[@]}" \
+  retry curl --config "$chezmoi_curl_config" -fL "${user_agent[@]}" "${accept_file[@]}" \
     -o "${chezmoi_tmp}/${sum_name}" "$sum_url"
   (
     cd -- "$chezmoi_tmp"
@@ -137,6 +142,7 @@ chezmoi_bin_dir="${CI_INSTALL_BIN_DIR:-/usr/local/bin}"
 chezmoi_installer="$(mktemp)"
 chezmoi_release_json=""
 chezmoi_tmp=""
+chezmoi_curl_config=""
 cleanup_chezmoi() {
   if [[ -n "${chezmoi_installer}" ]]; then
     rm -f -- "$chezmoi_installer"
@@ -146,6 +152,9 @@ cleanup_chezmoi() {
   fi
   if [[ -n "${chezmoi_tmp}" ]]; then
     rm -rf -- "$chezmoi_tmp"
+  fi
+  if [[ -n "${chezmoi_curl_config}" ]]; then
+    rm -f -- "$chezmoi_curl_config"
   fi
 }
 trap cleanup_chezmoi EXIT
