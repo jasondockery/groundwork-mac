@@ -10,6 +10,12 @@ set -euo pipefail
 # same file works on macOS, Linux, and WSL2 whether or not a given manager is
 # installed. Run update-all, not this file, for a refresh that includes the
 # sync.
+# Prefer the launcher's saved PATH. A direct run saves the incoming PATH
+# before this prepend, so the summary still sees a copy that was ahead of
+# Homebrew and does not treat /usr/local/bin as ahead of a mise shim.
+if [[ -z "${GROUNDWORK_PATH_SHADOW_PATH+x}" ]]; then
+  GROUNDWORK_PATH_SHADOW_PATH="$PATH"
+fi
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 usage() {
@@ -2684,6 +2690,11 @@ if [[ "$update_status" -ne 0 || "$maintenance_status" -ne 0 || "$docker_maintena
   if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
     "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
   fi
+  if [[ -x "$HOME/.local/bin/groundwork-path-shadow" ]]; then
+    PATH="${GROUNDWORK_PATH_SHADOW_PATH-$PATH}" \
+      GROUNDWORK_CLAUDE_CODE_OWNER="${claude_code_owner:-homebrew}" \
+      "$HOME/.local/bin/groundwork-path-shadow" --summary || true
+  fi
   cat >&2 <<'EOF'
 
 Groundwork update incomplete
@@ -2897,6 +2908,11 @@ if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_war
 fi
 if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
   "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+fi
+if [[ -x "$HOME/.local/bin/groundwork-path-shadow" ]]; then
+  PATH="${GROUNDWORK_PATH_SHADOW_PATH-$PATH}" \
+    GROUNDWORK_CLAUDE_CODE_OWNER="${claude_code_owner:-homebrew}" \
+    "$HOME/.local/bin/groundwork-path-shadow" --summary || true
 fi
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."

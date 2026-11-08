@@ -12334,6 +12334,9 @@ SH
   check "update-all apply-source warning"
   python3 -B tests/test_apply_source_warning.py
 
+  check "update-all PATH shadow report"
+  python3 -B tests/test_path_shadow.py
+
 }
 
 validate_platform_terminal() {

@@ -819,18 +819,21 @@ error looked like a Groundwork bug.
 `groundwork-doctor` cannot currently see this: every probe uses `command -v`,
 which returns only the first match.
 
-- [ ] Report duplicate installs of Groundwork-managed tools: run `command -v -a`
+- [x] Report duplicate installs of Groundwork-managed tools: run `command -v -a`
       (or `which -a`) per managed command, and when more than one exists, name
       every path, say which one wins, and say which one Groundwork installed.
-- [ ] Never auto-remove the other install. A pre-Groundwork binary may be
+      Bash 3.2 `command` has no `-a`, so `groundwork-path-shadow` uses `type -a`,
+      which lists every PATH hit. `groundwork-doctor` includes the section, and
+      `update-all` repeats it in the final summary.
+- [x] Never auto-remove the other install. A pre-Groundwork binary may be
       deliberate, and deleting it can orphan a configuration the user still
       wants. Report, explain, and let the owner decide — the same rule as
       unmanaged Homebrew packages.
-- [ ] Where a shadowed tool has a known legacy config path, name it so the user
+- [x] Where a shadowed tool has a known legacy config path, name it so the user
       can see their old settings were preserved rather than lost. The old
       opencode used `~/.opencode.json`; the current one uses
       `~/.config/opencode/`, so the two never collide.
-- [ ] Cover the reverse case too: a Groundwork-managed command that is missing
+- [x] Cover the reverse case too: a Groundwork-managed command that is missing
       from PATH entirely because another installer removed or shadowed it.
 - [ ] **pnpm/Node ownership — the first instance of this class. Repository work
       landed 2026-07-27; NOT yet migrated on a live machine, so this stays open
@@ -865,7 +868,7 @@ which returns only the first match.
       install exists here to exercise `node.corepack = true` followed by the
       pinned userland Corepack install) — it is designed and pinned, not
       demonstrated.
-- [ ] Generalize the doctor's pnpm provenance logic to the other managed
+- [x] Generalize the doctor's pnpm provenance logic to the other managed
       commands. `--node-toolchain` now resolves mise shims through
       `mise which`, collapses candidates to distinct OWNERS (a shim and the
       binary it dispatches to are one authority, not two), and classifies by
