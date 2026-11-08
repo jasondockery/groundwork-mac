@@ -74,6 +74,7 @@ RETIRED_EXECUTABLES = {
     "groundwork-profile",
 }
 INTERNAL_EXECUTABLES = {
+    "groundwork-apply-source-warning",
     "groundwork-apps-start",
     "groundwork-brew-refetch",
     "groundwork-brew-repair",
