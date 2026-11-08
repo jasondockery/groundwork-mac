@@ -158,6 +158,24 @@ managed_path() {
   esac
 }
 
+# A mise shim is a symlink to the mise binary. Resolving that link does not
+# identify the tool mise would run, and prepending the versioned install
+# directory would pin one Node. Compare `mise which` with the managed path.
+mise_shim_matches_managed() {
+  local name="$1" winner="$2" managed="$3"
+  local dispatched="" dispatched_real="" managed_real=""
+  case "$name:$winner" in
+    node:*/mise/shims/node | pnpm:*/mise/shims/pnpm) ;;
+    *) return 1 ;;
+  esac
+  dispatched="$(gw_cli_bounded mise which "$name" 2>/dev/null || true)"
+  dispatched="${dispatched%%$'\n'*}"
+  [[ "$dispatched" == /* && "$dispatched" != *$'\t'* ]] || return 1
+  dispatched_real="$(gw_cli_resolve "$dispatched" || true)"
+  managed_real="$(gw_cli_resolve "$managed" || true)"
+  [[ -n "$dispatched_real" && "$dispatched_real" == "$managed_real" ]]
+}
+
 path_hits() {
   local name="$1" line
   while IFS= read -r line; do
@@ -240,6 +258,9 @@ check_tool() {
     return 0
   fi
   if [[ -n "$winner" && "$known" -eq 1 && -e "$managed" ]]; then
+    if mise_shim_matches_managed "$name" "$winner" "$managed"; then
+      return 0
+    fi
     winner_real="$(gw_cli_resolve "$winner" || true)"
     managed_real="$(gw_cli_resolve "$managed" || true)"
     if [[ -n "$winner_real" && "$winner_real" == "$managed_real" ]]; then
@@ -276,7 +297,7 @@ check_tool() {
     return 0
   fi
   if [[ "$known" -eq 0 ]]; then
-    add_report "Warning: $name is shadowed. The first PATH hit is $hit.$extra Groundwork could not check the managed path. Groundwork did not remove the other copy."
+    add_report "Warning: $name: Groundwork could not check the managed path. The first PATH hit is $hit.$extra Groundwork did not remove the other copy."
     return 0
   fi
   managed_dir="$(dirname -- "$managed")"

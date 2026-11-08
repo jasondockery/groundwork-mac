@@ -59,6 +59,10 @@ class PathShadowTests(unittest.TestCase):
               printf '%s\n' "$MISE_NODE"
               exit 0
             fi
+            if [[ "${1:-}" == which && "${2:-}" == pnpm && -n "${MISE_PNPM:-}" ]]; then
+              printf '%s\n' "$MISE_PNPM"
+              exit 0
+            fi
             exit 1
         ''')
         (self.home / ".zshrc").write_text(
@@ -187,6 +191,55 @@ class PathShadowTests(unittest.TestCase):
         probe.write_text(command + "\n", encoding="utf-8")
         syntax = subprocess.run(["bash", "-n", str(probe)], text=True, capture_output=True, check=False)
         self.assertEqual(syntax.returncode, 0, syntax.stderr + command)
+
+    def test_mise_shims_are_quiet_when_mise_which_matches(self):
+        shims = self.home / ".local/share/mise/shims"
+        shims.mkdir(parents=True)
+        mise_real = self.root / "mise-real"
+        self._version(mise_real, "mise")
+        self._version(self.mise_bin / "node", "25.1.0")
+        self._version(self.mise_bin / "pnpm", "10.1.0")
+        (shims / "node").symlink_to(mise_real)
+        (shims / "pnpm").symlink_to(mise_real)
+        env = self.env.copy()
+        env["PATH"] = f"{shims}:{self.mise_cmd}:{self.tools}:/usr/bin:/bin"
+        env["MISE_PNPM"] = str(self.mise_bin / "pnpm")
+        result = self._run("--summary", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn(str(self.mise_bin), result.stdout)
+
+    def test_mise_pnpm_shim_is_a_shadow_when_mise_which_differs(self):
+        shims = self.home / ".local/share/mise/shims"
+        shims.mkdir(parents=True)
+        mise_real = self.root / "mise-real"
+        other = self.root / "other-pnpm"
+        self._version(mise_real, "mise")
+        self._version(self.mise_bin / "node", "25.1.0")
+        self._version(self.mise_bin / "pnpm", "10.1.0")
+        self._version(other, "9.0.0")
+        (shims / "node").symlink_to(mise_real)
+        (shims / "pnpm").symlink_to(mise_real)
+        env = self.env.copy()
+        env["PATH"] = f"{shims}:{self.mise_cmd}:{self.tools}:/usr/bin:/bin"
+        env["MISE_PNPM"] = str(other)
+        result = self._run("--summary", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pnpm is shadowed", result.stdout)
+        self.assertIn(str(self.mise_bin / "pnpm"), result.stdout)
+        self.assertIn("10.1.0", result.stdout)
+        self.assertNotIn("node is shadowed", result.stdout)
+
+    def test_unknown_managed_path_is_not_called_a_shadow(self):
+        self._version(self.local_bin / "grok", "1.0.62")
+        env = self.env.copy()
+        env.pop("GROUNDWORK_BREW_PREFIX", None)
+        env["PATH"] = f"{self.local_bin}:{self.tools}:/usr/bin:/bin"
+        result = self._run(env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("could not check the managed path", result.stdout)
+        self.assertIn("1.0.62", result.stdout)
+        self.assertNotIn("is shadowed", result.stdout)
 
     def test_native_claude_owner_is_the_local_copy(self):
         self._version(self.local_bin / "claude", "2.0.0")
