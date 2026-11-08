@@ -58,6 +58,63 @@ retry() {
   done
 }
 
+# github.com's website returned 504 for chezmoi's release page and the
+# tarball on 2026-11-08, while api.github.com still served the same release.
+# The installer exits on that first 504 (it uses curl -f under set -e), and
+# it is not inside retry(), so every Linux job died before validation.
+# The API path below is the recovery. It installs the glibc build, which is
+# the one Ubuntu runners use.
+install_chezmoi_from_api() {
+  local bin_dir="$1"
+  local goarch=""
+  case "$(uname -m)" in
+    x86_64) goarch=amd64 ;;
+    aarch64 | arm64) goarch=arm64 ;;
+    *)
+      echo "ci-install-linux-tools: unsupported architecture $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+
+  chezmoi_release_json="$(mktemp)"
+  chezmoi_tmp="$(mktemp -d)"
+  local curl_auth=()
+  local accept_json=(-H "Accept: application/vnd.github+json")
+  local accept_file=(-H "Accept: application/octet-stream")
+  local user_agent=(-H "User-Agent: groundwork-ci")
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    curl_auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  fi
+
+  local release_url="https://api.github.com/repos/twpayne/chezmoi/releases/latest"
+  retry curl -fsSL "${curl_auth[@]}" "${user_agent[@]}" "${accept_json[@]}" \
+    -o "$chezmoi_release_json" "$release_url"
+
+  local tag="" version="" asset_name="" sum_name="" asset_url="" sum_url=""
+  tag="$(jq -er '.tag_name' "$chezmoi_release_json")"
+  version="${tag#v}"
+  asset_name="chezmoi_${version}_linux_${goarch}.tar.gz"
+  sum_name="chezmoi_${version}_checksums.txt"
+  asset_url="$(jq -er --arg name "$asset_name" \
+    '.assets[] | select(.name == $name) | .url' "$chezmoi_release_json")"
+  sum_url="$(jq -er --arg name "$sum_name" \
+    '.assets[] | select(.name == $name) | .url' "$chezmoi_release_json")"
+
+  retry curl -fL "${curl_auth[@]}" "${user_agent[@]}" "${accept_file[@]}" \
+    -o "${chezmoi_tmp}/${asset_name}" "$asset_url"
+  retry curl -fL "${curl_auth[@]}" "${user_agent[@]}" "${accept_file[@]}" \
+    -o "${chezmoi_tmp}/${sum_name}" "$sum_url"
+  (
+    cd -- "$chezmoi_tmp"
+    awk -v name="$asset_name" '
+      $2 == name { print $1 "  " name; found = 1 }
+      END { if (!found) exit 1 }
+    ' "$sum_name" | sha256sum -c -
+  )
+  tar -xzf "${chezmoi_tmp}/${asset_name}" -C "$chezmoi_tmp" chezmoi
+  install -m 0755 "${chezmoi_tmp}/chezmoi" "${bin_dir}/chezmoi"
+}
+
 retry sudo apt-get update -qq
 retry sudo apt-get install -y -qq --no-install-recommends ripgrep zsh tmux jq
 
@@ -78,6 +135,24 @@ retry sudo apt-get install -y -qq --no-install-recommends ripgrep zsh tmux jq
 # unaffected.
 chezmoi_bin_dir="${CI_INSTALL_BIN_DIR:-/usr/local/bin}"
 chezmoi_installer="$(mktemp)"
-trap 'rm -f -- "$chezmoi_installer"' EXIT
-retry curl -fsLS get.chezmoi.io -o "$chezmoi_installer"
-sh "$chezmoi_installer" -b "$chezmoi_bin_dir"
+chezmoi_release_json=""
+chezmoi_tmp=""
+cleanup_chezmoi() {
+  if [[ -n "${chezmoi_installer}" ]]; then
+    rm -f -- "$chezmoi_installer"
+  fi
+  if [[ -n "${chezmoi_release_json}" ]]; then
+    rm -f -- "$chezmoi_release_json"
+  fi
+  if [[ -n "${chezmoi_tmp}" ]]; then
+    rm -rf -- "$chezmoi_tmp"
+  fi
+}
+trap cleanup_chezmoi EXIT
+# A failure of either command is the signal to use the API. `if` keeps
+# set -e from exiting on that expected failure.
+if ! retry curl -fsLS get.chezmoi.io -o "$chezmoi_installer" \
+  || ! sh "$chezmoi_installer" -b "$chezmoi_bin_dir"; then
+  echo "ci-install-linux-tools: get.chezmoi.io installer failed; installing chezmoi from the GitHub API" >&2
+  install_chezmoi_from_api "$chezmoi_bin_dir"
+fi
