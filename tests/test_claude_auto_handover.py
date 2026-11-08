@@ -867,6 +867,11 @@ class T3ResolutionTests(Sandbox):
             "hidden": self.claude_instance(environment=[
                 {"name": concurrent, "value": "", "sensitive": True, "valueRedacted": True},
                 {"name": depth, "value": "", "sensitive": True, "secret": {"id": "never-print-ref"}}]),
+            # valueRedacted and secret are unconfirmable even when the stored
+            # string equals the cap Groundwork wants.
+            "equal": self.claude_instance(environment=[
+                {"name": concurrent, "value": "4", "sensitive": True, "valueRedacted": True},
+                {"name": depth, "value": "1", "sensitive": True, "secret": {"id": "never-print-equal"}}]),
             "off": self.claude_instance(enabled=False),
             "grok": {"driver": "grok"},
         }})
@@ -879,16 +884,18 @@ class T3ResolutionTests(Sandbox):
             self.assertIn(f"Claude instance {instance} does not set {concurrent} (Groundwork value: 4)", output)
             self.assertIn(f"Claude instance {instance} does not set {depth}", output)
         self.assertIn(f"Claude instance loose sets {depth} to a value other than 1", output)
-        for name, want in ((concurrent, 4), (depth, 1)):
-            self.assertIn(f"Claude instance hidden has {name} stored as a sensitive value or secret, "
-                          f"so Groundwork cannot confirm it is {want}.", output)
-        for instance in ("claudeAgent", "uncapped", "loose", "hidden"):
+        for instance in ("hidden", "equal"):
+            for name, want in ((concurrent, 4), (depth, 1)):
+                self.assertIn(f"Claude instance {instance} has {name} stored as a sensitive value or secret, "
+                              f"so Groundwork cannot confirm it is {want}.", output)
+                self.assertNotIn(f"Claude instance {instance} sets {name}={want}", output)
+        for instance in ("claudeAgent", "uncapped", "loose", "hidden", "equal"):
             self.assertIn(f"Fix it in T3 Code → Settings → Providers → {instance} → Environment variables: "
                           f"{concurrent}=4 and {depth}=1.", output)
         self.assertIn("Claude instance off is disabled; subagent caps not checked.", output)
         self.assertNotIn("Providers → off", output)
         self.assertNotIn("grok", output)
-        for value in ("sk-never-print-this", "never-print-ref", "31337", "20"):
+        for value in ("sk-never-print-this", "never-print-ref", "never-print-equal", "31337", "20"):
             self.assertNotIn(value, output)
         # Report only: T3's settings are never written.
         self.assertEqual((self.settings.stat().st_mtime_ns, self.settings.read_text()), (mtime, text))
