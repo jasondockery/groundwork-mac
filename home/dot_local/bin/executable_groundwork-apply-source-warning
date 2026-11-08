@@ -115,15 +115,22 @@ else
   age_label="age of last commit could not be checked"
 fi
 
-dirty_lines="$(git -C "$repo" status --porcelain --untracked-files=normal)"
+dirty_status=0
 dirty_count=0
-if [[ -n "$dirty_lines" ]]; then
-  dirty_count="$(printf '%s\n' "$dirty_lines" | wc -l | tr -d ' ')"
-fi
-if [[ "$dirty_count" -eq 1 ]]; then
-  dirty_label="1 uncommitted file"
+# A lock or another status failure must not drop the warning. The branch is
+# already known, and the callers treat a helper failure as "nothing to say".
+dirty_lines="$(git -C "$repo" status --porcelain --untracked-files=normal)" || dirty_status=$?
+if [[ "$dirty_status" -ne 0 ]]; then
+  dirty_label="uncommitted files could not be checked"
 else
-  dirty_label="$dirty_count uncommitted files"
+  if [[ -n "$dirty_lines" ]]; then
+    dirty_count="$(printf '%s\n' "$dirty_lines" | wc -l | tr -d ' ')"
+  fi
+  if [[ "$dirty_count" -eq 1 ]]; then
+    dirty_label="1 uncommitted file"
+  else
+    dirty_label="$dirty_count uncommitted files"
+  fi
 fi
 
 fetch_ok=0
@@ -157,7 +164,7 @@ fi
 
 warn=0
 [[ "$branch_name" == "main" ]] || warn=1
-[[ "$dirty_count" -eq 0 ]] || warn=1
+[[ "$dirty_status" -eq 0 && "$dirty_count" -eq 0 ]] || warn=1
 if [[ "$behind_known" -eq 0 || "$behind_count" -gt 0 ]]; then
   warn=1
 fi

@@ -42,6 +42,14 @@ if [[ "${GIT_FETCH_FAIL:-0}" == 1 ]]; then
     fi
   done
 fi
+if [[ "${GIT_STATUS_FAIL:-0}" == 1 ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == status ]]; then
+      echo "status-failed" >>"$GIT_GUARD_LOG"
+      exit 128
+    fi
+  done
+fi
 exec /usr/bin/git "$@"
 """
 
@@ -157,7 +165,7 @@ class Fixture(unittest.TestCase):
             (clone / f"uncommitted-{index}.txt").write_text("local\n", encoding="utf-8")
         return clone
 
-    def _helper(self, repo, *args, fetch_fail=False):
+    def _helper(self, repo, *args, fetch_fail=False, status_fail=False):
         self.assertTrue(HELPER.is_file(), "apply-source warning command is missing")
         self._install(self.bin / "chezmoi", CHEZMOI_STUB)
         env = self.env.copy()
@@ -165,6 +173,8 @@ class Fixture(unittest.TestCase):
         env["CHEZMOI_LOG"] = str(self.root / "chezmoi.log")
         if fetch_fail:
             env["GIT_FETCH_FAIL"] = "1"
+        if status_fail:
+            env["GIT_STATUS_FAIL"] = "1"
         before = _git(repo, self._git_env(), "status", "--porcelain")
         head = _git(repo, self._git_env(), "rev-parse", "HEAD").stdout.strip()
         branch = _git(repo, self._git_env(), "branch", "--show-current").stdout.strip()
@@ -185,6 +195,15 @@ class Fixture(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertEqual(self._helper(repo, "--summary").stdout, "")
+
+    def test_failed_status_still_names_the_branch(self):
+        repo = self._repo()
+        result = self._helper(repo, status_fail=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("from branch main", result.stdout)
+        self.assertIn("uncommitted files could not be checked", result.stdout)
+        self.assertNotIn("0 uncommitted files", result.stdout)
+        self.assertIn("status-failed", result.guard)
 
     def test_feature_branch_warns_and_stays_there(self):
         repo = self._repo(branch="fix/spotlight-fixture-firmlink", days_old=12)
