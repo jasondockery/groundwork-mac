@@ -12,6 +12,7 @@ Options:
   --shell       run only the shell runtime section
   --runtimes    run only the runtime release-age section
   --node-toolchain  run only the Node/pnpm ownership section
+  --path-shadow run only the PATH shadow section
   --ai-tools    run only the Claude Code command-ownership and T3 Code
                 resolution section
   --commit-identity
@@ -38,6 +39,10 @@ Sections (all run by default):
                 whether mise owns Node, Corepack owns repository-pinned pnpm,
                 and a pnpm global-tool directory is bypassing Groundwork's
                 project-local or mise-managed CLI lanes.
+  PATH shadows  whether grok, codex, claude, opencode, t3, node, or pnpm is
+                first on PATH from a copy other than the one Groundwork
+                manages. The report names both paths and the shell file when
+                it can see it. It never deletes the other copy.
   AI tools      effective Claude Code executable, native/manual ownership, and
                 comparison with the selected Homebrew installation. Warns,
                 without failing, when both the native ~/.local/bin/claude and
@@ -1473,6 +1478,16 @@ commit_identity_section() {
   "$guard" doctor 2>&1 | sed 's/^/  /' || true
 }
 
+path_shadow_section() {
+  heading "PATH shadows"
+  local helper="$HOME/.local/bin/groundwork-path-shadow"
+  if [[ ! -x "$helper" ]]; then
+    ok "the PATH shadow check is not installed, so this section was skipped."
+    return 0
+  fi
+  "$helper" | sed 's/^/  /' || true
+}
+
 section=""
 
 while (($#)); do
@@ -1484,6 +1499,7 @@ while (($#)); do
     --shell) section="shell" ;;
     --runtimes) section="runtimes" ;;
     --node-toolchain) section="node-toolchain" ;;
+    --path-shadow) section="path-shadow" ;;
     --karabiner) section="karabiner" ;;
     --always-on-apps) section="always-on-apps" ;;
     --storage) section="storage" ;;
@@ -1510,6 +1526,7 @@ case "$section" in
     shell_section
     runtimes_section
     node_toolchain_section
+    path_shadow_section
     ai_tools_section
     commit_identity_section
     browser_section
@@ -1522,6 +1539,7 @@ case "$section" in
   shell) shell_section ;;
   runtimes) runtimes_section ;;
   node-toolchain) node_toolchain_section ;;
+  path-shadow) path_shadow_section ;;
   ai-tools) ai_tools_section ;;
   commit-identity) commit_identity_section ;;
   browser) browser_section ;;

@@ -2684,6 +2684,10 @@ if [[ "$update_status" -ne 0 || "$maintenance_status" -ne 0 || "$docker_maintena
   if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
     "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
   fi
+  if [[ -x "$HOME/.local/bin/groundwork-path-shadow" ]]; then
+    GROUNDWORK_CLAUDE_CODE_OWNER="${claude_code_owner:-homebrew}" \
+      "$HOME/.local/bin/groundwork-path-shadow" --summary || true
+  fi
   cat >&2 <<'EOF'
 
 Groundwork update incomplete
@@ -2897,6 +2901,10 @@ if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_war
 fi
 if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
   "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+fi
+if [[ -x "$HOME/.local/bin/groundwork-path-shadow" ]]; then
+  GROUNDWORK_CLAUDE_CODE_OWNER="${claude_code_owner:-homebrew}" \
+    "$HOME/.local/bin/groundwork-path-shadow" --summary || true
 fi
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."

@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# Report-only PATH check for Groundwork-managed CLIs.
+# Bash 3.2's `command` has no -a, so every hit comes from `type -a`.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Report which Groundwork-managed command is first on PATH.
+
+Usage:
+  groundwork-path-shadow [--summary]
+
+The check covers grok, codex, claude, opencode, t3, node, and pnpm. It
+compares the first PATH hit with the managed copy and prints both paths,
+both versions, the shell file that puts the winner first when it can see
+that file, and the exact command to prefer the managed directory. It never deletes
+another installer's copy. --summary prints only when something needs
+attention, for the update-all result.
+
+Options:
+  --summary   print a PATH shadows heading, and nothing when every
+              installed managed copy already wins
+  -h, --help  show this help
+EOF
+}
+
+summary=0
+while (($#)); do
+  case "$1" in
+    --summary) summary=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "groundwork-path-shadow: unknown option: $1" >&2
+      echo "Run 'groundwork-path-shadow --help' for usage." >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+lib="${GROUNDWORK_CLI_OWNERSHIP_LIB:-$HOME/.local/share/groundwork/lib/coding-cli-ownership.sh}"
+if [[ ! -r "$lib" ]]; then
+  if [[ "$summary" -eq 1 ]]; then
+    printf '\nPATH shadows\n'
+  fi
+  echo "Warning: PATH shadows could not be checked because the ownership library is missing. Groundwork did not change PATH."
+  exit 0
+fi
+# shellcheck source=/dev/null
+source "$lib"
+
+show_path() {
+  local value="$1"
+  case "$value" in
+    '' | *[![:print:]]*) printf 'withheld' ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
+shell_quote() {
+  local value="$1" escaped
+  # The replacement must stay unquoted. Double quotes make bash keep the
+  # backslashes, so a path that contains ' becomes a syntax error.
+  escaped=${value//\'/\'\\\'\'}
+  printf "'%s'" "$escaped"
+}
+
+has_literal() {
+  printf '%s\n' "$1" | grep -F -q -- "$2"
+}
+
+version_of() {
+  local path="$1" output token
+  [[ -x "$path" ]] || {
+    printf 'unknown'
+    return 0
+  }
+  output="$(gw_cli_bounded "$path" --version 2>/dev/null || true)"
+  output="${output//$'\r'/}"
+  output="${output:0:200}"
+  token="$(printf '%s\n' "$output" | tr -cd '0-9A-Za-z.+\n ' | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1 || true)"
+  if [[ -n "$token" ]]; then
+    printf '%s' "$token"
+  else
+    printf 'unknown'
+  fi
+}
+
+claude_owner() {
+  local owner="${GROUNDWORK_CLAUDE_CODE_OWNER:-}" parsed=""
+  if [[ -z "$owner" ]] && command -v chezmoi >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    parsed="$(
+      gw_cli_bounded chezmoi data --format=json </dev/null 2>/dev/null \
+        | python3 -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    data={}
+value=str(data.get("claude_code_owner") or "homebrew")
+sys.stdout.write("native" if value=="native" else "homebrew")' || true
+    )"
+    owner="$parsed"
+  fi
+  if [[ "$owner" == native ]]; then
+    printf native
+  else
+    printf homebrew
+  fi
+}
+
+brew_prefix() {
+  local prefix="${GROUNDWORK_BREW_PREFIX:-}" brew_bin
+  if [[ -z "$prefix" ]]; then
+    brew_bin="$(command -v brew || true)"
+    [[ -n "$brew_bin" ]] || return 1
+    prefix="$(gw_cli_bounded "$brew_bin" --prefix 2>/dev/null || true)"
+  fi
+  [[ "$prefix" == /* && "$prefix" != *$'\n'* && "$prefix" != *$'\t'* ]] || return 1
+  printf '%s' "$prefix"
+}
+
+managed_path() {
+  local name="$1" prefix="" node="" dir=""
+  case "$name" in
+    grok | codex | opencode)
+      prefix="$(brew_prefix)" || return 1
+      printf '%s' "$prefix/bin/$name"
+      ;;
+    claude)
+      if [[ "${GROUNDWORK_CLAUDE_CODE_OWNER:-homebrew}" == native ]]; then
+        printf '%s' "$HOME/.local/bin/claude"
+      else
+        prefix="$(brew_prefix)" || return 1
+        printf '%s' "$prefix/bin/claude"
+      fi
+      ;;
+    t3)
+      dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+      [[ "$dir" == /* && "$dir" != *$'\n'* && "$dir" != *$'\t'* ]] || return 1
+      printf '%s' "$dir/t3"
+      ;;
+    node)
+      node="$(gw_cli_bounded mise which node 2>/dev/null || true)"
+      node="${node%%$'\n'*}"
+      [[ "$node" == /* && "$node" != *$'\t'* ]] || return 1
+      printf '%s' "$node"
+      ;;
+    pnpm)
+      node="$(gw_cli_bounded mise which node 2>/dev/null || true)"
+      node="${node%%$'\n'*}"
+      [[ "$node" == /* && "$node" != *$'\t'* ]] || return 1
+      printf '%s' "$(dirname -- "$node")/pnpm"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+path_hits() {
+  local name="$1" line
+  while IFS= read -r line; do
+    case "$line" in
+      "$name is "/*) printf '%s\n' "${line#"$name is "}" ;;
+    esac
+  done < <(type -a "$name" 2>/dev/null || true)
+}
+
+attribute_shell_file() {
+  local dir="$1" rel="" file="" line="" count=0
+  local -a files=()
+  if [[ -n "${ZDOTDIR:-}" && "$ZDOTDIR" != "$HOME" ]]; then
+    files+=("$ZDOTDIR/.zshenv" "$ZDOTDIR/.zprofile" "$ZDOTDIR/.zshrc" "$ZDOTDIR/.zlogin")
+  fi
+  files+=(
+    "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.zlogin"
+    "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"
+  )
+  if [[ "$dir" == "$HOME/"* ]]; then
+    rel="${dir#"$HOME"/}"
+  fi
+  for file in "${files[@]}"; do
+    [[ -f "$file" && ! -L "$file" ]] || continue
+    count=0
+    while IFS= read -r line; do
+      count=$((count + 1))
+      [[ "$count" -le 1000 ]] || break
+      [[ ${#line} -le 2000 ]] || continue
+      case "$line" in
+        '#'* | [[:space:]]*'#'*) continue ;;
+      esac
+      has_literal "$line" "PATH" || continue
+      if has_literal "$line" "$dir"; then
+        printf '%s' "$file"
+        return 0
+      fi
+      if [[ -n "$rel" ]]; then
+        # These are characters a shell file writes. They are not expanded here.
+        # shellcheck disable=SC2088
+        if has_literal "$line" "\$HOME/$rel" || has_literal "$line" "~/$rel"; then
+          printf '%s' "$file"
+          return 0
+        fi
+      fi
+    done <"$file"
+  done
+  return 1
+}
+
+fix_command() {
+  local dir="$1" quoted
+  quoted="$(shell_quote "$dir")"
+  # $PATH is for the user's shell, so it stays unexpanded.
+  # shellcheck disable=SC2016
+  printf 'export PATH=%s:"$PATH"' "$quoted"
+}
+
+reports=""
+add_report() {
+  reports="${reports}${1}"$'\n'
+}
+
+check_tool() {
+  local name="$1" managed="" known=0 winner="" winner_real="" managed_real=""
+  local managed_dir="" version_winner="" version_managed="" shell_file=""
+  local hit="" others="" extra="" line="" fix="" index=0
+  local -a hits=()
+  if managed="$(managed_path "$name")"; then
+    known=1
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    hits+=("$line")
+  done < <(path_hits "$name")
+  if [[ ${#hits[@]} -gt 0 ]]; then
+    winner="${hits[0]}"
+  fi
+  if [[ -z "$winner" && ("$known" -eq 0 || ! -e "$managed") ]]; then
+    return 0
+  fi
+  if [[ -n "$winner" && "$known" -eq 1 && -e "$managed" ]]; then
+    winner_real="$(gw_cli_resolve "$winner" || true)"
+    managed_real="$(gw_cli_resolve "$managed" || true)"
+    if [[ -n "$winner_real" && "$winner_real" == "$managed_real" ]]; then
+      return 0
+    fi
+  fi
+  version_winner="$(version_of "$winner")"
+  version_managed="$(version_of "$managed")"
+  if [[ -n "$winner" ]]; then
+    shell_file="$(attribute_shell_file "$(dirname -- "$winner")" || true)"
+  fi
+  if [[ -n "$winner_real" && "$winner_real" != "$winner" ]]; then
+    hit="$(show_path "$winner") -> $(show_path "$winner_real") ($version_winner)"
+  elif [[ -n "$winner" ]]; then
+    hit="$(show_path "$winner") ($version_winner)"
+  fi
+  if [[ -n "$shell_file" ]]; then
+    hit="$hit, from $(show_path "$shell_file")"
+  fi
+  if [[ ${#hits[@]} -gt 1 ]]; then
+    others="$(show_path "${hits[1]}")"
+    for ((index = 2; index < ${#hits[@]}; index++)); do
+      others="$others, $(show_path "${hits[$index]}")"
+    done
+    extra=" Other PATH hits: $others."
+  fi
+  if [[ "$name" == opencode && -f "$HOME/.opencode.json" ]]; then
+    extra="$extra The older OpenCode config ~/.opencode.json is still present. Current OpenCode uses ~/.config/opencode/."
+  fi
+  if [[ -z "$winner" ]]; then
+    managed_dir="$(dirname -- "$managed")"
+    fix="$(fix_command "$managed_dir")"
+    add_report "Warning: $name: Groundwork's copy $(show_path "$managed") ($version_managed) is not on PATH. Groundwork did not remove anything. To use it in this shell: $fix"
+    return 0
+  fi
+  if [[ "$known" -eq 0 ]]; then
+    add_report "Warning: $name is shadowed. The first PATH hit is $hit.$extra Groundwork could not check the managed path. Groundwork did not remove the other copy."
+    return 0
+  fi
+  managed_dir="$(dirname -- "$managed")"
+  fix="$(fix_command "$managed_dir")"
+  if [[ ! -e "$managed" ]]; then
+    add_report "Warning: $name is shadowed. The first PATH hit is $hit.$extra Groundwork's copy is missing at $(show_path "$managed"). Groundwork did not remove the other copy. To prefer the managed copy after it is installed: $fix"
+    return 0
+  fi
+  add_report "Warning: $name is shadowed. The first PATH hit is $hit.$extra Groundwork's copy is $(show_path "$managed") ($version_managed). Groundwork did not remove the other copy. To prefer the managed copy in this shell: $fix"
+}
+
+if [[ -z "${GROUNDWORK_CLAUDE_CODE_OWNER:-}" ]]; then
+  GROUNDWORK_CLAUDE_CODE_OWNER="$(claude_owner)"
+  export GROUNDWORK_CLAUDE_CODE_OWNER
+fi
+
+for tool in grok codex claude opencode t3 node pnpm; do
+  check_tool "$tool"
+done
+
+if [[ -z "$reports" ]]; then
+  if [[ "$summary" -eq 1 ]]; then
+    exit 0
+  fi
+  echo "ok no PATH shadow among the managed CLIs that are installed."
+  exit 0
+fi
+if [[ "$summary" -eq 1 ]]; then
+  printf '\nPATH shadows\n'
+fi
+printf '%s' "$reports"
+exit 0

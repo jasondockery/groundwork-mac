@@ -208,6 +208,9 @@
       <h3><code>update-all</code> says it is applying from another branch</h3>
       <p><code>update-all</code> applies the chezmoi source checkout on this machine. When that checkout is not on <code>main</code>, is behind <code>origin/main</code>, or has uncommitted files, the command warns at the start and repeats the warning in the final summary. The warning names the branch, how old the last commit is, how many commits <code>origin/main</code> is ahead, how many files are uncommitted, and the exact command to return to <code>main</code>. Groundwork does not switch, stash, or reset the checkout, so a branch you are testing on purpose still applies. If the fetch cannot finish, the warning says it could not check and the update continues. <code>update-all --quiet-apply-source</code> silences the warning for that one run.</p>
 
+      <h3><code>update-all</code> says a managed command is shadowed</h3>
+      <p><code>update-all</code> compares the first <code>PATH</code> hit for grok, codex, claude, opencode, t3, node, and pnpm with the copy Groundwork manages. When they differ, the final summary names both paths and versions, the shell file that puts the other copy first when that file is one of the usual login files, and the <code>export PATH</code> command that prefers the managed directory. A managed copy that is missing, or that is installed but not on <code>PATH</code>, is named too. Groundwork does not delete the other installer's copy. The same report is <code>groundwork-doctor --path-shadow</code>.</p>
+
       <h3><code>update-all</code> reports pending package-manager maintenance</h3>
       <p>A maintenance failure does not roll back upgrades that already completed. Groundwork records every pending stage and keeps the shell reminder active until a later run repairs it. Start with the normal command; use the maintenance-only forms when you are diagnosing or repairing that lane:</p>
       <div class="terminal">

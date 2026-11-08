@@ -132,6 +132,8 @@ Run `update-all` as the one normal machine-maintenance command. Under one machin
 
 `update-all` also warns when the chezmoi source checkout it applies is not on `main`, is behind `origin/main`, or has uncommitted files. The warning is printed before the sync and again in the final summary, with the branch, the age of the last commit, the commits behind, the uncommitted file count, and the exact `git -C` command. It does not switch, stash, or reset that checkout. A fetch that cannot finish says it could not check, and the update continues. `update-all --quiet-apply-source` or `GROUNDWORK_QUIET_APPLY_SOURCE=1` silences the warning for one run.
 
+`update-all` also reports a managed command whose first `PATH` hit is not the copy Groundwork manages. The summary names grok, codex, claude, opencode, t3, node, and pnpm when that happens, with both paths and versions and the `export PATH` command that prefers the managed directory. It does not delete the other copy. `groundwork-doctor --path-shadow` prints the same report.
+
 ## Customizing Without Forking
 
 Groundwork is a shared base with a personal layer. Put small personal preferences in local override files that Groundwork intentionally loads last:
@@ -232,7 +234,7 @@ groundwork-docs                     # open the docs from the active Groundwork s
 largest ~                           # find large files/folders, then show cleanup guidance
 ncdu -x ~                           # browse disk usage interactively (q quits)
 groundwork-disk-clean               # on-demand cleanup front door: previews each owner, asks before each category
-groundwork-doctor                   # read-only health report, including Karabiner process memory and legacy Docker proof tags
+groundwork-doctor                   # read-only health report, including PATH shadows, Karabiner process memory, and legacy Docker proof tags
 groundwork-karabiner-restart        # supported restart request; succeeds only after the root Core Service PID changes
 groundwork-docker-tidy              # dry-run tidy of ephemeral-labeled Docker scratch images, by enumeration (--yes to act)
 groundwork-docker-cache-tidy        # DAEMON-WIDE Docker cleanup preview (all projects; owner-run only, --yes to act)
