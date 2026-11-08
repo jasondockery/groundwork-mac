@@ -382,6 +382,7 @@
         <tr><td><code>merge.conflictstyle = zdiff3</code></td><td>When a merge conflicts, you see three sections — yours, theirs, <em>and the common ancestor</em> — which makes it far clearer <em>why</em> the conflict happened and how to resolve it</td></tr>
         <tr><td><code>branch.sort = -committerdate</code></td><td>Branch lists are ordered by each branch's <strong>tip commit date, newest first</strong>, instead of alphabetically — the branch you committed to last is usually at the top (this sorts by commit date, not by when you last checked a branch out)</td></tr>
         <tr><td><code>rerere.enabled = true</code></td><td>Git <em>records</em> how you resolved a conflict and reapplies that resolution if the same conflict recurs during a rebase — you still review and stage the result, since auto-staging is the separate <code>rerere.autoupdate</code> setting</td></tr>
+        <tr><td><code>grep.threads = 4</code></td><td>Git's default starts one <code>git grep</code> worker per logical core. Agents often run many searches at once, and per-core fan-out on each one overloads the CPU. Four threads keep a single search fast</td></tr>
       </table>
 
       <h3>Signed commits</h3>

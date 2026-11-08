@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+{{ if eq .chezmoi.os "darwin" -}}
+# Keep the code directory and the pnpm store out of Spotlight. It asks for a
+# password only when an exclusion is missing, and `groundwork-spotlight undo
+# --yes` turns this off for good on this Mac.
+"$HOME/.local/bin/groundwork-spotlight" prepare
+{{ end -}}

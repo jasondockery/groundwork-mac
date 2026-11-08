@@ -20,6 +20,7 @@ Options:
   --browser     run only the managed-browser section
   --karabiner   run only the Karabiner compatibility and process section
   --always-on-apps  run only the always-on-app relaunch section
+  --spotlight   run only the Spotlight exclusions section
   --docker      run only the Docker section
   --storage     run the storage report (opt-in: du over large trees can be
                 slow, so the default run skips it)
@@ -77,6 +78,9 @@ Sections (all run by default):
                 runs and where the actual relaunch command is named.
   Power         (macOS) whether stay awake on power is wanted here and why,
                 the recorded earlier on-power sleep value, and pmset -g custom.
+  Spotlight     the folders Groundwork keeps out of Spotlight and the live
+                Search Privacy list, read only when administrator permission
+                is already cached; otherwise the recorded list.
   Docker        daemon reachability, engine hygiene (log rotation, image
                 store), disk usage, and leftovers: containers, dangling
                 images, volumes, and the labeled-ephemeral scratch images —
@@ -282,6 +286,35 @@ power_section() {
   fi
   # status reads pmset -g custom and the recorded sleep value; it changes nothing.
   "$helper" status 2>&1 | sed 's/^/  /' || true
+}
+
+spotlight_section() {
+  heading "Spotlight"
+
+  if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" ]]; then
+    note "Spotlight exclusions are macOS-only; nothing is claimed here."
+    return 0
+  fi
+  local spotlight="$HOME/.local/bin/groundwork-spotlight" line status=0 output
+  if [[ ! -x "$spotlight" ]]; then
+    warn "groundwork-spotlight is missing: $spotlight"
+    return 0
+  fi
+  output="$("$spotlight" status 2>&1)" || status=$?
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    case "$line" in
+      "  missing "*) warn "${line#  }" ;;
+      "  unreadable "*) warn "${line#  }" ;;
+      *) note "$line" ;;
+    esac
+  done <<<"$output"
+  if [[ "$status" -ne 0 ]]; then
+    warn "The Spotlight report is incomplete (exit $status)."
+  fi
+  if [[ "$output" == *"  missing "* ]]; then
+    note "Add the missing folders: groundwork-spotlight prepare"
+  fi
 }
 
 browser_section() {
@@ -1506,6 +1539,7 @@ while (($#)); do
     --path-shadow) section="path-shadow" ;;
     --karabiner) section="karabiner" ;;
     --always-on-apps) section="always-on-apps" ;;
+    --spotlight) section="spotlight" ;;
     --storage) section="storage" ;;
     -h | --help)
       usage
@@ -1537,6 +1571,7 @@ case "$section" in
     karabiner_section
     always_on_apps_section
     power_section
+    spotlight_section
     docker_section
     printf '\nRun groundwork-doctor --storage for the (slower) curated disk-usage report.\n'
     ;;
@@ -1549,6 +1584,7 @@ case "$section" in
   browser) browser_section ;;
   karabiner) karabiner_section ;;
   always-on-apps) always_on_apps_section ;;
+  spotlight) spotlight_section ;;
   docker) docker_section ;;
   storage) storage_section ;;
 esac

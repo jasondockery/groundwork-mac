@@ -40,6 +40,13 @@
     # Reuse recorded conflict resolutions — a real win for rebase-heavy AI work
     # where the same conflict recurs across replays.
     enabled = true
+
+[grep]
+    # Upstream leaves this unset: git grep starts one worker per logical core.
+    # Agents run many git grep searches in parallel, so per-core fan-out
+    # oversubscribes the CPU. A cap of 4 keeps one hand-run search fast without
+    # multiplying every parallel search by the core count.
+    threads = 4
 {{- if lookPath "gh" }}
 
 # gh as git's HTTPS credential helper. Baked in because ~/.gitconfig is chezmoi-managed:
