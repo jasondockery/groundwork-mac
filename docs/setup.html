@@ -281,6 +281,20 @@
 <span class="comment"># shows exactly what apply will change, and nothing else</span></code></pre>
       </div>
 
+      <h2 id="spotlight"><span class="hash" aria-hidden="true">#</span>Spotlight skips your code on a Mac</h2>
+      <p>Worktrees, <code>node_modules</code>, build output, and test artifacts change constantly while agent lanes run, and the pnpm store takes large writes on every install. Spotlight would keep reindexing files nobody searches for. On every Mac, <code>chezmoi apply</code> runs <code>groundwork-spotlight prepare</code>, which adds your code directory (<code>~/code</code> unless you chose another in setup) and <code>~/Library/pnpm</code> to the same list as System Settings &rarr; Spotlight &rarr; Search Privacy. It adds only a folder that exists and is missing from that list, so it asks for an administrator password only then. It never removes an entry you added. It refuses a code directory that is your home folder, <code>/Applications</code>, or a folder containing either, and <code>/Applications</code> stays indexed because <code>mas</code> finds App Store apps through Spotlight.</p>
+      <table class="keytable">
+        <tr><td><code>groundwork-spotlight</code></td><td>Show the folders Groundwork keeps out of Spotlight and the live Search Privacy list. It reads the live list only when administrator permission is already cached (run <code>sudo -v</code> first). <code>groundwork-doctor</code> prints the same report.</td></tr>
+        <tr><td><code>groundwork-spotlight undo</code></td><td>Preview the undo. With <code>--yes</code>, it removes only the entries Groundwork added, keeps the ones you added, and records <code>~/.local/state/groundwork/spotlight-exclusions-off</code> so later applies leave Spotlight alone.</td></tr>
+        <tr><td><code>groundwork-spotlight enable</code></td><td>Clear that record and add the exclusions again.</td></tr>
+      </table>
+      <div class="callout note">
+        <span class="label">How it works, and the manual route</span>
+        <p>macOS has no command for Search Privacy entries. The pane stores them in the <code>Exclusions</code> list of <code>/System/Volumes/Data/.Spotlight-V100/VolumeConfiguration.plist</code>. Groundwork saves a copy of that file in <code>~/.local/state/groundwork/spotlight-backups/</code>, writes the new list to a temporary file beside it with the same owner and mode, renames it into place, and reads it back. Spotlight picks up the new list after the next restart. If the file cannot be read (some terminals need Full Disk Access in System Settings &rarr; Privacy &amp; Security), apply warns, changes nothing, and carries on; it records that in <code>~/.local/state/groundwork/spotlight-exclusions-unreadable</code> and does not ask for a password again until administrator permission is already cached (run <code>sudo -v</code> first) and the file reads. A failed write also warns and lets the rest of apply finish, and prints the backup and the command that restores it.</p>
+        <p>You can add folders yourself in Search Privacy with the + button. Removing one of Groundwork&apos;s folders there with the &minus; button does not stick: the next apply that already has administrator permission adds it back. To stop Groundwork excluding them, run <code>groundwork-spotlight undo --yes</code>.</p>
+        <p>Hidden folders such as <code>~/.t3</code> and <code>~/.cache</code> are not listed: macOS normally skips any folder whose name starts with a dot, and everything inside it. That is still being checked on current macOS with <code>mdfind -onlyin</code>; if it turns out not to hold, they will be added. Renaming a folder to end in <code>.noindex</code> also works, but it would move your projects. A <code>.metadata_never_index</code> file is ignored by current macOS, and <code>mdutil -i off</code> turns off a whole volume.</p>
+      </div>
+
       <h2><span class="hash" aria-hidden="true">#</span>Going deeper</h2>
       <ul>
         <li><a href="https://www.chezmoi.io/quick-start/" target="_blank" rel="noopener">chezmoi — Quick start</a> — the official fastest path from zero to a working Groundwork repo.</li>
