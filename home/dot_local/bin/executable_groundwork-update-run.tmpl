@@ -23,6 +23,9 @@ Usage:
   groundwork-update-run --no-app-quit      keep a running app open instead of
                                             letting Homebrew quit it for cask
                                             replacement, for this invocation only
+  groundwork-update-run --quiet-apply-source
+                                            silence the chezmoi source warning
+                                            for this run only
   groundwork-update-run -h|--help          show this help
 
 Run update-all for the normal full transaction. This runner is directly
@@ -37,6 +40,10 @@ Homebrew's normal quit-and-replace behavior applies by default, the same as
 running `brew upgrade` yourself: a cask that declares a safe quit action may
 be closed and reopened as part of its own upgrade. --no-app-quit keeps every
 running app open instead, deferring its upgrade, for this invocation only.
+When the chezmoi source checkout is not on main, is behind origin/main, or has
+uncommitted files, the final summary repeats that warning. The check does not
+switch, stash, or reset the checkout. --quiet-apply-source or
+GROUNDWORK_QUIET_APPLY_SOURCE=1 silences it for this run only.
 EOF
 }
 
@@ -48,6 +55,7 @@ while (($#)); do
     --config-only) config_only=1 ;;
     --skip-maintenance) skip_maintenance=1 ;;
     --no-app-quit) allow_app_quit=0 ;;
+    --quiet-apply-source) export GROUNDWORK_QUIET_APPLY_SOURCE=1 ;;
     -h | --help)
       usage
       exit 0
@@ -68,6 +76,13 @@ if [[ "$config_only" -eq 1 && ( "$skip_maintenance" -eq 1 || "$allow_app_quit" -
   echo "groundwork-update-run: --config-only cannot be combined with upgrade or maintenance options." >&2
   exit 64
 fi
+
+print_apply_source_summary() {
+  local helper="$HOME/.local/bin/groundwork-apply-source-warning"
+  if [[ -x "$helper" ]]; then
+    "$helper" --summary || true
+  fi
+}
 
 # Preserve only an invocation that began with real interactive stdin and
 # stderr. Earlier bounded updater stages may temporarily detach fd 0; keeping
@@ -521,6 +536,7 @@ if [[ "$config_only" -eq 1 ]]; then
 {{ end }}
   echo "Groundwork configuration applied using saved settings."
   echo "Routine upgrades and maintenance were not requested. Run update-all for those."
+  print_apply_source_summary
   exit 0
 fi
 
@@ -2670,6 +2686,7 @@ if [[ "$update_status" -ne 0 || "$maintenance_status" -ne 0 || "$docker_maintena
   final_status="$update_status"
   [[ "$final_status" -ne 0 ]] || final_status="$maintenance_status"
   [[ "$final_status" -ne 0 ]] || final_status="$docker_maintenance_status"
+  print_apply_source_summary
   cat >&2 <<'EOF'
 
 Groundwork update incomplete
@@ -2881,6 +2898,7 @@ fi
 if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) -gt 0 ]]; then
   result_suffix="$result_suffix · $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) WARNING(S)"
 fi
+print_apply_source_summary
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."
 if [[ "$brew_lane_status" != "skipped" ]]; then

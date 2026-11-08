@@ -12331,6 +12331,9 @@ SH
   mkdir -p "$pf_root/notgit"
   pf_run 1 "$pf_root/notgit"
 
+  check "update-all apply-source warning"
+  python3 -B tests/test_apply_source_warning.py
+
 }
 
 validate_platform_terminal() {

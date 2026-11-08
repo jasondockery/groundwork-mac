@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# bash 3.2+ (stock macOS). Report when update-all would apply a chezmoi source
+# checkout that is not on main, is behind origin/main, or has uncommitted files.
+# A fetch of origin main updates that remote-tracking ref only. This script
+# never switches, stashes, resets, or fails the update because a fetch did not
+# finish. Groundwork's release branch is main; there is no other configured one.
+set -euo pipefail
+
+prog="groundwork-apply-source-warning"
+summary=0
+
+usage() {
+  cat <<'EOF'
+Report when the chezmoi source checkout is not on main, is behind origin/main,
+or has uncommitted files. The report does not switch, stash, or reset anything.
+
+Usage:
+  groundwork-apply-source-warning
+  groundwork-apply-source-warning --summary
+  groundwork-apply-source-warning -h|--help
+
+GROUNDWORK_QUIET_APPLY_SOURCE=1 prints nothing and does not fetch, for this
+run only. A fetch that cannot finish says so and exits 0.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --summary) summary=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "$prog: unknown option: $1" >&2
+      echo "Run '$prog --help' for usage." >&2
+      exit 64
+      ;;
+    *)
+      echo "$prog: unexpected argument: $1" >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [[ "${GROUNDWORK_QUIET_APPLY_SOURCE:-}" == 1 ]]; then
+  exit 0
+fi
+
+emit() {
+  if [[ "$summary" -eq 1 ]]; then
+    printf '\nApply source\n%s\n' "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+shell_quote() {
+  local value="$1" escaped
+  escaped="${value//\'/\'\\\'\'}"
+  printf "'%s'" "$escaped"
+}
+
+if ! command -v chezmoi >/dev/null 2>&1; then
+  emit "Warning: update-all could not check the chezmoi source checkout because chezmoi is not on PATH."
+  exit 0
+fi
+
+src="$(chezmoi source-path 2>/dev/null || true)"
+if [[ -z "$src" ]]; then
+  emit "Warning: update-all could not check the chezmoi source checkout because chezmoi source-path failed."
+  exit 0
+fi
+
+repo="$(git -C "$src" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$repo" ]]; then
+  emit "Warning: update-all could not check the chezmoi source checkout because it is not a Git working tree."
+  exit 0
+fi
+
+branch_name="$(git -C "$repo" symbolic-ref -q --short HEAD || true)"
+if [[ -n "$branch_name" ]]; then
+  if [[ "$branch_name" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    branch_label="branch $branch_name"
+  else
+    branch_label="branch (name withheld)"
+    branch_name="withheld"
+  fi
+else
+  short="$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || true)"
+  branch_name="detached"
+  if [[ "$short" =~ ^[0-9a-f]+$ ]]; then
+    branch_label="detached HEAD at $short"
+  else
+    branch_label="detached HEAD"
+  fi
+fi
+
+committed="$(git -C "$repo" log -1 --format=%ct 2>/dev/null || true)"
+if [[ "$committed" =~ ^[0-9]+$ ]]; then
+  now="$(date +%s)"
+  age_days=$(((now - committed) / 86400))
+  if [[ "$age_days" -lt 0 ]]; then
+    age_days=0
+  fi
+  if [[ "$age_days" -eq 1 ]]; then
+    age_label="1 day old"
+  else
+    age_label="$age_days days old"
+  fi
+else
+  age_label="age of last commit could not be checked"
+fi
+
+dirty_lines="$(git -C "$repo" status --porcelain --untracked-files=normal)"
+dirty_count=0
+if [[ -n "$dirty_lines" ]]; then
+  dirty_count="$(printf '%s\n' "$dirty_lines" | wc -l | tr -d ' ')"
+fi
+if [[ "$dirty_count" -eq 1 ]]; then
+  dirty_label="1 uncommitted file"
+else
+  dirty_label="$dirty_count uncommitted files"
+fi
+
+fetch_ok=0
+supervisor="$(command -v timeout || true)"
+if [[ -z "$supervisor" ]]; then
+  supervisor="$(command -v gtimeout || true)"
+fi
+if [[ -n "$supervisor" ]]; then
+  if GIT_TERMINAL_PROMPT=0 "$supervisor" --kill-after=2s 15 \
+    git -C "$repo" fetch --no-tags origin main </dev/null >/dev/null 2>&1; then
+    fetch_ok=1
+  fi
+fi
+
+behind_known=0
+behind_count=0
+if [[ "$fetch_ok" -eq 1 ]]; then
+  behind_raw="$(git -C "$repo" rev-list --count "HEAD..origin/main" 2>/dev/null || true)"
+  if [[ "$behind_raw" =~ ^[0-9]+$ ]]; then
+    behind_known=1
+    behind_count="$behind_raw"
+  fi
+fi
+if [[ "$behind_known" -eq 1 && "$behind_count" -eq 1 ]]; then
+  behind_label="1 commit behind origin/main"
+elif [[ "$behind_known" -eq 1 ]]; then
+  behind_label="$behind_count commits behind origin/main"
+else
+  behind_label="could not check commits behind origin/main"
+fi
+
+warn=0
+[[ "$branch_name" == "main" ]] || warn=1
+[[ "$dirty_count" -eq 0 ]] || warn=1
+if [[ "$behind_known" -eq 0 || "$behind_count" -gt 0 ]]; then
+  warn=1
+fi
+[[ "$warn" -eq 1 ]] || exit 0
+
+emit "Warning: update-all is applying this machine from $branch_label ($age_label, $behind_label, $dirty_label). Groundwork did not switch, stash, or reset anything. To use main: git -C $(shell_quote "$repo") switch main && git pull"
