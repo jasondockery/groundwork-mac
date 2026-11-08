@@ -10,6 +10,12 @@ set -euo pipefail
 # same file works on macOS, Linux, and WSL2 whether or not a given manager is
 # installed. Run update-all, not this file, for a refresh that includes the
 # sync.
+# Prefer the launcher's saved PATH. A direct run saves the incoming PATH
+# before this prepend, so the summary still sees a copy that was ahead of
+# Homebrew and does not treat /usr/local/bin as ahead of a mise shim.
+if [[ -z "${GROUNDWORK_PATH_SHADOW_PATH+x}" ]]; then
+  GROUNDWORK_PATH_SHADOW_PATH="$PATH"
+fi
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 usage() {
@@ -23,6 +29,9 @@ Usage:
   groundwork-update-run --no-app-quit      keep a running app open instead of
                                             letting Homebrew quit it for cask
                                             replacement, for this invocation only
+  groundwork-update-run --quiet-apply-source
+                                            silence the chezmoi source warning
+                                            for this run only
   groundwork-update-run -h|--help          show this help
 
 Run update-all for the normal full transaction. This runner is directly
@@ -37,6 +46,10 @@ Homebrew's normal quit-and-replace behavior applies by default, the same as
 running `brew upgrade` yourself: a cask that declares a safe quit action may
 be closed and reopened as part of its own upgrade. --no-app-quit keeps every
 running app open instead, deferring its upgrade, for this invocation only.
+When the chezmoi source checkout is not on main, is behind origin/main, or has
+uncommitted files, the final summary repeats that warning. The check does not
+switch, stash, or reset the checkout. --quiet-apply-source or
+GROUNDWORK_QUIET_APPLY_SOURCE=1 silences it for this run only.
 EOF
 }
 
@@ -48,6 +61,7 @@ while (($#)); do
     --config-only) config_only=1 ;;
     --skip-maintenance) skip_maintenance=1 ;;
     --no-app-quit) allow_app_quit=0 ;;
+    --quiet-apply-source) export GROUNDWORK_QUIET_APPLY_SOURCE=1 ;;
     -h | --help)
       usage
       exit 0
@@ -521,6 +535,9 @@ if [[ "$config_only" -eq 1 ]]; then
 {{ end }}
   echo "Groundwork configuration applied using saved settings."
   echo "Routine upgrades and maintenance were not requested. Run update-all for those."
+  if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
+    "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+  fi
   exit 0
 fi
 
@@ -2670,6 +2687,14 @@ if [[ "$update_status" -ne 0 || "$maintenance_status" -ne 0 || "$docker_maintena
   final_status="$update_status"
   [[ "$final_status" -ne 0 ]] || final_status="$maintenance_status"
   [[ "$final_status" -ne 0 ]] || final_status="$docker_maintenance_status"
+  if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
+    "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+  fi
+  if [[ -x "$HOME/.local/bin/groundwork-path-shadow" ]]; then
+    PATH="${GROUNDWORK_PATH_SHADOW_PATH-$PATH}" \
+      GROUNDWORK_CLAUDE_CODE_OWNER="${claude_code_owner:-homebrew}" \
+      "$HOME/.local/bin/groundwork-path-shadow" --summary || true
+  fi
   cat >&2 <<'EOF'
 
 Groundwork update incomplete
@@ -2880,6 +2905,14 @@ if [[ "$brew_deferred_running_count" -gt 0 ]]; then
 fi
 if [[ $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) -gt 0 ]]; then
   result_suffix="$result_suffix · $((brew_warning_count + pnpm_discovery_warning_count + claude_handover_warning_count)) WARNING(S)"
+fi
+if [[ -x "$HOME/.local/bin/groundwork-apply-source-warning" ]]; then
+  "$HOME/.local/bin/groundwork-apply-source-warning" --summary || true
+fi
+if [[ -x "$HOME/.local/bin/groundwork-path-shadow" ]]; then
+  PATH="${GROUNDWORK_PATH_SHADOW_PATH-$PATH}" \
+    GROUNDWORK_CLAUDE_CODE_OWNER="${claude_code_owner:-homebrew}" \
+    "$HOME/.local/bin/groundwork-path-shadow" --summary || true
 fi
 printf '\nResult\n  SUCCESS%s\n' "$result_suffix"
 echo "  The shell reminder will stay quiet until the next stale window."

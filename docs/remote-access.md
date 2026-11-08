@@ -12,7 +12,7 @@ Do not install the headless formula alongside the desktop cask. Use the app to d
 
 ### Optional iMessage gateway
 
-A desktop Mac can stay reachable for [Blip](https://github.com/nixfred/blip) over ordinary OpenSSH. The role stays off until you turn it on with `groundwork-configure`. An apply then enables Remote Login and stops system sleep while the Mac is on power. It does not grant privacy permissions, write SSH keys, or turn off System Integrity Protection. The recorded sleep value, manual grants, and undo steps are in [iMessage gateway](imessage-gateway.md).
+A desktop Mac can stay reachable for [Blip](https://github.com/nixfred/blip) over ordinary OpenSSH. The role stays off until you turn it on with `groundwork-configure`. An apply then enables Remote Login and, through the shared stay-awake setting, stops system sleep while the Mac is on power. It does not grant privacy permissions, write SSH keys, or turn off System Integrity Protection. The recorded sleep value, manual grants, and undo steps are in [iMessage gateway](imessage-gateway.md).
 
 ### Automatic startup and local desktop permission
 

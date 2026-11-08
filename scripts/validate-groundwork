@@ -1244,6 +1244,7 @@ validate_static_foundation() {
   python3 -B scripts/test-brave-browser
   python3 -B scripts/test-remote-desktop
   python3 -B tests/test_imessage_gateway.py
+  python3 -B tests/test_stay_awake.py
   python3 -B tests/test_local_inference.py
   python3 -B tests/test_git_filter_repo.py
   python3 -B tests/test_claude_code_owner.py
@@ -11171,6 +11172,8 @@ PYTHON
     rg -n 'promptBoolOnce \. "beta"' home/.chezmoi.toml.tmpl
   assert_no_matches "chezmoi init must not ask for the iMessage gateway role" \
     rg -n 'promptBoolOnce \. "imessage_gateway"' home/.chezmoi.toml.tmpl
+  assert_no_matches "chezmoi init must not ask for stay awake on power" \
+    rg -n 'promptBoolOnce \. "stay_awake_on_power"' home/.chezmoi.toml.tmpl
   _profile_render() {
     local override_data="$1"
     chezmoi --config "$empty_config" --source "$PWD" --destination "$out_dir/home" \
@@ -12327,6 +12330,12 @@ SH
   # non-Git source -> 1 (fail closed)
   mkdir -p "$pf_root/notgit"
   pf_run 1 "$pf_root/notgit"
+
+  check "update-all apply-source warning"
+  python3 -B tests/test_apply_source_warning.py
+
+  check "update-all PATH shadow report"
+  python3 -B tests/test_path_shadow.py
 
 }
 
@@ -17947,6 +17956,8 @@ EOF
     || fail "a stored Xcode beta preference was discarded during regeneration"
   grep -qF 'imessage_gateway = false' "$interview_out" \
     || fail "an existing machine without an iMessage gateway answer must keep that role off"
+  grep -qF 'stay_awake_on_power = false' "$interview_out" \
+    || fail "an existing machine without a stay awake on power answer must keep it off"
   grep -qF 'install_chrome = false' "$interview_out" \
     || fail "the obsolete install_chrome field must survive regeneration as ignored compatibility input"
   grep -qF 'terminal_multiplexer = "tmux"' "$interview_out" \
@@ -17967,6 +17978,8 @@ EOF
     || fail "a fresh install must default the mutable Xcode beta preference to false"
   grep -qF 'imessage_gateway = false' "$interview_fresh_out" \
     || fail "a fresh install must default the iMessage gateway role to false"
+  grep -qF 'stay_awake_on_power = false' "$interview_fresh_out" \
+    || fail "a fresh install must default stay awake on power to false"
   grep -qF 'terminal_multiplexer = "herdr"' "$interview_fresh_out" \
     || fail "a fresh install must recommend Herdr while preserving an explicit choice"
   # groundwork-configure offers every mutable field on every platform, which is
@@ -19445,8 +19458,11 @@ SH
   browser_doctor_apps="$browser_doctor/Applications"
   mkdir -p "$browser_doctor_apps"
   run_browser_doctor() {
+    # A host defaultbrowser would answer this fixture. Point at a path that is
+    # not installed so the report stays the sealed "not installed" case.
     env PATH="$browser_doctor/bin:$PATH" DOCTOR_BROWSER_DATA="$1" INSTALLED_CASKS="$2" \
       GROUNDWORK_APPLICATIONS_DIR="${3:-$browser_doctor_apps}" \
+      GROUNDWORK_BRAVE_DEFAULTBROWSER="$browser_doctor/bin/defaultbrowser-absent" \
       /bin/bash home/dot_local/bin/executable_groundwork-doctor --browser
   }
   browser_doctor_out="$(run_browser_doctor \

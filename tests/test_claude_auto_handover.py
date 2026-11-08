@@ -217,8 +217,9 @@ class AutoHandoverTests(Sandbox):
         self.assertEqual(os.readlink(backup / "claude"), str(target))
         self.assertEqual(kept, {p: p.read_bytes() for p in kept})
         calls = self.pgrep_log.read_text().splitlines()
-        self.assertIn("-x claude", calls)
-        self.assertTrue(any(call.startswith("-f ^") for call in calls), calls)
+        # macOS adds -a so pgrep includes the session that started the handover.
+        self.assertTrue(any(call in {"-x claude", "-a -x claude"} for call in calls), calls)
+        self.assertTrue(any(call.startswith(("-f ^", "-a -f ^")) for call in calls), calls)
         # The second run finds Homebrew already effective and stays quiet.
         again = self.run_helper("auto", "homebrew")
         self.assertEqual((again.returncode, again.stdout), (0, ""), again.stderr)
