@@ -2,8 +2,9 @@
 """Prepare an opt-in desktop Mac as an iMessage gateway for Blip.
 
 The role is off until groundwork-configure stores imessage_gateway = true.
-prepare enables Remote Login and sets sleep to 0 while on power. It does not
-grant privacy permissions, edit authorized_keys, or change battery sleep.
+prepare enables Remote Login. groundwork-stay-awake owns system sleep on
+power for this role. Neither grants privacy permissions, edits
+authorized_keys, or changes battery sleep.
 """
 import argparse
 import os
@@ -18,13 +19,9 @@ import sys
 SHARING_URL = 'x-apple.systempreferences:com.apple.Sharing-Settings.extension'
 PRIVACY_URL = 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension'
 SSH_SERVICE = ['launchctl', 'print', 'system/com.openssh.sshd']
-PMSET_READ = ['pmset', '-g', 'custom']
-PMSET_WRITE = ['sudo', 'pmset', '-c', 'sleep', '0']
 SYSTEMSETUP = ['sudo', '/usr/sbin/systemsetup', '-setremotelogin', 'on']
 ACCESS_GROUP = ['dscl', '.', '-read', '/Groups/com.apple.access_ssh', 'GroupMembership']
 TAILSCALE_PROCESS = ['pgrep', '-x', 'Tailscale']
-STATE_FILENAME = 'imessage-gateway-ac-sleep'
-RECORDED_VALUE = re.compile(r'^(0|[1-9][0-9]{0,5})$')
 DATA_BOOL = re.compile(r'^(headless|imessage_gateway)\s*=\s*(true|false)\s*(?:#.*)?$')
 
 SUDO_PREPARE_SCRIPT = r'''
@@ -76,11 +73,6 @@ def config_path():
     return root / 'chezmoi' / 'chezmoi.toml'
 
 
-def state_path():
-    root = Path(os.environ['XDG_STATE_HOME']) if os.environ.get('XDG_STATE_HOME') else Path.home() / '.local' / 'state'
-    return root / 'groundwork' / STATE_FILENAME
-
-
 def blip_check_path():
     return Path.home() / '.blip' / 'bin' / 'blip-check'
 
@@ -110,28 +102,6 @@ def load_settings():
     return parse_settings(text)
 
 
-def parse_pmset(text):
-    section = None
-    ac_sleep = None
-    battery_sleep = None
-    for raw in text.splitlines():
-        line = raw.strip().lstrip('*').strip()
-        if line in {'AC Power:', 'Battery Power:'}:
-            section = 'ac' if line.startswith('AC') else 'battery'
-            continue
-        if line.endswith(':') and not raw.startswith((' ', '\t')):
-            section = None
-            continue
-        parts = line.split()
-        if section and len(parts) >= 2 and parts[0] == 'sleep' and parts[1].isdigit():
-            value = int(parts[1])
-            if section == 'ac':
-                ac_sleep = value
-            else:
-                battery_sleep = value
-    return ac_sleep, battery_sleep
-
-
 def platform_block():
     if is_wsl():
         return 1, 'WSL does not configure a Mac iMessage gateway. Nothing was changed.'
@@ -151,75 +121,11 @@ def read_remote_login():
     return result.returncode == 0
 
 
-def read_sleep():
-    result = run(PMSET_READ)
-    if result.returncode != 0:
-        return None, None
-    return parse_pmset(result.stdout or '')
-
-
 def sudo_prepare():
     # No capture and no short timeout: the password prompt uses the terminal,
     # and sudo's own cancel (130) or "no terminal" (10) is the bound.
     result = run(['bash', '-c', SUDO_PREPARE_SCRIPT], timeout=None, capture=False)
     return result.returncode
-
-
-def ensure_record_destination(path):
-    if path.is_symlink():
-        raise RuntimeError(f'the recorded AC sleep path is a symlink: {path}.')
-    if path.exists() and not path.is_file():
-        raise RuntimeError(f'the recorded AC sleep path is not a regular file: {path}.')
-    parent = path.parent
-    if parent.exists() and not parent.is_dir():
-        raise RuntimeError(f'the state directory is not a directory: {parent}.')
-
-
-def move_record_aside(path):
-    # Rename the final component. os.replace does not follow a symlink there,
-    # so a planted path cannot redirect the move onto another file.
-    for attempt in range(100):
-        candidate = path.with_name(f'.{path.name}.aside.{os.getpid()}.{attempt}')
-        if candidate.exists() or candidate.is_symlink():
-            continue
-        os.replace(path, candidate)
-        return candidate
-    raise RuntimeError(f'could not move the recorded AC sleep path aside: {path}.')
-
-
-def record_previous(path, value):
-    # False means this call did not create the undo file. An existing path is
-    # left as it is, and sleep must not change unless that file is already valid.
-    if path.exists() or path.is_symlink():
-        return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        os.fchmod(descriptor, 0o600)
-        os.write(descriptor, f'{value}\n'.encode())
-    finally:
-        os.close(descriptor)
-    try:
-        os.replace(temporary, path)
-    except OSError:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
-    return True
-
-
-def read_recorded(path):
-    if not path.exists() and not path.is_symlink():
-        return None
-    if path.is_symlink() or not path.is_file():
-        return 'unreadable'
-    text = path.read_text(encoding='utf-8').strip()
-    if not RECORDED_VALUE.match(text):
-        return 'unreadable'
-    return text
 
 
 def enable_remote_login():
@@ -285,8 +191,23 @@ def report_blip():
     print('The Messages probe can raise the one-time Allow prompt, so status does not run it.')
 
 
-def minutes(value):
-    return 'not listed' if value is None else str(value)
+def stay_awake_command():
+    return str(Path.home() / '.local' / 'bin' / 'groundwork-stay-awake')
+
+
+def report_power():
+    # groundwork-stay-awake owns AC sleep and its record, so status shows its
+    # read-only report instead of keeping a second copy here.
+    print('Power (groundwork-stay-awake status):')
+    try:
+        result = run([stay_awake_command(), 'status'])
+    except (OSError, subprocess.SubprocessError):
+        print('  groundwork-stay-awake could not be run. Run chezmoi apply, then groundwork-stay-awake status.')
+        return
+    for line in (result.stdout or '').splitlines():
+        print('  ' + line)
+    if result.returncode != 0:
+        print('  The power report is incomplete.')
 
 
 def status():
@@ -301,7 +222,6 @@ def status():
     print('Role applied here: ' + ('yes' if applied else 'no'))
     try:
         remote = read_remote_login()
-        ac_sleep, battery_sleep = read_sleep()
     except (OSError, subprocess.SubprocessError) as error:
         print(f'iMessage gateway: the report is incomplete ({error}).', file=sys.stderr)
         return 1
@@ -312,15 +232,9 @@ def status():
         users = 'could not be read'
     print(f'Remote Login allowed users: {users}')
     print('Recommendation: limit Remote Login to the gateway account alone. Full Disk Access on sshd covers every key that can open a shell.')
-    print('AC sleep minutes: ' + ('unknown' if ac_sleep is None else str(ac_sleep)))
-    print(f'Battery sleep minutes: {minutes(battery_sleep)}')
-    recorded = read_recorded(state_path())
-    if recorded is None:
-        print(f'Recorded previous AC sleep: not recorded ({state_path()})')
-    else:
-        print(f'Recorded previous AC sleep: {recorded} ({state_path()})')
     print(f'Tailscale: {tailscale_state()}')
     report_blip()
+    report_power()
     return 0
 
 
@@ -339,31 +253,15 @@ def prepare():
         return 0
     try:
         remote = read_remote_login()
-        ac_sleep, battery_sleep = read_sleep()
     except (OSError, subprocess.SubprocessError) as error:
-        print(f'iMessage gateway: Remote Login or AC sleep could not be read ({error}). Nothing was changed.', file=sys.stderr)
+        print(f'iMessage gateway: Remote Login could not be read ({error}). Nothing was changed.', file=sys.stderr)
         return 1
-    if ac_sleep is None:
-        print('iMessage gateway: AC sleep could not be read from `pmset -g custom`. Nothing was changed.', file=sys.stderr)
-        return 1
-    need_login = not remote
-    need_sleep = ac_sleep != 0
-    destination = state_path()
-    if not need_login and not need_sleep:
+    if remote:
         print('Remote Login is on.')
-        print(f'AC sleep is already 0. Battery sleep was not changed ({minutes(battery_sleep)}).')
         return 0
-    record_absent_before_prompt = False
-    if need_sleep:
-        try:
-            ensure_record_destination(destination)
-        except RuntimeError as error:
-            print(f'iMessage gateway: {error} Nothing was changed.', file=sys.stderr)
-            return 1
-        record_absent_before_prompt = not (destination.exists() or destination.is_symlink())
     sudo_status = sudo_prepare()
     if sudo_status == 10:
-        print('Groundwork: changing Remote Login or AC sleep needs an administrator password.')
+        print('Groundwork: changing Remote Login needs an administrator password.')
         print('Nothing was changed. From a terminal on this machine, run chezmoi apply and enter your password when asked.')
         return 0
     if sudo_status == 130:
@@ -372,58 +270,7 @@ def prepare():
     if sudo_status != 0:
         print(f'Groundwork: administrator permission was not granted (exit {sudo_status}). Nothing was changed.', file=sys.stderr)
         return sudo_status
-    if need_login:
-        enable_remote_login()
-    else:
-        print('Remote Login is on.')
-    if need_sleep:
-        # The password prompt is a gap. A new file created while it waits is
-        # not the previous sleep value, even when its text looks valid.
-        try:
-            ensure_record_destination(destination)
-        except RuntimeError as error:
-            print(
-                f'iMessage gateway: {error} AC sleep was not changed. Battery sleep was not changed.',
-                file=sys.stderr,
-            )
-            return 1
-        planted = destination.is_file() and not destination.is_symlink()
-        if record_absent_before_prompt and planted:
-            aside = move_record_aside(destination)
-            print(
-                f'iMessage gateway: a file appeared at the sleep record during the password prompt and was moved to {aside}. '
-                'AC sleep was not changed. Battery sleep was not changed.',
-                file=sys.stderr,
-            )
-            return 1
-        if not record_absent_before_prompt:
-            recorded = read_recorded(destination)
-            if not (isinstance(recorded, str) and RECORDED_VALUE.match(recorded)):
-                print(
-                    f'iMessage gateway: the recorded AC sleep value at {destination} cannot be restored. '
-                    'AC sleep was not changed. Battery sleep was not changed.',
-                    file=sys.stderr,
-                )
-                return 1
-        wrote = record_previous(destination, ac_sleep)
-        if record_absent_before_prompt and not wrote:
-            print(
-                f'iMessage gateway: the previous AC sleep value was not recorded at {destination}. '
-                'AC sleep was not changed. Battery sleep was not changed.',
-                file=sys.stderr,
-            )
-            return 1
-        result = run(PMSET_WRITE)
-        if result.returncode != 0:
-            print('AC sleep was not changed. Battery sleep was not changed.', file=sys.stderr)
-            if wrote:
-                print(f'The previous AC sleep value {ac_sleep} is recorded at {destination}.', file=sys.stderr)
-            return 1
-        if wrote:
-            print(f'Recorded the previous AC sleep value {ac_sleep} at {destination}.')
-        print(f'AC sleep is now 0 while on power. Battery sleep was not changed ({minutes(battery_sleep)}).')
-    else:
-        print(f'AC sleep is already 0. Battery sleep was not changed ({minutes(battery_sleep)}).')
+    enable_remote_login()
     return 0
 
 
@@ -464,8 +311,8 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Actions:
-  status   Report Remote Login, allowed users, AC sleep, Tailscale, and whether blip-check is installed. Changes nothing. It does not run blip-check, because the Messages probe can raise the one-time Allow prompt.
-  prepare  When the role is on, enable Remote Login and set AC sleep to 0. A non-interactive apply defers the privileged part instead of aborting.
+  status   Report Remote Login, allowed users, Tailscale, whether blip-check is installed, and the groundwork-stay-awake power report. Changes nothing. It does not run blip-check, because the Messages probe can raise the one-time Allow prompt.
+  prepare  When the role is on, enable Remote Login. groundwork-stay-awake apply sets AC sleep to 0 in the same apply. A non-interactive apply defers the privileged part instead of aborting.
   setup    Open Sharing and Privacy & Security, then print the manual steps.
 
 The role defaults off. Linux, WSL, a headless Mac, and Omarchy do not apply it.

@@ -38,8 +38,8 @@
       "lastmod": "2026-08-11"
     },
     "commands.html": {
-      "sha256": "0972fa8d88f80f398b0677c92c4b3e0279837780f661ee5587bd1568c3c60b34",
-      "lastmod": "2026-11-07"
+      "sha256": "81d26e1e33b69dbd50ba055dd1fb663ee85d6cf260d5d5d72236b5d0315bed54",
+      "lastmod": "2026-11-08"
     },
     "customizing.html": {
       "sha256": "ed691941b692309e1627715fd9e6a85245f6b21a835af5ea7b15454f4beb6ff1",
@@ -130,8 +130,8 @@
       "lastmod": "2026-10-18"
     },
     "macos.html": {
-      "sha256": "29722037e383364941bbf4fc618b79da809e627485512233d667894cdb6edd9a",
-      "lastmod": "2026-11-07"
+      "sha256": "a089bb9cdacda30d54989988d0fd08d2179868efbd71e2653aff8639924d2a86",
+      "lastmod": "2026-11-08"
     },
     "neovim.html": {
       "sha256": "d9f8147723522dae0593d3f6b5abc8195d48339449031f35001f1f2bd880257f",
@@ -162,8 +162,8 @@
       "lastmod": "2026-10-30"
     },
     "setup.html": {
-      "sha256": "8e18d192f16ced24edc7e9e410969156a02f591f7aa8e56ea3fb632395fdea01",
-      "lastmod": "2026-11-07"
+      "sha256": "ac27f2bc498fc18e3327c6c4504fe43bfdb4ab5a245144824b994eca253fb90c",
+      "lastmod": "2026-11-08"
     },
     "shell.html": {
       "sha256": "4eba0bef70f43e29c15a1732c03b1a47527cecbfb67769cd543c27b877286d2e",
@@ -186,8 +186,8 @@
       "lastmod": "2026-10-31"
     },
     "troubleshooting.html": {
-      "sha256": "fc3777b0dee1c44d42cab6888048d6a68ee638e35f1708bf799ce66b24918b08",
-      "lastmod": "2026-11-01"
+      "sha256": "66c24cdff2cb998f18d5c261ad8581042522bafed490ce1e9ce082b705e034ab",
+      "lastmod": "2026-11-07"
     },
     "web-dev.html": {
       "sha256": "3d8a3134a4ca5d18cae986e6dcfe41448bcb8110928f85475ea428e94a05877b",

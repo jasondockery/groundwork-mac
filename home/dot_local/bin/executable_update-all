@@ -6,6 +6,11 @@ set -euo pipefail
 # this same invocation to the freshly applied runner. Update stages live in
 # groundwork-update-run so a fix delivered by the sync governs the rest of the
 # run; keep substantive logic out of this file.
+# The shadow report must see the caller's PATH. This prepend is only for the
+# update's own tools, and it would hide a copy that was ahead of Homebrew.
+if [[ -z "${GROUNDWORK_PATH_SHADOW_PATH+x}" ]]; then
+  export GROUNDWORK_PATH_SHADOW_PATH="$PATH"
+fi
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 usage() {
@@ -21,6 +26,9 @@ Usage:
   update-all --no-app-quit      keep a running app open instead of letting
                                 Homebrew quit it for cask replacement, for
                                 this invocation only
+  update-all --quiet-apply-source
+                                silence the chezmoi source warning for this
+                                run only
   update-all -h|--help          show this help
 
 The normal command applies current Groundwork configuration, upgrades the safe
@@ -47,6 +55,13 @@ Homebrew's own upgrade command run directly: a cask that declares a safe quit
 action may be closed and reopened as part of its own upgrade. --no-app-quit
 keeps every running app open instead, deferring its upgrade, for this
 invocation only.
+
+When the chezmoi source checkout is not on main, is behind origin/main, or has
+uncommitted files, the command prints a warning before it syncs and repeats
+that warning in the final summary. It does not switch, stash, or reset the
+checkout. If the fetch of origin/main cannot finish, the warning says it could
+not check and the update continues. --quiet-apply-source or
+GROUNDWORK_QUIET_APPLY_SOURCE=1 silences that warning for this run only.
 EOF
 }
 
@@ -60,6 +75,7 @@ while (($#)); do
   case "$1" in
     --config-only) config_only=1 ;;
     --skip-maintenance | --no-app-quit) other_scope=1 ;;
+    --quiet-apply-source) export GROUNDWORK_QUIET_APPLY_SOURCE=1 ;;
     -h | --help)
       usage
       exit 0
@@ -156,6 +172,16 @@ trap update_all_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# Warn before sync when this checkout is not main, is behind origin/main, or is
+# dirty. The helper fetches origin/main and does not switch, stash, or reset.
+# A missing helper (the update that first ships it) skips the early warning;
+# the runner repeats it in the summary once the helper is installed. Failure
+# to observe the checkout must not fail the update.
+gw_apply_source="$HOME/.local/bin/groundwork-apply-source-warning"
+if [[ -x "$gw_apply_source" ]]; then
+  "$gw_apply_source" || true
+fi
 
 # Preflight the SOURCE branch before `chezmoi update` runs git pull: a local
 # development branch with no upstream (or a detached HEAD) gets Groundwork's

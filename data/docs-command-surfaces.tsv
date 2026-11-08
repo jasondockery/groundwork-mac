@@ -2,6 +2,7 @@
 groundwork-remote-desktop	command	executable	all	desktop	-	commands.html
 groundwork-imessage-gateway	command	executable	macos	desktop	-	commands.html
 groundwork-spotlight	command	executable	macos	all	-	setup.html
+groundwork-stay-awake	command	executable	macos	desktop	-	commands.html
 groundwork-help [query]	command	executable	all	all	-	commands.html
 groundwork-update	command	executable	all	all	chezmoi	commands.html
 groundwork-help --pick [query]	command	executable	all	all	fzf	commands.html
