@@ -406,11 +406,13 @@ def clear_unreadable():
         path.unlink()
 
 
-def ask_permission(action):
+def ask_permission(action, next_step=None):
     status = sudo_prepare()
     if status == 10:
+        if next_step is None:
+            next_step = 'From a terminal on this machine, run chezmoi apply and enter your password when asked.'
         print(f'Groundwork: {action} needs an administrator password.')
-        print('Nothing was changed. From a terminal on this machine, run chezmoi apply and enter your password when asked.')
+        print(f'Nothing was changed. {next_step}')
         return 0, False
     if status == 130:
         print('Groundwork: the password prompt was cancelled. Nothing was changed.', file=sys.stderr)
@@ -501,8 +503,15 @@ def prepare():
         return 0
     clear_unreadable()
     updated, added = with_exclusions(configuration, roots)
+    added_keys = {same_path_key(root) for root in added}
     for root in roots:
-        record.setdefault(root, 'groundwork' if root in added else 'existing')
+        # A folder that was already excluded, then removed, and put back by
+        # this run is Groundwork's again. setdefault would keep "existing"
+        # and undo would leave the restored path in the list.
+        if same_path_key(root) in added_keys:
+            record[root] = 'groundwork'
+        else:
+            record.setdefault(root, 'existing')
     if added:
         try:
             backup = write_live(original, updated)
@@ -538,27 +547,30 @@ def undo(confirmed):
         print(f'  record  {opt_out_path()} so chezmoi apply stops adding exclusions')
         print('Entries you added yourself stay. Run it again with --yes to do this.')
         return 0
-    # Record the opt-out first, so a failure below cannot be undone by the next apply.
+    if ours and not sudo_cached():
+        # The opt-out is written only after the list changes. A cancelled or
+        # unavailable password must leave the record in place, or the next
+        # prepare treats the undo as finished and will not remove the entries.
+        code, granted = ask_permission(
+            'removing Spotlight exclusions',
+            'From a terminal on this machine, run groundwork-spotlight undo --yes and enter your password when asked.')
+        if not granted:
+            return code if code else 1
+    if ours:
+        original, configuration = read_live()
+        updated, removed = without_exclusions(configuration, ours)
+        if removed:
+            backup = write_live(original, updated)
+            print('Groundwork: Spotlight indexes these again: ' + ', '.join(removed) + '.')
+            print(f'Previous list saved at {backup}. The change takes effect after the next restart.')
+        else:
+            print('Groundwork\'s exclusions were already gone from the Spotlight list.')
     write_private(opt_out_path(), b'Spotlight exclusions turned off by groundwork-spotlight undo.\n')
     print(f'Recorded {opt_out_path()}; chezmoi apply no longer adds Spotlight exclusions.')
     if not ours:
         write_record({})
         print('Groundwork had not added an exclusion here, so the Spotlight list was not changed.')
         return 0
-    if not sudo_cached():
-        code, granted = ask_permission('removing Spotlight exclusions')
-        if not granted:
-            if code == 0:
-                print('Run groundwork-spotlight undo --yes from a terminal to finish.')
-            return code if code else 1
-    original, configuration = read_live()
-    updated, removed = without_exclusions(configuration, ours)
-    if removed:
-        backup = write_live(original, updated)
-        print('Groundwork: Spotlight indexes these again: ' + ', '.join(removed) + '.')
-        print(f'Previous list saved at {backup}. The change takes effect after the next restart.')
-    else:
-        print('Groundwork\'s exclusions were already gone from the Spotlight list.')
     write_record({})
     print('Turn exclusions back on: groundwork-spotlight enable')
     return 0

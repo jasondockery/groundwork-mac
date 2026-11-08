@@ -328,6 +328,37 @@ class FlowTests(unittest.TestCase):
         self.assertFalse((self.state() / gs.OPT_OUT_FILENAME).exists())
         self.assertEqual(self.listed(), ['/Volumes/Backup', self.pnpm + '/', self.code])
 
+    def test_undo_without_a_terminal_does_not_record_the_opt_out(self):
+        self.invoke(Machine(self), 'prepare')
+        before = self.plist.read_bytes()
+        for status, expected, stream in ((10, 1, 'out'), (130, 130, 'err')):
+            with self.subTest(status=status):
+                machine = Machine(self, cached=False, prepare_status=status)
+                code, out, err = self.invoke(machine, 'undo', '--yes')
+                text = out if stream == 'out' else err
+                self.assertEqual(code, expected)
+                self.assertIn('Nothing was changed', text)
+                self.assertNotIn('chezmoi apply', out + err)
+                self.assertEqual(self.plist.read_bytes(), before)
+                self.assertFalse((self.state() / gs.OPT_OUT_FILENAME).exists())
+                self.assertEqual(machine.writes(), [])
+        code, out, _ = self.invoke(Machine(self, cached=False), 'status')
+        self.assertEqual(code, 0)
+        self.assertNotIn('off by choice', out)
+        code, out, _ = self.invoke(Machine(self), 'prepare')
+        self.assertEqual(code, 0)
+        self.assertNotIn('are off', out)
+
+    def test_undo_removes_a_root_prepare_put_back(self):
+        self.write_plist({'Exclusions': ['/Volumes/Backup', self.pnpm]})
+        self.invoke(Machine(self), 'prepare')
+        self.write_plist({'Exclusions': ['/Volumes/Backup', self.code]})
+        self.invoke(Machine(self), 'prepare')
+        self.assertIn(self.pnpm, self.listed())
+        code, out, _ = self.invoke(Machine(self), 'undo', '--yes')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.listed(), ['/Volumes/Backup'])
+
     def test_status_reports_the_live_list_or_the_record(self):
         self.invoke(Machine(self), 'prepare')
         code, out, _ = self.invoke(Machine(self), 'status')
