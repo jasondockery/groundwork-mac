@@ -916,6 +916,24 @@ class T3ResolutionTests(Sandbox):
         self.assertIn("Claude instance project_only does not set CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", output)
         self.assertIn("Fix it in T3 Code → Settings → Providers → project_only → Environment variables", output)
 
+    def test_subagent_caps_without_a_config_object_keep_their_columns(self):
+        concurrent, depth = "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"
+        for label, config in (("absent", None), ("null", None), ("string", "claude")):
+            instance = {"driver": "claudeAgent", "enabled": True, "environment": [
+                {"name": depth, "value": "1", "sensitive": False}]}
+            if label == "null":
+                instance["config"] = None
+            elif label == "string":
+                instance["config"] = config
+            with self.subTest(config=label):
+                self.write_settings({"providerInstances": {"claudeAgent": instance}})
+                output = self.caps_report()
+                self.assertIn(f"Claude instance claudeAgent does not set {concurrent} (Groundwork value: 4).", output)
+                self.assertIn(f"Claude instance claudeAgent sets {depth}=1.", output)
+                self.assertNotIn(f"sets {concurrent}=4", output)
+                self.assertNotIn(f"sets {depth} to a value other than 1", output)
+                self.assertNotIn("is disabled", output)
+
     def test_subagent_caps_unrecognized_settings_are_reported(self):
         mtime, text = self.write_settings({"providerInstances": {
             "c": self.claude_instance(environment={"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4"})}})

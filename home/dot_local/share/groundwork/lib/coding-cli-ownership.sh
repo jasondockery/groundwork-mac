@@ -324,8 +324,12 @@ gw_t3_claude_subagent_caps_report() {
             | (.value.environment // []) as $env
             | if ($env | type) == "array" then . else error("unrecognized") end
             | [(if .key | test("^[A-Za-z0-9_.-]+$") then .key else "" end),
-               (if (.value.enabled == false or (.value.config | objects | .enabled) == false)
-                  and (.key as $id | $project_enabled | index([$id]) | not)
+               # config is optional. objects yields an empty stream when it is
+               # missing, null, or not an object, and the if then drops the
+               # enabled/disabled field so the cap states shift left.
+               (if ((.value.enabled == false
+                     or ((.value.config | type) == "object" and (.value.config.enabled == false)))
+                    and (.key as $id | $project_enabled | index([$id]) | not))
                 then "disabled" else "enabled" end)]
               + [$caps[] as [$name, $want]
                 | ([$env[] | select(type == "object" and .name == $name)] | last) as $entry
