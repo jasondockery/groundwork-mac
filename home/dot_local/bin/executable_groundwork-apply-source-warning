@@ -58,7 +58,9 @@ emit() {
 
 shell_quote() {
   local value="$1" escaped
-  escaped="${value//\'/\'\\\'\'}"
+  # The replacement must stay unquoted. Double quotes make bash keep the
+  # backslashes, so a path that contains ' becomes a syntax error.
+  escaped=${value//\'/\'\\\'\'}
   printf "'%s'" "$escaped"
 }
 

@@ -138,10 +138,12 @@ class Fixture(unittest.TestCase):
             env["GIT_COMMITTER_DATE"] = stamp
         _git(repo, env, "commit", "-q", "--allow-empty", "-m", message)
 
-    def _repo(self, *, branch="main", days_old=0, extra_on_origin=0, dirty=0, tracked_feature=False):
+    def _repo(self, *, branch="main", days_old=0, extra_on_origin=0, dirty=0,
+              tracked_feature=False, directory=None):
         env = self._git_env()
         seed = self.root / "seed"
-        clone = self.root / "clone"
+        clone = Path(directory) if directory is not None else self.root / "clone"
+        clone.parent.mkdir(parents=True, exist_ok=True)
         _run(["/usr/bin/git", "init", "-q", "-b", "main", str(seed)], env)
         self._commit(seed, "init", days_old=days_old)
         _run(["/usr/bin/git", "clone", "-q", str(seed), str(clone)], env)
@@ -199,6 +201,35 @@ class Fixture(unittest.TestCase):
         )
         self.assertNotIn(f"git -C {quoted} switch main && git pull", result.stdout)
         self.assertIn("did not switch, stash, or reset", result.stdout)
+
+    def test_apostrophe_in_the_source_path_is_a_shell_command(self):
+        repo = self._repo(
+            branch="fix/spotlight-fixture-firmlink",
+            directory=self.root / "O'Brien" / "clone",
+        )
+        result = self._helper(repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        quoted = "'" + os.path.realpath(repo).replace("'", "'\\''") + "'"
+        command = f"git -C {quoted} switch main && git -C {quoted} pull"
+        self.assertIn("To use main: ", result.stdout)
+        printed = result.stdout.split("To use main: ", 1)[1].strip()
+        self.assertEqual(printed, command)
+        parsed = subprocess.run(
+            ["/bin/bash", "-n", "-c", printed], capture_output=True, text=True,
+        )
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        probe = self.root / "probe"
+        probe.mkdir()
+        git = probe / "git"
+        git.write_text("#!/bin/bash\nprintf '%s\\n' \"$2\"\n", encoding="utf-8")
+        git.chmod(0o755)
+        shown = subprocess.run(
+            ["/bin/bash", "-c", printed],
+            capture_output=True, text=True,
+            env={"PATH": f"{probe}:/usr/bin:/bin", "HOME": str(self.home)},
+        )
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertEqual(shown.stdout.splitlines(), [os.path.realpath(repo), os.path.realpath(repo)])
 
     def test_behind_origin_main_names_the_count(self):
         repo = self._repo(extra_on_origin=40)
