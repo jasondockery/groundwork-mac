@@ -161,4 +161,5 @@ if [[ "$behind_known" -eq 0 || "$behind_count" -gt 0 ]]; then
 fi
 [[ "$warn" -eq 1 ]] || exit 0
 
-emit "Warning: update-all is applying this machine from $branch_label ($age_label, $behind_label, $dirty_label). Groundwork did not switch, stash, or reset anything. To use main: git -C $(shell_quote "$repo") switch main && git pull"
+quoted_repo="$(shell_quote "$repo")"
+emit "Warning: update-all is applying this machine from $branch_label ($age_label, $behind_label, $dirty_label). Groundwork did not switch, stash, or reset anything. To use main: git -C $quoted_repo switch main && git -C $quoted_repo pull"

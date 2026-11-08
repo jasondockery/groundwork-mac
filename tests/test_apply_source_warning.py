@@ -192,7 +192,12 @@ class Fixture(unittest.TestCase):
         self.assertIn("12 days old", result.stdout)
         self.assertIn("0 commits behind origin/main", result.stdout)
         self.assertIn("0 uncommitted files", result.stdout)
-        self.assertIn(f"git -C '{os.path.realpath(repo)}' switch main && git pull", result.stdout)
+        quoted = "'" + os.path.realpath(repo).replace("'", "'\\''") + "'"
+        self.assertIn(
+            f"git -C {quoted} switch main && git -C {quoted} pull",
+            result.stdout,
+        )
+        self.assertNotIn(f"git -C {quoted} switch main && git pull", result.stdout)
         self.assertIn("did not switch, stash, or reset", result.stdout)
 
     def test_behind_origin_main_names_the_count(self):
@@ -374,6 +379,8 @@ class Fixture(unittest.TestCase):
         self.assertLess(summary, finished)
         self.assertIn("from branch fix/spotlight-fixture-firmlink", result.stdout)
         self.assertIn("3 commits behind origin/main", result.stdout)
+        quoted = "'" + os.path.realpath(repo).replace("'", "'\\''") + "'"
+        self.assertIn(f"git -C {quoted} switch main && git -C {quoted} pull", result.stdout)
         self.assertEqual(
             _git(repo, self._git_env(), "branch", "--show-current").stdout.strip(),
             "fix/spotlight-fixture-firmlink",
