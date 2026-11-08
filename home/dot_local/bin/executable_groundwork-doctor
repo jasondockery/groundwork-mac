@@ -51,7 +51,10 @@ Sections (all run by default):
                 claude_code_owner choice and how to remove the other copy.
                 Also reports which claude T3 Code would start, and warns when
                 that is the native copy after a handover, when nothing
-                resolves, or when its Claude Binary path names a missing file.
+                resolves, or when its Claude Binary path names a missing file,
+                and whether each T3 Claude instance's Environment variables cap
+                subagents (CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=4,
+                CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1).
                 T3 Code's settings are read, never changed.
   Commit identity
                 the groundwork-core commit identity guard: whether the user-level
@@ -1441,6 +1444,7 @@ ai_tools_section() {
   gw_claude_ownership_report
   gw_claude_dual_install_report "$owner"
   gw_t3_claude_report "$owner"
+  gw_t3_claude_subagent_caps_report
 }
 
 # The pinned core's owner remote pattern list: next to the installed guard's

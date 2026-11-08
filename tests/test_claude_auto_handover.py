@@ -845,6 +845,109 @@ class T3ResolutionTests(Sandbox):
         output = self.report(extra={"LOGIN_SHELL_FAIL": "1"})
         self.assertIn("login-shell PATH T3 Code reads could not be observed", output)
 
+    def caps_report(self):
+        command = ["/bin/bash", "-c", 'set -euo pipefail; . "$1"; gw_t3_claude_subagent_caps_report',
+                   "test", str(LIB)]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_subagent_caps_set_missing_different_and_sensitive(self):
+        def env(**values):
+            return [{"name": name, "value": value, "sensitive": False} for name, value in values.items()]
+        concurrent, depth = "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"
+        mtime, text = self.write_settings({"providerInstances": {
+            "capped": self.claude_instance(environment=[
+                {"name": "ANTHROPIC_API_KEY", "value": "sk-never-print-this", "sensitive": True},
+                *env(**{concurrent: "20", depth: "1"}),
+                *env(**{concurrent: "4"})]),  # the last entry wins, as in T3
+            "uncapped": self.claude_instance(),
+            "loose": self.claude_instance(environment=env(**{concurrent: "4", depth: "31337"})),
+            # How T3 stores a sensitive value: redacted in place, or a secret reference.
+            "hidden": self.claude_instance(environment=[
+                {"name": concurrent, "value": "", "sensitive": True, "valueRedacted": True},
+                {"name": depth, "value": "", "sensitive": True, "secret": {"id": "never-print-ref"}}]),
+            # valueRedacted and secret are unconfirmable even when the stored
+            # string equals the cap Groundwork wants.
+            "equal": self.claude_instance(environment=[
+                {"name": concurrent, "value": "4", "sensitive": True, "valueRedacted": True},
+                {"name": depth, "value": "1", "sensitive": True, "secret": {"id": "never-print-equal"}}]),
+            "off": self.claude_instance(enabled=False),
+            "grok": {"driver": "grok"},
+        }})
+        output = self.caps_report()
+        self.assertIn(f"Claude instance capped sets {concurrent}=4.\n"
+                      f"T3 Code: Claude instance capped sets {depth}=1.\n", output)
+        self.assertNotIn("Providers → capped", output)
+        # The built-in instance runs without a providerInstances entry.
+        for instance in ("claudeAgent", "uncapped"):
+            self.assertIn(f"Claude instance {instance} does not set {concurrent} (Groundwork value: 4)", output)
+            self.assertIn(f"Claude instance {instance} does not set {depth}", output)
+        self.assertIn(f"Claude instance loose sets {depth} to a value other than 1", output)
+        for instance in ("hidden", "equal"):
+            for name, want in ((concurrent, 4), (depth, 1)):
+                self.assertIn(f"Claude instance {instance} has {name} stored as a sensitive value or secret, "
+                              f"so Groundwork cannot confirm it is {want}.", output)
+                self.assertNotIn(f"Claude instance {instance} sets {name}={want}", output)
+        for instance in ("claudeAgent", "uncapped", "loose", "hidden", "equal"):
+            self.assertIn(f"Fix it in T3 Code → Settings → Providers → {instance} → Environment variables: "
+                          f"{concurrent}=4 and {depth}=1.", output)
+        self.assertIn("Claude instance off is disabled; subagent caps not checked.", output)
+        self.assertNotIn("Providers → off", output)
+        self.assertNotIn("grok", output)
+        for value in ("sk-never-print-this", "never-print-ref", "never-print-equal", "31337", "20"):
+            self.assertNotIn(value, output)
+        # Report only: T3's settings are never written.
+        self.assertEqual((self.settings.stat().st_mtime_ns, self.settings.read_text()), (mtime, text))
+
+    def test_subagent_caps_without_t3_or_settings(self):
+        self.assertIn("not found; subagent caps not applicable", self.caps_report())
+        self.t3.mkdir()
+        output = self.caps_report()
+        self.assertIn("Claude instance claudeAgent does not set CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", output)
+        self.assertIn("Providers → claudeAgent → Environment variables", output)
+
+    def test_subagent_caps_follow_how_t3_enables_an_instance(self):
+        self.write_settings({
+            "providerInstances": {
+                "claudeAgent": {"driver": "claudeAgent", "config": {"enabled": False}},
+                "project_only": self.claude_instance(enabled=False),
+            },
+            # Disabled globally but enabled for one project: it still runs there.
+            "projectSettingsOverrides": {"p1": {"providerInstances": {"project_only": {"enabled": True}}},
+                                         "p2": None},
+        })
+        output = self.caps_report()
+        self.assertIn("Claude instance claudeAgent is disabled; subagent caps not checked.", output)
+        self.assertNotIn("Providers → claudeAgent", output)
+        self.assertIn("Claude instance project_only does not set CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", output)
+        self.assertIn("Fix it in T3 Code → Settings → Providers → project_only → Environment variables", output)
+
+    def test_subagent_caps_without_a_config_object_keep_their_columns(self):
+        concurrent, depth = "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"
+        for label, config in (("absent", None), ("null", None), ("string", "claude")):
+            instance = {"driver": "claudeAgent", "enabled": True, "environment": [
+                {"name": depth, "value": "1", "sensitive": False}]}
+            if label == "null":
+                instance["config"] = None
+            elif label == "string":
+                instance["config"] = config
+            with self.subTest(config=label):
+                self.write_settings({"providerInstances": {"claudeAgent": instance}})
+                output = self.caps_report()
+                self.assertIn(f"Claude instance claudeAgent does not set {concurrent} (Groundwork value: 4).", output)
+                self.assertIn(f"Claude instance claudeAgent sets {depth}=1.", output)
+                self.assertNotIn(f"sets {concurrent}=4", output)
+                self.assertNotIn(f"sets {depth} to a value other than 1", output)
+                self.assertNotIn("is disabled", output)
+
+    def test_subagent_caps_unrecognized_settings_are_reported(self):
+        mtime, text = self.write_settings({"providerInstances": {
+            "c": self.claude_instance(environment={"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4"})}})
+        output = self.caps_report()
+        self.assertIn("not in a format Groundwork recognizes, so the Claude subagent caps were not checked", output)
+        self.assertEqual((self.settings.stat().st_mtime_ns, self.settings.read_text()), (mtime, text))
+
     def test_doctor_ai_tools_includes_the_t3_check(self):
         managed = self.install("2.4.2")
         self.t3.mkdir()
@@ -855,6 +958,8 @@ class T3ResolutionTests(Sandbox):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"T3 Code: Claude instance claudeAgent would run {managed}", result.stdout)
+        self.assertIn("T3 Code warning: Claude instance claudeAgent does not set "
+                      "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", result.stdout)
         self.assertRegex(DOCTOR.read_text(), re.compile(r"T3 Code's settings are read, never changed"))
 
 
