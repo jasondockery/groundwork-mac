@@ -13,8 +13,19 @@ REPO = Path(__file__).resolve().parents[1]
 CONFIGURE = REPO / "home/dot_local/bin/executable_groundwork-configure"
 TEMPLATE = REPO / "home/.chezmoi.toml.tmpl"
 SCRIPT = "home/run_after_22-antigravity-settings.sh.tmpl"
+BUNDLE = "home/run_onchange_after_10-brew-bundle.sh.tmpl"
 BREWFILE = "home/dot_config/homebrew/Brewfile.tmpl"
 SECRET = "groundwork-test-secret-value"
+SETTINGS_LIB = REPO / "home/dot_local/share/groundwork/lib/antigravity-t3-settings.sh"
+# Chezmoi script order is the target name after stripping run_, then once_ or
+# onchange_, then before_ or after_, then the .tmpl suffix. These four stay
+# in the after phase, so that order is the apply order.
+HOOK_ORDER = (
+    "home/run_onchange_after_10-brew-bundle.sh.tmpl",
+    "home/run_after_12-sudo-deferred-casks.sh",
+    "home/run_after_21-t3-code.sh.tmpl",
+    "home/run_after_22-antigravity-settings.sh.tmpl",
+)
 
 
 class AntigravityTests(unittest.TestCase):
@@ -352,6 +363,82 @@ class AntigravityTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(syntax.returncode, 0, syntax.stderr)
+                if enabled:
+                    self.assertIn("antigravity-t3-settings.sh", script)
+                else:
+                    self.assertNotIn("antigravity-t3-settings.sh", script)
+        lib = SETTINGS_LIB.read_text(encoding="utf-8")
+        self.assertNotIn("--help", lib)
+        self.assertNotIn("--version", lib)
+        self.assertNotIn("agy --", lib)
+        syntax = subprocess.run(
+            ["bash", "-n", str(SETTINGS_LIB)],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_stripped_hook_names_keep_the_bundle_before_the_settings_retry(self):
+        stripped = [_stripped_script_target(name) for name in HOOK_ORDER]
+        self.assertEqual(
+            stripped,
+            [
+                "10-brew-bundle.sh",
+                "12-sudo-deferred-casks.sh",
+                "21-t3-code.sh",
+                "22-antigravity-settings.sh",
+            ],
+        )
+        self.assertEqual(stripped, sorted(stripped))
+        for name in HOOK_ORDER:
+            path = REPO / name
+            self.assertTrue(path.is_file(), name)
+            self.assertIn("_after_", path.name)
+
+    def test_bundle_runs_the_shared_merge_after_the_required_bundle_succeeds(self):
+        enabled = self.render_ok(BUNDLE, antigravity=True)
+        disabled = self.render_ok(BUNDLE, antigravity=False)
+        settings = self.render_ok(SCRIPT, antigravity=True)
+        marker = "antigravity-t3-settings.sh"
+        self.assertIn(marker, enabled)
+        self.assertNotIn(marker, disabled)
+        self.assertGreater(enabled.index(marker), enabled.index('exit "$bundle_status"'))
+        self.assertGreater(enabled.index(marker), enabled.index("Brewfile.optional"))
+        self.assertIn('[[ -n "$agy_bin" && -f "$agy_bin" && -x "$agy_bin" ]]', enabled)
+        enabled_call = re.search(r'bash ("[^"]*antigravity-t3-settings\.sh") </dev/null', enabled)
+        settings_call = re.search(r'bash ("[^"]*antigravity-t3-settings\.sh") </dev/null', settings)
+        self.assertIsNotNone(enabled_call)
+        self.assertIsNotNone(settings_call)
+        self.assertEqual(enabled_call.group(1), settings_call.group(1))
+        lib = Path(enabled_call.group(1)[1:-1])
+        self.assertEqual(lib, SETTINGS_LIB)
+        header = (REPO / SCRIPT).read_text(encoding="utf-8")
+        docs = (REPO / "docs/agents.html").read_text(encoding="utf-8")
+        for text in (header, docs):
+            self.assertNotIn("later hook", text)
+            self.assertNotIn("first apply can skip", text)
+            self.assertIn("before it returns", text)
+        self.assertIn("leaves the settings file untouched", docs)
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=enabled,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=disabled,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
     def install_agy(self):
         prefix = self.root / "homebrew"
@@ -409,6 +496,25 @@ exit 1
             env=env,
             check=False,
         )
+
+
+def _stripped_script_target(source_name):
+    """Target name chezmoi sorts: drop run_, once_/onchange_, before_/after_, and .tmpl."""
+    name = source_name.rsplit("/", 1)[-1]
+    if name.endswith(".tmpl"):
+        name = name[: -len(".tmpl")]
+    if not name.startswith("run_"):
+        raise AssertionError(name)
+    name = name[len("run_") :]
+    for prefix in ("once_", "onchange_"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    for prefix in ("before_", "after_"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    return name
 
 
 def _words(text, name, raw=False):

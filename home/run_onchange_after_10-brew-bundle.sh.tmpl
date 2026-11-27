@@ -1,3 +1,4 @@
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
 #!/usr/bin/env bash
 set -euo pipefail
 {{- $brewfile := joinPath .chezmoi.sourceDir "dot_config/homebrew/Brewfile.tmpl" }}
@@ -431,3 +432,22 @@ Groundwork: an optional package did not install. This did NOT fail your update.
 OPTIONAL
   fi
 fi
+{{ if get $developer "antigravity" }}
+# The required bundle succeeded above (a failed bundle already exited). Write
+# T3 Code's Antigravity provider before this script returns when Homebrew's
+# agy is an executable regular file. A missing agy leaves settings.json
+# untouched. run_after_22-antigravity-settings.sh retries after deferred
+# casks and the T3 Code install. A machine that still has no agy retries on
+# the next chezmoi apply. Do not execute agy.
+agy_prefix="$(brew --prefix 2>/dev/null || true)"
+agy_prefix="${agy_prefix##*$'\n'}"
+agy_prefix="${agy_prefix%$'\r'}"
+agy_prefix="${agy_prefix%/}"
+agy_bin=""
+case "$agy_prefix" in
+  /*) agy_bin="${agy_prefix}/bin/agy" ;;
+esac
+if [[ -n "$agy_bin" && -f "$agy_bin" && -x "$agy_bin" ]]; then
+  bash {{ joinPath .chezmoi.sourceDir "dot_local/share/groundwork/lib/antigravity-t3-settings.sh" | quote }} </dev/null
+fi
+{{ end -}}
