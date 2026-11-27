@@ -142,6 +142,9 @@ cask "chatgpt"
 cask "visual-studio-code"
 cask "cursor"
 cask "opencode-desktop"
+{{ if get $developer "antigravity" -}}
+cask "antigravity"           # Google Antigravity desktop app for Google AI Ultra
+{{ end -}}
 cask "zed"
 {{ if get $developer "personal_apps" -}}
 cask "obsidian"
@@ -167,6 +170,9 @@ cask "claude-code@latest"
 {{ end -}}
 cask "codex"
 cask "grok-build"
+{{ if get $developer "antigravity" -}}
+cask "antigravity-cli"       # checksummed agy for the terminal and T3 Code; Homebrew owns updates
+{{ end -}}
 brew "opencode"
 {{ if and (eq .chezmoi.os "linux") (not $headless) -}}
 cask "cursor"

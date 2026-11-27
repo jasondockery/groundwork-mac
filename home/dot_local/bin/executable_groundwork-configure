@@ -147,10 +147,10 @@ config_digest_open="$(cksum <"$config_path")"
 # key                  label                 kind    clearable
 # Every mutable field is offered here even when bootstrap deliberately does not
 # ask it. home/.chezmoi.toml.tmpl preserves stored values on every platform.
-fields_key=(release_posture terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode local_inference git_filter_repo claude_code_owner obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway stay_awake_on_power)
-fields_label=("Release posture" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Local inference" "git-filter-repo" "Claude Code owner" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway" "Stay awake on power")
-fields_kind=(posture multiplexer bool docker pw keyrepeat string string string string bool bool bool bool claudeowner string string identity bool bool bool bool)
-fields_clear=(no no no no no no no no no yes no no no no no yes yes no no no no no)
+fields_key=(release_posture terminal_multiplexer beta docker_backend password_manager key_repeat code_dir name email_personal email_work game_dev xcode local_inference git_filter_repo claude_code_owner obsidian_vault_name signingkey git_identity personal_apps work_extensions imessage_gateway stay_awake_on_power antigravity)
+fields_label=("Release posture" "Terminal multiplexer" "Xcode beta channel" "Container backend" "Password manager" "Key repeat" "Code directory" "Git name" "Personal email" "Work email" "Game-dev tools" "Xcode" "Local inference" "git-filter-repo" "Claude Code owner" "Obsidian vault" "SSH signing key" "Git identity" "Optional personal apps" "C# and infrastructure extensions" "iMessage gateway" "Stay awake on power" "Antigravity")
+fields_kind=(posture multiplexer bool docker pw keyrepeat string string string string bool bool bool bool claudeowner string string identity bool bool bool bool bool)
+fields_clear=(no no no no no no no no no yes no no no no no yes yes no no no no no no)
 
 posture_values=(current preview)
 posture_labels=("Stable channels (managed browser: Brave)" "Preview channels (managed browser stays Brave)")
@@ -330,6 +330,11 @@ edit_field() { # index
   if [[ "$key" == "claude_code_owner" ]]; then
     echo "  This names which Claude Code installation owns the claude command. Native leaves the Homebrew claude-code@latest cask out of the Brewfile. Neither choice uninstalls anything; when both copies exist, update-all and groundwork-doctor warn and print how to remove the other one. Point the T3 Code Claude provider Binary path at the same owner."
   fi
+  if [[ "$key" == "antigravity" ]]; then
+    echo "  Yes installs the Antigravity app on a desktop Mac and the agy command everywhere Homebrew runs, and points T3 Code at that Homebrew agy when the provider entry is still absent."
+    echo "  No skips both installs and does not change an existing Antigravity install or an existing T3 provider entry."
+    echo "  Remove them later with: brew uninstall --cask antigravity antigravity-cli"
+  fi
   case "$kind" in
     bool)
       local defword
@@ -417,7 +422,7 @@ data.pop("chezmoi", None)
 pending = {}
 for arg in sys.argv[4:]:
     k, _, v = arg.partition("=")
-    if k in ("personal_apps", "work_extensions", "imessage_gateway", "stay_awake_on_power") or isinstance(data.get(k), bool):
+    if k in ("personal_apps", "work_extensions", "imessage_gateway", "stay_awake_on_power", "antigravity") or isinstance(data.get(k), bool):
         pending[k] = (v == "true")
     else:
         pending[k] = v

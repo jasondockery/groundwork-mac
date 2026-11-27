@@ -1,0 +1,19 @@
+{{- /* Antigravity provider settings for T3 Code. antigravity = false renders a
+skip. Otherwise this runs the same merge as the brew bundle hook. The apply
+that installs agy writes the provider before it returns. This script stays
+after the brew bundle, the deferred-cask hook, and the T3 Code install, and
+retries when agy was not executable yet. A machine without agy leaves
+settings.json untouched and retries on the next apply. Do not execute agy. */ -}}
+{{- $developer := includeTemplate "developer-settings" . | fromJson -}}
+#!/usr/bin/env bash
+# bash 3.2+ (stock macOS and current Linux).
+# Do not execute agy.
+# The merge never selects, prints, or sets apiKey or any other secret field.
+set -euo pipefail
+{{ if not (get $developer "antigravity") }}
+printf '%s\n' "Antigravity is turned off (antigravity = false). Skipping the T3 Code provider update. This does not uninstall an existing app or CLI. Remove them with: brew uninstall --cask antigravity antigravity-cli"
+exit 0
+{{ else }}
+# The merge lives in antigravity-t3-settings.sh.
+bash {{ joinPath .chezmoi.sourceDir "dot_local/share/groundwork/lib/antigravity-t3-settings.sh" | quote }} </dev/null
+{{ end -}}

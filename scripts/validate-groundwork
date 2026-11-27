@@ -1247,6 +1247,7 @@ validate_static_foundation() {
   python3 -B tests/test_spotlight_exclusions.py
   python3 -B tests/test_stay_awake.py
   python3 -B tests/test_local_inference.py
+  python3 -B tests/test_antigravity.py
   python3 -B tests/test_git_filter_repo.py
   python3 -B tests/test_claude_code_owner.py
   python3 -B tests/test_claude_auto_handover.py
@@ -18793,7 +18794,9 @@ PY
       assert_not_contains '^mas ' "$out_dir/$case_name/Brewfile" "App Store apps leaked into $case_name"
       # Casks also package native Linux/headless CLIs. Permit only that declared
       # set, plus Cursor on desktop Linux; reject every other GUI artifact.
-      native_cask_pattern='^cask "(codex|claude-code@latest|grok-build)"([[:space:]]*#.*)?$'
+      # antigravity-cli is the agy command, the same class as codex and grok-build.
+      # The antigravity desktop cask stays in the desktop-Mac block only.
+      native_cask_pattern='^cask "(codex|claude-code@latest|grok-build|antigravity-cli)"([[:space:]]*#.*)?$'
       if [[ "$os" == linux && "$headless" == false ]]; then
         native_cask_pattern="$native_cask_pattern|^cask \"cursor\"([[:space:]]*#.*)?$"
       fi

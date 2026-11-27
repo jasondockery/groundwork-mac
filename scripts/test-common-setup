@@ -52,8 +52,13 @@ class CommonSetupTests(unittest.TestCase):
                         with self.subTest(platform=platform, arch=arch, work=work, headless=headless):
                             source = self.text("home/dot_config/homebrew/Brewfile.tmpl", work=work,
                                                headless=headless, chezmoi=dict(os=platform, arch=arch))
-                            for line in ('cask "codex"', 'cask "claude-code@latest"', 'cask "grok-build"', 'brew "opencode"'):
+                            for line in ('cask "codex"', 'cask "claude-code@latest"', 'cask "grok-build"', 'cask "antigravity-cli"', 'brew "opencode"'):
                                 self.assertIn(line, source)
+                            without_cli = source.replace('cask "antigravity-cli"', "")
+                            if platform == "darwin" and not headless:
+                                self.assertIn('cask "antigravity"', without_cli)
+                            else:
+                                self.assertNotIn('cask "antigravity"', without_cli)
                             self.assertIn('cask "tailscale-app"' if platform == "darwin" and not headless else 'brew "tailscale"', source)
                             if platform == "darwin":
                                 self.assertIn('brew "colima"', source)
