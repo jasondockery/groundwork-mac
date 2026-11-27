@@ -478,7 +478,7 @@ class StayAwakeTests(unittest.TestCase):
         self.assertEqual(len({len(keys), len(kinds), len(clears), len(labels)}), 1)
         index = keys.index('stay_awake_on_power')
         self.assertEqual((kinds[index], clears[index], labels[index]), ('bool', 'no', 'Stay awake on power'))
-        self.assertIn('"stay_awake_on_power") or isinstance(data.get(k), bool):', text)
+        self.assertIn('"stay_awake_on_power", "antigravity") or isinstance(data.get(k), bool):', text)
         template = TEMPLATE.read_text(encoding='utf-8')
         self.assertNotIn('promptBoolOnce . "stay_awake_on_power"', template)
         self.assertIn('stay_awake_on_power = {{ $stayAwakeOnPower }}', template)

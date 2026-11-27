@@ -352,6 +352,18 @@ font-family = JetBrainsMono Nerd Font</code></pre>
         <tr><td><strong>WhatsApp</strong></td><td>Personal messaging</td></tr>
       </table>
 
+      <h2 id="antigravity"><span class="hash" aria-hidden="true">#</span>Antigravity</h2>
+      <p>On a desktop Mac, Groundwork installs the Google Antigravity app from the <code>antigravity</code> cask, next to Claude, Cursor, and OpenCode. Google AI Ultra is used through this app, not through Gemini CLI. Since 2026-06-18, Gemini CLI and Code Assist no longer serve Pro or Ultra personal accounts, and Groundwork does not install Gemini CLI. A Workspace account does not get Ultra limits.</p>
+      <p>The <code>agy</code> command comes from the separate <code>antigravity-cli</code> cask on every Homebrew machine, including a headless Mac and Linux. <code>update-all</code> upgrades that command through Homebrew. The desktop app updates itself and stays on the existing self-updating cask lane. T3 Code is pointed at Homebrew&apos;s <code>agy</code> so it does not download a second runtime. The details, including the settings that differ from T3 Code&apos;s defaults, are on <a href="agents.html#antigravity">AI agents</a>.</p>
+      <p>Choose Antigravity: No in <code>groundwork-configure</code>, or set chezmoi data <code>antigravity</code> to <code>false</code>, to skip both installs and the T3 Code settings update. That does not remove an existing copy. Remove one with <code>brew uninstall --cask antigravity antigravity-cli</code>.</p>
+      <p>Sign in yourself. Groundwork does not store a Google code or password.</p>
+      <ol>
+        <li>In T3 Code, open Settings, then Providers, then Antigravity, then Sign in. Use the personal Google account that holds Google AI Ultra. If Google shows a code for a remote session, paste it into T3 Code and do not save it anywhere else.</li>
+        <li>Optional: open the Antigravity app once and sign in with the same account.</li>
+        <li>Optional: run <code>agy</code> once and finish its first-run sign-in.</li>
+      </ol>
+      <p>macOS Developer Tools access for the terminal and T3 Code, tracked in <a href="https://github.com/jasondockery/groundwork-mac/issues/141">issue 141</a>, also covers <code>agy</code>.</p>
+
       <h2 id="uninstalling-apps"><span class="hash" aria-hidden="true">#</span>Uninstalling apps without leaving a mess</h2>
       <p>Groundwork installs AppCleaner on every desktop Mac unless you turn optional personal apps off in <code>groundwork-configure</code>, but it is the fallback, not the universal first step. The installer that owns an app usually knows more about its login items, extensions, privileged helpers, and shared data than a generic cleaner can infer.</p>
       <ol>

@@ -308,7 +308,7 @@ imessage_gateway = "yes"
             text,
         )
         self.assertIn(
-            'if k in ("personal_apps", "work_extensions", "imessage_gateway", "stay_awake_on_power") or isinstance(data.get(k), bool):',
+            'if k in ("personal_apps", "work_extensions", "imessage_gateway", "stay_awake_on_power", "antigravity") or isinstance(data.get(k), bool):',
             text,
         )
         template = TEMPLATE.read_text(encoding='utf-8')

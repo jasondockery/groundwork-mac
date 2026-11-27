@@ -135,7 +135,7 @@
       "canonical": "home/dot_config/homebrew/Brewfile.tmpl",
       "agePolicy": "external-tool-policy",
       "compensatingControl": "Homebrew channel provenance, Groundwork's update transaction, and managed cask checksum policy govern installed releases.",
-      "note": "Homebrew owns installed formula and cask versions; Renovate does not edit the Brewfile."
+      "note": "Homebrew owns installed formula and cask versions; Renovate does not edit the Brewfile. Checksummed casks such as antigravity-cli stay on the ordinary update-all lane. The antigravity app cask sets auto_updates and stays on the existing self-updating classification."
     },
     {
       "id": "mise-runtime-channels",

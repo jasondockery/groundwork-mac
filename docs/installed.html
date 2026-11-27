@@ -185,7 +185,7 @@
       <h2><span class="hash" aria-hidden="true">#</span>Developer apps and optional personal apps</h2>
       <p>AI tools and editors are common defaults on supported platforms. macOS desktop apps need a desktop session; optional personal apps use <code>personal_apps</code>. Managed device policy takes precedence.</p>
       <table class="keytable">
-        <tr><td><strong>AI agents</strong></td><td><a href="claude.html">Claude Code</a>, <a href="codex.html">Codex</a> (CLI + app), OpenCode (CLI + app), <a href="grok.html">Grok Build</a> — see <a href="editors-ai.html">Editors &amp; AI</a></td></tr>
+        <tr><td><strong>AI agents</strong></td><td><a href="claude.html">Claude Code</a>, <a href="codex.html">Codex</a> (CLI + app), OpenCode (CLI + app), <a href="grok.html">Grok Build</a>, <a href="agents.html#antigravity">Antigravity</a> (app on a desktop Mac, <code>agy</code> on every Homebrew machine) — see <a href="editors-ai.html">Editors &amp; AI</a></td></tr>
         <tr><td><strong>AI chat / local</strong></td><td>Claude app, ChatGPT app. The Ollama menu-bar app is only in optional personal apps, for Obsidian Smart Connections. Apple Silicon local inference is a separate opt-in Homebrew formula and stays off until <code>groundwork-configure</code> enables it. See the <a href="local-inference.md">local inference guide</a> and <a href="glm.html">GLM &amp; open models</a>.</td></tr>
         <tr><td><strong>Editors</strong></td><td>VS Code, Cursor, Zed — see <a href="editors-ai.html">Editors &amp; AI</a>. VS Code and Cursor get a lean extension set for agent context, review, CI, testing, linting, formatting, and project formats.</td></tr>
         <tr><td><strong>Obsidian</strong></td><td>Markdown notes + your <a href="knowledge.html">knowledge base</a></td></tr>
@@ -196,6 +196,10 @@
         <tr><td><strong>Unity Hub</strong></td><td>Optional, only when <code>game_dev=true</code>; install Unity 6 LTS and WebGL support inside Unity Hub for the <a href="game-dev-unity.html">Unity FPS track</a></td></tr>
         <tr><td><strong>C# / Unity VS Code extensions</strong></td><td>Optional, only when <code>game_dev=true</code>; C# Dev Kit, runtime support, C# formatting, solution explorer, and NuGet helpers</td></tr>
       </table>
+
+      <h2 id="antigravity"><span class="hash" aria-hidden="true">#</span>Antigravity</h2>
+      <p>Desktop Macs get the Antigravity app (<code>antigravity</code>). Every Homebrew machine, including headless profiles and Linux, gets the <code>agy</code> command (<code>antigravity-cli</code>). Gemini CLI is not installed. Since 2026-06-18 it no longer serves Google AI Ultra personal accounts, and a Workspace account does not get Ultra limits. T3 Code&apos;s Antigravity provider is enabled and pointed at Homebrew&apos;s <code>agy</code> only when that setting is still absent, so T3 Code does not download its own runtime. <code>antigravity = false</code> skips both casks and that settings update. It does not uninstall. Remove an install with <code>brew uninstall --cask antigravity antigravity-cli</code>. <code>update-all</code> upgrades the CLI through Homebrew. The app follows the existing self-updating cask lane.</p>
+      <p>Sign in once, by hand, with the personal Google account that holds Ultra: T3 Code Settings, then Providers, then Antigravity, then Sign in. Optionally open the Antigravity app and run <code>agy</code> once. Do not save the Google code. The Developer Tools allowance in <a href="https://github.com/jasondockery/groundwork-mac/issues/141">issue 141</a> also covers <code>agy</code>. The setting list is on <a href="agents.html#antigravity">AI agents</a>.</p>
 
       <h2><span class="hash" aria-hidden="true">#</span>Independent container and extension choices</h2>
       <p>Colima plus Docker CLI is the macOS default. Choose the backend and extension set independently in <code>groundwork-configure</code>.</p>
